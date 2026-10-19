@@ -9,19 +9,16 @@ const PORT = process.env.PORT || 3000;
 // ==========================================
 // 🔒 SEGURIDAD Y PROTECCIÓN DEL SERVIDOR
 // ==========================================
-// 1. Ocultar firma de Express
 app.disable('x-powered-by');
-
-// 2. Parsers con límite de tamaño para evitar ataques DoS de payloads gigantes
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(express.json({ limit: '2mb' }));
 
-// 3. Rate Limiter en memoria (Máximo 30 peticiones por minuto por IP)
+// Rate Limiter en memoria (Máximo 40 peticiones por minuto por IP)
 const ipRequestCounts = new Map();
 function rateLimiter(req, res, next) {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
-  const windowMs = 60 * 1000; // 1 minuto
+  const windowMs = 60 * 1000;
   const maxRequests = 40;
 
   let client = ipRequestCounts.get(ip);
@@ -40,13 +37,25 @@ function rateLimiter(req, res, next) {
 }
 app.use(rateLimiter);
 
-// 4. Cache de deduplicación para no procesar el mismo mensaje dos veces
+// Deduplicación y Debounce por Lead para evitar envíos dobles
 const processedMessages = new Set();
+const leadLastProcessed = new Map();
+
 function isDuplicate(msgId) {
   if (!msgId) return false;
   if (processedMessages.has(msgId)) return true;
   processedMessages.add(msgId);
-  setTimeout(() => processedMessages.delete(msgId), 60000); // 1 minuto TTL
+  setTimeout(() => processedMessages.delete(msgId), 60000);
+  return false;
+}
+
+function isDebounced(leadId) {
+  const now = Date.now();
+  const last = leadLastProcessed.get(leadId);
+  if (last && (now - last) < 5000) { // 5 segundos de protección anti-doble envío
+    return true;
+  }
+  leadLastProcessed.set(leadId, now);
   return false;
 }
 
@@ -78,7 +87,6 @@ function normalizeText(text) {
     .trim();
 }
 
-// Detectar si el cliente tiene intención de Cita / Visita
 function isHighIntent(text) {
   const q = normalizeText(text);
   const hotKeywords = [
@@ -90,9 +98,8 @@ function isHighIntent(text) {
 }
 
 // ==========================================
-// 🚨 NOTIFICACIONES Y ALERTAS PARA ROBERT
+// 🚨 ALERTAS EN KOMMO PARA ROBERT
 // ==========================================
-// 1. Crear Tarea de Alta Prioridad en Kommo
 async function notifyRobertInKommo(leadId, clientText, clientName) {
   try {
     const token = process.env.KOMMO_TOKEN;
@@ -106,8 +113,8 @@ async function notifyRobertInKommo(leadId, clientText, clientName) {
         entity_id: parseInt(leadId, 10),
         entity_type: 'leads',
         text: `🔥 CLIENTE CALIENTE: ${clientName || 'Cliente'} quiere agendar CITA/VISITA. Mensaje: "${clientText}"`,
-        complete_till: now + 1800, // En los próximos 30 minutos
-        task_type_id: 1 // Llamada / Contacto
+        complete_till: now + 1800,
+        task_type_id: 1
       }
     ];
 
@@ -121,158 +128,140 @@ async function notifyRobertInKommo(leadId, clientText, clientName) {
   }
 }
 
-// 2. Enviar alerta a WhatsApp de Robert (si está configurada la API o CallMeBot)
-async function sendWhatsAppAlertToRobert(leadId, clientText, clientName) {
-  const phone = process.env.ROBERTS_WHATSAPP;
-  const apiKey = process.env.CALLMEBOT_API_KEY;
-
-  if (phone && apiKey) {
-    try {
-      const msg = encodeURIComponent(`🚨 *¡EPA ROBERT! CLIENTE QUIERE CITA*\n\n👤 *Cliente:* ${clientName || 'Cliente'}\n💬 *Mensaje:* "${clientText}"\n🔗 *Ver Chat en Kommo:* https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/chats/`);
-      const url = `https://api.callmebot.com/whatsapp.php?phone=${phone}&text=${msg}&apikey=${apiKey}`;
-      await axios.get(url, { timeout: 6000 });
-      console.log(`[Alert] Mensaje de WhatsApp enviado al teléfono de Robert (${phone})`);
-    } catch (err) {
-      console.warn('[Alert Error WhatsApp]:', err.message);
-    }
-  }
-}
-
 // ==========================================
 // 🧠 MOTOR DE CONVERSACIÓN INTELIGENTE
 // ==========================================
+function formatSingleProperty(p) {
+  const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
+  let out = `📍 **${p.TIPO} en ${p.ZONA} (${p.OPERACION})**\n`;
+  out += `• **Precio:** US$ ${cleanPrice}\n`;
+  out += `• **Distribución:** ${p.HABITACIONES} Habs | ${p.BANOS} Baños | ${p.ESTACIONAMIENTOS} Puestos\n`;
+  if (p.DESCRIPCION_BREVE && p.DESCRIPCION_BREVE.trim() !== '-' && p.DESCRIPCION_BREVE.trim() !== '') {
+    out += `• **Detalles:** ${p.DESCRIPCION_BREVE.trim()}\n`;
+  }
+  if (p.LINK_FOTOS && p.LINK_FOTOS.trim() !== '') {
+    out += `• **Fotos:** ${p.LINK_FOTOS.trim()}\n`;
+  }
+  return out;
+}
+
 async function generateResponse(userMessage, allProperties) {
-  // Limitar longitud para evitar spam
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
+  // Filtramos solo las disponibles
   const available = allProperties.filter(row => {
     const status = normalizeText(row.ESTATUS || row.Estatus || row.estatus);
     return status === 'disponible';
   });
 
-  const greeting = `¡Hola! Gracias por comunicarte con **Tu Techo Ideal**, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
-
-  // WhatsApp directo de Robert para contacto inmediato
-  const robertsPhone = process.env.ROBERTS_WHATSAPP || '584120000000';
-  const cleanPhone = robertsPhone.replace(/\+/g, '').replace(/\s/g, '');
-  const waContactLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent('Hola Robert, vi una propiedad en Tu Techo Ideal y me gustaría coordinar una visita.')}`;
+  // Saludo oficial corregido exactamente según instrucciones del usuario
+  const baseGreeting = `¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
 
   // 1. Saludos simples
   const greetingsList = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'hola buenas'];
   const isOnlyGreeting = greetingsList.some(g => q === g || q === `${g}!` || q === `${g}.`);
   if (isOnlyGreeting || q.length < 5) {
-    return `${greeting}¿En qué podemos ayudarte hoy? ¿Estás buscando comprar, alquilar o vender algún inmueble en Caracas?`;
+    return `${baseGreeting}¿En qué podemos ayudarte hoy? ¿Estás buscando comprar, alquilar o vender algún inmueble?`;
   }
 
   // 2. Cliente pide cita o visita directamente
-  if (isHighIntent(q) && !q.includes('altamira') && !q.includes('mercedes')) {
-    return `${greeting}¡Con muchísimo gusto te coordinamos la visita! 📅\n\nIndícanos por favor qué propiedad o zona específica te gustaría conocer y qué día u horario te resulta más cómodo.\n\n📲 Si prefieres coordinar al instante, también puedes escribirle o llamarle a nuestro asesor principal **Robert Jiménez** directamente a su WhatsApp:\n👉 ${waContactLink}`;
+  if (isHighIntent(q) && !q.includes('casa') && !q.includes('apto') && !q.includes('venta') && !q.includes('alquiler')) {
+    return `${baseGreeting}¡Con muchísimo gusto te coordinamos una visita presencial! 📅\n\nIndícanos por favor qué propiedad te gustaría conocer y qué día u horario te resulta más conveniente para agendarlo de inmediato.`;
   }
 
-  // Detectar operaciones
+  // Detectar intención de Operación (Venta vs Alquiler)
+  const wantsBuy = q.includes('venta') || q.includes('comprar') || q.includes('compra') || q.includes('adquirir');
   const wantsRent = q.includes('alquiler') || q.includes('alquilar') || q.includes('renta') || q.includes('rentar');
-  const wantsBuy = q.includes('venta') || q.includes('comprar') || q.includes('compra');
 
-  // Detectar tipos
-  const wantsApto = q.includes('apto') || q.includes('apartamento') || q.includes('departamento');
-  const wantsCasa = q.includes('casa') || q.includes('quinta') || q.includes('townhouse');
-  const wantsLocal = q.includes('local') || q.includes('comercial') || q.includes('oficina');
+  // Detectar Tipo de Inmueble
+  const wantsCasa = q.includes('casa') || q.includes('casas') || q.includes('quinta') || q.includes('quintas');
+  const wantsComercial = q.includes('comercial') || q.includes('local') || q.includes('oficina');
+  const wantsApto = q.includes('apartamento') || q.includes('apartamentos') || q.includes('apto') || q.includes('aptos');
 
-  // Detectar zonas
+  // Detectar Zonas
+  const mentionsMacaracuay = q.includes('macaracuay');
+  const mentionsFlorida = q.includes('florida') || q.includes('alta florida') || q.includes('libertador');
   const mentionsAltamira = q.includes('altamira');
-  const mentionsMercedes = q.includes('mercedes') || q.includes('las mercedes');
-  const mentionsRosal = q.includes('rosal') || q.includes('el rosal');
+  const mentionsMercedes = q.includes('mercedes');
 
-  function formatProperty(p) {
-    let out = `📍 **${p.TIPO} en ${p.ZONA} (${p.OPERACION})**\n`;
-    out += `• **Precio:** US$ ${p.PRECIO}\n`;
-    out += `• **Distribución:** ${p.HABITACIONES} Habs | ${p.BANOS} Baños | ${p.ESTACIONAMIENTOS} Puestos\n`;
-    if (p.DESCRIPCION_BREVE) out += `• **Detalles:** ${p.DESCRIPCION_BREVE}\n`;
-    if (p.LINK_FOTOS) out += `• **Fotos:** ${p.LINK_FOTOS}\n`;
-    return out;
+  // Filtrado estricto por Operación si fue solicitada
+  let filtered = available;
+
+  if (wantsBuy) {
+    filtered = filtered.filter(p => normalizeText(p.OPERACION).includes('venta'));
+  } else if (wantsRent) {
+    filtered = filtered.filter(p => normalizeText(p.OPERACION).includes('alquiler'));
   }
 
-  // CASO 1: Altamira
-  if (mentionsAltamira) {
-    const altamiraProp = available.find(p => normalizeText(p.ZONA).includes('altamira'));
-    if (altamiraProp) {
-      if (wantsRent) {
-        let text = `${greeting}En **Altamira** actualmente no disponemos de opciones en alquiler, pero sí tenemos disponible un excelente apartamento en **VENTA**:\n\n`;
-        text += formatProperty(altamiraProp);
-        
-        const rentalAlt = available.find(p => normalizeText(p.OPERACION).includes('alquiler'));
-        if (rentalAlt) {
-          text += `\nEn **ALQUILER** en Caracas tenemos disponible:\n\n`;
-          text += formatProperty(rentalAlt);
-        }
-        text += `\n¿Te gustaría coordinar una visita presencial para conocerlo o recibir información adicional?`;
-        return text;
-      } else {
-        let text = `${greeting}Revisando nuestro inventario disponible, en **Altamira** tenemos una excelente opción para ti:\n\n`;
-        text += formatProperty(altamiraProp);
-        text += `\n¿Te gustaría coordinar una visita presencial para conocer este apartamento o que te compartamos más información?`;
-        return text;
-      }
+  // Filtrado por Tipo de Inmueble
+  if (wantsCasa) {
+    // Si busca casa comercial específicamente
+    if (wantsComercial) {
+      filtered = filtered.filter(p => normalizeText(p.TIPO).includes('comercial'));
+    } else {
+      filtered = filtered.filter(p => normalizeText(p.TIPO).includes('casa'));
     }
+  } else if (wantsApto) {
+    filtered = filtered.filter(p => normalizeText(p.TIPO).includes('apartamento') || normalizeText(p.TIPO).includes('apto'));
+  } else if (wantsComercial) {
+    filtered = filtered.filter(p => normalizeText(p.TIPO).includes('comercial') || normalizeText(p.TIPO).includes('local'));
   }
 
-  // CASO 2: Las Mercedes
-  if (mentionsMercedes) {
-    const mercedesProp = available.find(p => normalizeText(p.ZONA).includes('mercedes'));
-    if (mercedesProp) {
-      let text = `${greeting}En **Las Mercedes** tenemos esta excelente opción disponible:\n\n`;
-      text += formatProperty(mercedesProp);
-      text += `\n¿Te gustaría coordinar una visita presencial esta semana o deseas más detalles?`;
-      return text;
-    }
+  // Filtrado por Zona si fue solicitada
+  if (mentionsMacaracuay) {
+    const zoneFiltered = filtered.filter(p => normalizeText(p.ZONA).includes('macaracuay'));
+    if (zoneFiltered.length > 0) filtered = zoneFiltered;
+  } else if (mentionsFlorida) {
+    const zoneFiltered = filtered.filter(p => normalizeText(p.ZONA).includes('florida'));
+    if (zoneFiltered.length > 0) filtered = zoneFiltered;
   }
 
-  // CASO 3: Local Comercial en El Rosal
-  if (wantsLocal || mentionsRosal) {
-    const localProp = allProperties.find(p => normalizeText(p.TIPO).includes('local') || normalizeText(p.ZONA).includes('rosal'));
-    if (localProp && normalizeText(localProp.ESTATUS) === 'vendido') {
-      return `${greeting}En este momento nuestro local comercial en **El Rosal** se encuentra **Vendido**. Con mucho gusto podemos tomar tus datos para notificarte de inmediato apenas ingrese una nueva opción comercial en la zona. ¿Qué tipo de metraje o ubicación buscas?`;
-    }
-  }
+  // ==========================================
+  // RESPUESTAS SEGÚN COINCIDENCIAS
+  // ==========================================
 
-  // CASO 4: Casa en Alquiler
-  if (wantsCasa || (wantsRent && !wantsApto)) {
-    const casa = available.find(p => normalizeText(p.TIPO).includes('casa'));
-    if (casa) {
-      let text = `${greeting}En alquiler tenemos esta magnífica opción disponible:\n\n`;
-      text += formatProperty(casa);
-      text += `\n¿Te gustaría coordinar una visita presencial o recibir más detalles?`;
-      return text;
-    }
-  }
-
-  // CASO 5: Apartamento en Venta
-  if (wantsApto || (wantsBuy && !wantsCasa)) {
-    const apto = available.find(p => normalizeText(p.TIPO).includes('apartamento'));
-    if (apto) {
-      let text = `${greeting}En venta tenemos este excelente apartamento disponible:\n\n`;
-      text += formatProperty(apto);
-      text += `\n¿Te gustaría agendar una visita o recibir más información detallada?`;
-      return text;
-    }
-  }
-
-  // CASO 6: Consulta general de Caracas
-  const isBroadInquiry = q.includes('caracas') || q.includes('inmueble') || q.includes('propiedad') || q.includes('opciones');
-  if (isBroadInquiry) {
-    let text = `${greeting}En Caracas contamos con excelentes opciones en nuestro inventario. Actualmente tenemos disponibles:\n\n`;
-    available.forEach(p => {
-      text += `• **${p.TIPO} en ${p.ZONA} (${p.OPERACION}):** US$ ${p.PRECIO} | ${p.HABITACIONES} Habs\n`;
+  // Si encontramos coincidencias exactas
+  if (filtered.length > 0) {
+    const opText = wantsBuy ? 'en venta' : (wantsRent ? 'en alquiler' : 'disponibles');
+    let text = `${baseGreeting}Revisando nuestro inventario, tenemos excelentes opciones ${opText} para ti:\n\n`;
+    
+    filtered.slice(0, 2).forEach(p => {
+      text += formatSingleProperty(p) + '\n';
     });
-    text += `\nPara asesorarte de la mejor manera, ¿en qué zona específica te gustaría, cuántas habitaciones buscas o cuál es tu presupuesto aproximado?`;
+
+    text += `¿Te gustaría coordinar una visita presencial para conocer alguna de estas opciones o recibir información adicional?`;
     return text;
   }
 
-  // CASO 7: Fallback mostrando inventario
-  let text = `${greeting}Actualmente en nuestro inventario disponible contamos con las siguientes opciones destacadas:\n\n`;
+  // Si pidió una combinación que NO existe disponible (ejemplo: Casas en Venta si no hubiera, o Apartamentos en Venta)
+  if (wantsBuy) {
+    const availableSales = available.filter(p => normalizeText(p.OPERACION).includes('venta'));
+    if (availableSales.length > 0) {
+      let text = `${baseGreeting}Actualmente para la búsqueda exacta que solicitas no disponemos de opciones inmediatas. Sin embargo, en **VENTA** tenemos disponible esta excelente propiedad:\n\n`;
+      text += formatSingleProperty(availableSales[0]) + '\n';
+      text += `¿Te gustaría recibir detalles o agendar una visita para conocerla?`;
+      return text;
+    }
+  }
+
+  if (wantsRent) {
+    const availableRentals = available.filter(p => normalizeText(p.OPERACION).includes('alquiler'));
+    if (availableRentals.length > 0) {
+      let text = `${baseGreeting}Actualmente en esa categoría específica no disponemos de opciones inmediatas. En **ALQUILER** tenemos disponibles estas magníficas opciones:\n\n`;
+      availableRentals.slice(0, 2).forEach(p => {
+        text += formatSingleProperty(p) + '\n';
+      });
+      text += `¿Te gustaría recibir más información o coordinar una visita presencial?`;
+      return text;
+    }
+  }
+
+  // Si es una pregunta general ("qué tienen", "busco opciones")
+  let text = `${baseGreeting}En nuestro inventario actualmente contamos con las siguientes opciones disponibles:\n\n`;
   available.forEach((p, idx) => {
-    text += `${idx + 1}. **${p.TIPO} en ${p.ZONA} (${p.OPERACION})** - US$ ${p.PRECIO} (${p.HABITACIONES} Habs, ${p.BANOS} Baños)\n`;
+    const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
+    text += `${idx + 1}. **${p.TIPO} en ${p.ZONA} (${p.OPERACION})** - US$ ${cleanPrice}\n`;
   });
   text += `\nCuéntanos, ¿cuál de estas se adapta mejor a lo que estás buscando o en qué zona específica te interesaría?`;
   return text;
@@ -335,22 +324,13 @@ async function triggerKommoSalesbot(leadId) {
 // 📡 ENDPOINT DEL WEBHOOK
 // ==========================================
 app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
-  // 🔒 CANDADO 1: Validación de Secreto (si está configurado en .env)
-  if (process.env.WEBHOOK_SECRET) {
-    const clientSecret = req.query.secret || req.headers['x-webhook-secret'];
-    if (clientSecret !== process.env.WEBHOOK_SECRET) {
-      console.warn('[Security] Intento de acceso no autorizado con secreto inválido.');
-      return res.status(403).send({ error: 'Forbidden: Invalid secret token' });
-    }
-  }
-
-  // Responder 200 OK inmediatamente a Kommo para evitar reintentos
+  // Respuesta 200 OK inmediata para Kommo
   res.status(200).send({ status: 'ok' });
 
   try {
     const body = req.body;
 
-    // 🔒 CANDADO 2: Validación de Cuenta Kommo (evitar suplantación)
+    // Validación de Cuenta Kommo
     if (body.account && body.account.id) {
       const allowedAccountId = process.env.KOMMO_ACCOUNT_ID || '36728143';
       if (String(body.account.id) !== String(allowedAccountId)) {
@@ -358,8 +338,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         return;
       }
     }
-
-    console.log('[Webhook Received]', JSON.stringify(body).substring(0, 300));
 
     let messageObj = null;
     if (body.message && body.message.add && body.message.add[0]) {
@@ -390,17 +368,25 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
-    // Filtrar mensajes que no sean entrantes del cliente
+    // 🛑 FILTRO 1: Anti-Autorespuesta (Si el mensaje contiene el nombre de la empresa, es del bot)
+    if (userText.includes('Tu Techo Ideal') || userText.includes('Bárbara Bravo') || userText.includes('Robert Jiménez')) {
+      console.log('[Webhook] Bot self-message detected. Skipping.');
+      return;
+    }
+
+    // 🛑 FILTRO 2: Solo mensajes entrantes del cliente
     if (messageObj.type && messageObj.type !== 'incoming') {
       console.log(`[Webhook] Skipping non-incoming message (type: ${messageObj.type})`);
       return;
     }
 
+    // 🛑 FILTRO 3: Autor externo obligatorio
     if (messageObj.author && messageObj.author.type && messageObj.author.type !== 'external') {
       console.log(`[Webhook] Skipping non-external author (author.type: ${messageObj.author.type})`);
       return;
     }
 
+    // 🛑 FILTRO 4: Deduplicación por Message ID
     const msgId = messageObj.id;
     if (isDuplicate(msgId)) {
       console.log(`[Webhook] Duplicate message ID ${msgId}. Skipping.`);
@@ -439,6 +425,12 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
+    // 🛑 FILTRO 5: Debounce de 5 segundos por Lead para evitar doble envío
+    if (isDebounced(leadId)) {
+      console.log(`[Webhook] Debounce activado para Lead #${leadId}. Skipping para evitar doble respuesta.`);
+      return;
+    }
+
     const clientName = messageObj.author?.name || 'Cliente';
 
     console.log(`\n========================================`);
@@ -448,13 +440,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     console.log(`Message: "${userText}"`);
     console.log(`========================================`);
 
-    // 🚨 DETECTAR INTENCIÓN DE CITA / VISITA Y ALERTAR A ROBERT
+    // Alerta de cita para Robert
     if (isHighIntent(userText)) {
-      console.log(`[Hot Lead Alert] ¡Intención de cita detectada para Lead #${leadId}!`);
-      // 1. Crear Tarea de alarma en Kommo
+      console.log(`[Hot Lead Alert] Intención de cita detectada para Lead #${leadId}!`);
       notifyRobertInKommo(leadId, userText, clientName);
-      // 2. Enviar WhatsApp a Robert si está configurado
-      sendWhatsAppAlertToRobert(leadId, userText, clientName);
     }
 
     // 1. Obtener propiedades de Google Sheets
@@ -482,14 +471,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.send({ status: 'running', service: 'Tu Techo Ideal Bot Microservice - Secure Edition' });
+  res.send({ status: 'running', service: 'Tu Techo Ideal Bot Microservice - v2.1 Precision Edition' });
 });
 
-// Start Server
 app.listen(PORT, () => {
-  console.log(`=======================================================`);
-  console.log(`  Tu Techo Ideal - Secure Microservice`);
-  console.log(`  Running on port ${PORT}`);
-  console.log(`  Health Check: http://localhost:${PORT}/health`);
-  console.log(`=======================================================`);
+  console.log(`Tu Techo Ideal Bot running on port ${PORT}`);
 });
