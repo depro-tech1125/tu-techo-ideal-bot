@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: tu-techo-ideal-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: KOMMO_SUBDOMAIN
+        sync: false
+      - key: KOMMO_TOKEN
+        sync: false
+      - key: KOMMO_BOT_ID
+        sync: false
+      - key: KOMMO_FIELD_ID
+        sync: false
+      - key: GOOGLE_SHEET_CSV_URL
+        sync: false
+      - key: USE_CLAUDE
+        value: "false"
+      - key: CLAUDE_API_KEY
+        sync: false
