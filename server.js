@@ -145,6 +145,65 @@ function formatSingleProperty(p) {
   return out;
 }
 
+// ==========================================
+// 🤖 INTEGRACIÓN CON CLAUDE AI (OPENROUTER)
+// ==========================================
+async function generateClaudeResponse(userMessage, availableProperties) {
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const formattedInventory = availableProperties.map((p, i) => {
+      const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
+      return `${i + 1}. [${p.ID_PROPIEDAD || 'PROP'}] ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${p.LINK_FOTOS || 'No link'}`;
+    }).join('\n');
+
+    const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
+Tu objetivo es responder de forma amable, profesional, concisa y persuasiva para agendar visitas presenciales.
+
+REGLAS CRÍTICAS E INVIOLABLES:
+1. Comienza siempre tus respuestas iniciales con el saludo oficial exacto:
+"¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨"
+2. SI EL CLIENTE PIDE CASAS EN VENTA: Solo ofrece propiedades cuya "Operación" sea estrictamente "Venta". NUNCA ofrezcas un alquiler si el cliente pidió comprar o venta.
+3. SI EL CLIENTE PIDE ALQUILER: Solo ofrece propiedades cuya "Operación" sea "Alquiler".
+4. INVENTARIO REAL EN TIEMPO REAL:
+${formattedInventory}
+5. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
+6. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
+7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.`;
+
+    const model = process.env.CLAUDE_MODEL || 'anthropic/claude-3.5-sonnet';
+
+    const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+      model: model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ],
+      temperature: 0.3,
+      max_tokens: 600
+    }, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://tu-techo-ideal-bot-1.onrender.com',
+        'X-Title': 'Tu Techo Ideal Bot',
+        'Content-Type': 'application/json'
+      },
+      timeout: 12000
+    });
+
+    const aiMessage = response.data?.choices?.[0]?.message?.content?.trim();
+    if (aiMessage) {
+      console.log(`[Claude via OpenRouter] Response generated successfully (${aiMessage.length} chars)`);
+      return aiMessage;
+    }
+    return null;
+  } catch (err) {
+    console.warn('[Claude/OpenRouter Error]:', err.response?.data || err.message);
+    return null; // Fallback al motor determinístico
+  }
+}
+
 async function generateResponse(userMessage, allProperties) {
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
@@ -154,6 +213,15 @@ async function generateResponse(userMessage, allProperties) {
     const status = normalizeText(row.ESTATUS || row.Estatus || row.estatus);
     return status === 'disponible';
   });
+
+  // Si Claude está activado y configurado en Render / .env, usamos Claude AI
+  if (process.env.USE_CLAUDE === 'true') {
+    const claudeResult = await generateClaudeResponse(userMessage, available);
+    if (claudeResult) {
+      return claudeResult;
+    }
+    console.log('[Fallback] Claude no respondió o dio error, usando motor determinístico de respaldo.');
+  }
 
   // Saludo oficial corregido exactamente según instrucciones del usuario
   const baseGreeting = `¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
