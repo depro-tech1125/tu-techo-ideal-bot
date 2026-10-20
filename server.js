@@ -214,8 +214,8 @@ async function generateResponse(userMessage, allProperties) {
     return status === 'disponible';
   });
 
-  // Si Claude está configurado y no está explícitamente apagado, usamos Claude AI
-  const isClaudeEnabled = process.env.USE_CLAUDE !== 'false';
+  // Usamos Claude AI por defecto (con fallback automático al motor determinístico si falla)
+  const isClaudeEnabled = process.env.DISABLE_CLAUDE !== 'true';
   if (isClaudeEnabled) {
     const claudeResult = await generateClaudeResponse(userMessage, available);
     if (claudeResult) {
@@ -543,7 +543,7 @@ app.get('/health', (req, res) => {
   res.send({
     status: 'running',
     service: 'Tu Techo Ideal Bot Microservice - v3.0 Claude AI Edition',
-    claude_enabled: process.env.USE_CLAUDE !== 'false',
+    claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     uptime_seconds: Math.floor(process.uptime())
   });
