@@ -352,7 +352,8 @@ ${formattedInventory}
 6. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
 7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
 8. Si el cliente solicita agendar una cita o visita, o muestra interés en comprar, indícale amablemente que puede escribir directamente al WhatsApp de Robert Jiménez: https://wa.me/584223115105
-9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").`;
+9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
+10. FILTRO DE CONVERSACIÓN PERSONAL: Si el mensaje del remitente es una conversación personal, familiar, saludo informal entre amigos, o algo totalmente ajeno al negocio inmobiliario (por ejemplo: "¿dónde estás?", "¿a qué hora nos vemos?", "vamos a comer", "pásame el documento"), responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
@@ -363,7 +364,7 @@ ${formattedInventory}
         { role: 'user', content: userMessage }
       ],
       temperature: 0.3,
-      max_tokens: 600
+      max_tokens: 350
     }, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -376,6 +377,10 @@ ${formattedInventory}
 
     let aiMessage = response.data?.choices?.[0]?.message?.content?.trim();
     if (aiMessage) {
+      if (aiMessage.includes('IGNORAR_NO_INMOBILIARIO')) {
+        console.log('[Claude Filter] Mensaje clasificado como conversación personal/ajena. No se responde.');
+        return 'SKIP_MESSAGE';
+      }
       // Limpieza de seguridad: eliminar cualquier mención accidental a códigos tipo [REF-xxx] o REF-xxx
       aiMessage = aiMessage.replace(/\[\s*REF-[^\]]+\]\s*/gi, '').replace(/\bREF-\d+\b\s*/gi, '');
       console.log(`[Claude via OpenRouter] Response generated successfully (${aiMessage.length} chars)`);
@@ -396,30 +401,34 @@ async function generateResponse(userMessage, allProperties) {
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
+  // Saludo oficial corregido exactamente según instrucciones del usuario
+  const baseGreeting = `¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
+
+  // 🛑 OPTIMIZACIÓN AHORRO DE TOKENS: Saludos iniciales responden a costo $0 sin llamar a la API
+  const greetingsList = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'hola buenas'];
+  const isOnlyGreeting = greetingsList.some(g => q === g || q === `${g}!` || q === `${g}.`);
+  if (isOnlyGreeting || q.length < 5) {
+    console.log('[Cost Optimization] Simple greeting detected. Responding with base greeting at $0.00 token cost.');
+    return `${baseGreeting}¿En qué podemos ayudarte hoy? ¿Estás buscando comprar, alquilar o vender algún inmueble?`;
+  }
+
   // Filtramos solo las disponibles
   const available = allProperties.filter(row => {
     const status = normalizeText(row.ESTATUS || row.Estatus || row.estatus);
     return status === 'disponible';
   });
 
-  // Usamos Claude AI por defecto (con fallback automático al motor determinístico si falla)
+  // Usamos Claude AI para consultas reales de inmuebles
   const isClaudeEnabled = process.env.DISABLE_CLAUDE !== 'true';
   if (isClaudeEnabled) {
     const claudeResult = await generateClaudeResponse(userMessage, available);
+    if (claudeResult === 'SKIP_MESSAGE') {
+      return null; // Mensaje personal ignorado
+    }
     if (claudeResult) {
       return claudeResult;
     }
     console.log('[Fallback] Claude no respondió o dio error, usando motor determinístico de respaldo.');
-  }
-
-  // Saludo oficial corregido exactamente según instrucciones del usuario
-  const baseGreeting = `¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
-
-  // 1. Saludos simples
-  const greetingsList = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'hola buenas'];
-  const isOnlyGreeting = greetingsList.some(g => q === g || q === `${g}!` || q === `${g}.`);
-  if (isOnlyGreeting || q.length < 5) {
-    return `${baseGreeting}¿En qué podemos ayudarte hoy? ¿Estás buscando comprar, alquilar o vender algún inmueble?`;
   }
 
   // 2. Cliente pide cita o visita directamente
@@ -710,6 +719,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     // 2. Generar respuesta personalizada
     console.log('[Processing] Generating response...');
     const responseText = await generateResponse(userText, properties);
+    if (!responseText) {
+      console.log('[Processing] No response required (personal conversation or non-real estate). Skipping delivery.');
+      return;
+    }
     console.log('[Processing] Response text:\n', responseText);
 
     // 3. Guardar en Kommo
