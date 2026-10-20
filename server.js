@@ -87,44 +87,127 @@ function normalizeText(text) {
     .trim();
 }
 
-function isHighIntent(text) {
+// ==========================================
+// 🚨 DETECCIÓN Y ALERTAS DE LEADS CALIENTES
+// ==========================================
+function detectLeadIntent(text) {
   const q = normalizeText(text);
-  const hotKeywords = [
+
+  // 1. Cita o Visita presencial
+  const visitKeywords = [
     'cita', 'visita', 'agendar', 'verlo', 'verla', 'visitar', 
     'cuando podemos ir', 'cuando se puede ver', 'disponible para ver',
-    'mostrar', 'conocerlo', 'conocerla', 'me interesa ver', 'quiero ver'
+    'mostrar', 'conocerlo', 'conocerla', 'me interesa ver', 'quiero ver',
+    'ir a ver', 'horario para ver', 'puedo ir hoy', 'puedo ir manana'
   ];
-  return hotKeywords.some(kw => q.includes(kw));
+  if (visitKeywords.some(kw => q.includes(kw))) {
+    return { isHot: true, type: '📅 CITA / VISITA PRESENCIAL' };
+  }
+
+  // 2. Intención directa de compra / oferta
+  const buyKeywords = [
+    'quiero comprar', 'deseo comprar', 'interesado en comprar', 'interesada en comprar',
+    'listo para comprar', 'oferta', 'ofertar', 'negociable', 'precio final',
+    'formas de pago', 'metodo de pago', 'financiamiento', 'cuanto es lo minimo'
+  ];
+  if (buyKeywords.some(kw => q.includes(kw))) {
+    return { isHot: true, type: '💰 INTENCIÓN DE COMPRA / OFERTA' };
+  }
+
+  // 3. Alquiler inmediato
+  const rentKeywords = [
+    'quiero alquilar', 'deseo alquilar', 'interesado en alquilar', 'interesada en alquilar',
+    'listo para alquilar', 'para mudarme ya', 'mudanza inmediata'
+  ];
+  if (rentKeywords.some(kw => q.includes(kw))) {
+    return { isHot: true, type: '🔑 ALQUILER INMEDIATO' };
+  }
+
+  return { isHot: false, type: null };
 }
 
-// ==========================================
-// 🚨 ALERTAS EN KOMMO PARA ROBERT
-// ==========================================
-async function notifyRobertInKommo(leadId, clientText, clientName) {
-  try {
-    const token = process.env.KOMMO_TOKEN;
-    const subdomain = process.env.KOMMO_SUBDOMAIN;
-    const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
-    const now = Math.floor(Date.now() / 1000);
+async function dispatchAlertToRobert(leadId, clientText, clientName, intentType) {
+  const robertPhone = process.env.ROBERT_WHATSAPP || '+584223115105';
+  const cleanPhone = robertPhone.replace(/[^0-9]/g, '');
+  const token = process.env.KOMMO_TOKEN;
+  const subdomain = process.env.KOMMO_SUBDOMAIN;
+  const leadUrl = `https://${subdomain}.kommo.com/leads/detail/${leadId}`;
+  const now = Math.floor(Date.now() / 1000);
 
+  console.log(`\n🚨 [ALERTA DE CLIENTE CALIENTE DISPARADA] 🚨`);
+  console.log(`Tipo: ${intentType}`);
+  console.log(`Cliente: ${clientName} (Lead #${leadId})`);
+  console.log(`Destinatario WhatsApp: ${robertPhone}`);
+  console.log(`Mensaje: "${clientText}"`);
+
+  // 1. Tarea prioritaria en Kommo asignada a Robert
+  try {
+    const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
     const taskPayload = [
       {
         responsible_user_id: robertUserId,
         entity_id: parseInt(leadId, 10),
         entity_type: 'leads',
-        text: `🔥 CLIENTE CALIENTE: ${clientName || 'Cliente'} quiere agendar CITA/VISITA. Mensaje: "${clientText}"`,
+        text: `🔥 [${intentType}] ${clientName || 'Cliente'}: "${clientText}". WhatsApp Robert: ${robertPhone}`,
         complete_till: now + 1800,
         task_type_id: 1
       }
     ];
-
     await axios.post(`https://${subdomain}.kommo.com/api/v4/tasks`, taskPayload, {
       headers: { Authorization: token, 'Content-Type': 'application/json' },
       timeout: 5000
     });
-    console.log(`[Alert] Tarea de alerta creada en Kommo para Robert (Lead #${leadId})`);
+    console.log(`[Alert Kommo Task] Tarea urgente creada para Robert en Lead #${leadId}`);
   } catch (err) {
     console.warn('[Alert Error Kommo Task]:', err.response?.data || err.message);
+  }
+
+  // 2. Nota interna en el Lead de Kommo
+  try {
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}/notes`, [
+      {
+        note_type: 'common',
+        params: {
+          text: `🚨 ALERTA DISPARADA A ROBERT (${robertPhone})\n\nMotivo: ${intentType}\nCliente: ${clientName}\nMensaje: "${clientText}"\nEnlace: ${leadUrl}`
+        }
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Alert Kommo Note] Nota registrada en Lead #${leadId}`);
+  } catch (err) {
+    console.warn('[Alert Error Kommo Note]:', err.response?.data || err.message);
+  }
+
+  // 3. Envío directo a WhatsApp si CallMeBot o Gateway está configurado
+  const alertWhatsAppText = `🚨 *ALERTA TU TECHO IDEAL* 🚨\n\n` +
+    `👤 *Cliente:* ${clientName || 'Cliente'}\n` +
+    `🎯 *Motivo:* ${intentType}\n` +
+    `💬 *Mensaje:* "${clientText}"\n\n` +
+    `🔗 *Ver Lead en Kommo:*\n${leadUrl}\n\n` +
+    `⚡ _¡Atiende a este cliente de inmediato para asegurar el cierre!_`;
+
+  if (process.env.CALLMEBOT_API_KEY) {
+    try {
+      const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodeURIComponent(alertWhatsAppText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
+      await axios.get(callmebotUrl, { timeout: 8000 });
+      console.log(`[WhatsApp Alert] Mensaje enviado a WhatsApp ${robertPhone} vía CallMeBot`);
+    } catch (e) {
+      console.warn(`[WhatsApp Alert CallMeBot Error]:`, e.message);
+    }
+  }
+
+  if (process.env.WHATSAPP_GATEWAY_URL) {
+    try {
+      await axios.post(process.env.WHATSAPP_GATEWAY_URL, {
+        phone: cleanPhone,
+        message: alertWhatsAppText
+      }, { timeout: 8000 });
+      console.log(`[WhatsApp Alert] Mensaje enviado vía WhatsApp Gateway a ${robertPhone}`);
+    } catch (e) {
+      console.warn(`[WhatsApp Alert Gateway Error]:`, e.message);
+    }
   }
 }
 
@@ -170,7 +253,8 @@ REGLAS CRÍTICAS E INVIOLABLES:
 ${formattedInventory}
 5. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
 6. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
-7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.`;
+7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
+8. Si el cliente solicita agendar una cita o visita, o muestra interés en comprar, indícale amablemente que puede escribir directamente al WhatsApp de Robert Jiménez: https://wa.me/584223115105`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
@@ -509,10 +593,11 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     console.log(`Message: "${userText}"`);
     console.log(`========================================`);
 
-    // Alerta de cita para Robert
-    if (isHighIntent(userText)) {
-      console.log(`[Hot Lead Alert] Intención de cita detectada para Lead #${leadId}!`);
-      notifyRobertInKommo(leadId, userText, clientName);
+    // Alerta de cliente caliente para Robert (+584223115105)
+    const intent = detectLeadIntent(userText);
+    if (intent.isHot) {
+      console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${leadId}!`);
+      dispatchAlertToRobert(leadId, userText, clientName, intent.type);
     }
 
     // 1. Obtener propiedades de Google Sheets
