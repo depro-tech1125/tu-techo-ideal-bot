@@ -209,6 +209,62 @@ async function dispatchAlertToRobert(leadId, clientText, clientName, intentType)
       console.warn(`[WhatsApp Alert Gateway Error]:`, e.message);
     }
   }
+
+  // 4. Envío de Alerta por Correo Electrónico
+  try {
+    const alertEmail = process.env.ALERT_EMAIL || 'tutechoidealrd@gmail.com';
+    console.log(`[Email Alert] Alerta de cliente caliente dirigida a: ${alertEmail}`);
+    if (process.env.EMAIL_GATEWAY_URL) {
+      await axios.post(process.env.EMAIL_GATEWAY_URL, {
+        to: alertEmail,
+        subject: `🔥 ALERTA INMEDIATA: ${clientName} solicita ${intentType}`,
+        message: alertWhatsAppText,
+        leadUrl: leadUrl
+      }, { timeout: 5000 });
+      console.log(`[Email Alert] Correo enviado vía Email Gateway a ${alertEmail}`);
+    }
+  } catch (e) {
+    console.warn(`[Email Alert Error]:`, e.message);
+  }
+}
+
+// ==========================================
+// 🤝 GESTIÓN DE TRASPASO A HUMANO (HANDOFF)
+// ==========================================
+const fs = require('fs');
+const path = require('path');
+const HANDOFF_FILE = path.join(__dirname, 'handoffs.json');
+
+let leadHandoffs = {};
+try {
+  if (fs.existsSync(HANDOFF_FILE)) {
+    leadHandoffs = JSON.parse(fs.readFileSync(HANDOFF_FILE, 'utf8'));
+  }
+} catch (e) {
+  leadHandoffs = {};
+}
+
+function saveHandoffs() {
+  try {
+    fs.writeFileSync(HANDOFF_FILE, JSON.stringify(leadHandoffs, null, 2));
+  } catch (e) {}
+}
+
+function checkLeadHandoffStatus(leadId) {
+  const h = leadHandoffs[String(leadId)];
+  if (!h || !h.timestamp) return { inHandoff: false, hoursElapsed: 999 };
+  const hoursElapsed = (Date.now() - h.timestamp) / (1000 * 60 * 60);
+  // Si pasaron menos de 24 horas, Robert y Bárbara están atendiendo ese mismo día
+  if (hoursElapsed < 24) {
+    return { inHandoff: true, hoursElapsed };
+  }
+  return { inHandoff: false, hoursElapsed }; // Ya pasó 1 día
+}
+
+function setLeadHandoff(leadId) {
+  leadHandoffs[String(leadId)] = { timestamp: Date.now() };
+  saveHandoffs();
+  console.log(`[Handoff Activated] Lead #${leadId} en traspaso a humano. El bot guarda silencio durante 24h.`);
 }
  
 // ==========================================
@@ -351,7 +407,7 @@ ${formattedInventory}
 5. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
 6. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
 7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
-8. Si el cliente solicita agendar una cita o visita, o muestra interés en comprar, indícale amablemente que puede escribir directamente al WhatsApp de Robert Jiménez: https://wa.me/584223115105
+8. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
 9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
 10. FILTRO DE CONVERSACIÓN PERSONAL: Si el mensaje del remitente es una conversación personal, familiar, saludo informal entre amigos, o algo totalmente ajeno al negocio inmobiliario (por ejemplo: "¿dónde estás?", "¿a qué hora nos vemos?", "vamos a comer", "pásame el documento"), responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".`;
 
@@ -432,8 +488,8 @@ async function generateResponse(userMessage, allProperties) {
   }
 
   // 2. Cliente pide cita o visita directamente
-  if (isHighIntent(q) && !q.includes('casa') && !q.includes('apto') && !q.includes('venta') && !q.includes('alquiler')) {
-    return `${baseGreeting}¡Con muchísimo gusto te coordinamos una visita presencial! 📅\n\nIndícanos por favor qué propiedad te gustaría conocer y qué día u horario te resulta más conveniente para agendarlo de inmediato.`;
+  if (detectLeadIntent(q).isHot && !q.includes('casa') && !q.includes('apto') && !q.includes('venta') && !q.includes('alquiler')) {
+    return `${baseGreeting}¡Excelente! En este momento le acabo de avisar a Robert y a Bárbara sobre tu interés para coordinar la visita. En breve uno de ellos continuará la conversación contigo directamente por aquí para definir la fecha y la hora. ¡Un placer atenderte!`;
   }
 
   // Detectar intención de Operación (Venta vs Alquiler)
@@ -706,11 +762,13 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     console.log(`Message: "${userText}"`);
     console.log(`========================================`);
 
-    // Alerta de cliente caliente para Robert (+584223115105)
+    // 🛑 CONTROL DE TRASPASO A HUMANO (HANDOFF)
+    const handoffStatus = checkLeadHandoffStatus(leadId);
     const intent = detectLeadIntent(userText);
-    if (intent.isHot) {
-      console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${leadId}!`);
-      dispatchAlertToRobert(leadId, userText, clientName, intent.type);
+
+    if (handoffStatus.inHandoff) {
+      console.log(`[Handoff Silence] Lead #${leadId} está en atención manual con Robert/Bárbara (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+      return;
     }
 
     // 1. Obtener propiedades de Google Sheets
@@ -732,6 +790,13 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     // 4. Disparar Salesbot
     console.log('[Processing] Triggering Salesbot delivery...');
     await triggerKommoSalesbot(leadId);
+
+    // 5. Si el cliente activó intención caliente (visita, cita, compra):
+    if (intent.isHot) {
+      console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${leadId}! Disparando alerta inmediata WhatsApp + Correo.`);
+      dispatchAlertToRobert(leadId, userText, clientName, intent.type);
+      setLeadHandoff(leadId); // Activamos silencio de 24h para que Robert y Bárbara atiendan personalmente
+    }
 
     console.log(`[Success] Message processed and delivered for Lead #${leadId}!\n`);
 
@@ -756,7 +821,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.1 Claude Pure Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.3 Smart Handoff Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
