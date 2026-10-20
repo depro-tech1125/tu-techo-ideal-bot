@@ -210,6 +210,99 @@ async function dispatchAlertToRobert(leadId, clientText, clientName, intentType)
     }
   }
 }
+ 
+// ==========================================
+// 💳 MONITOREO DE SALDO CLAUDE (OPENROUTER)
+// ==========================================
+let lastBalanceAlertTimestamp = 0;
+const LOW_BALANCE_THRESHOLD = 2.0; // Notificar si queda menos de $2.00 USD
+const LOW_BALANCE_COOLDOWN = 6 * 60 * 60 * 1000; // Máximo 1 alerta cada 6 horas
+
+async function sendLowBalanceNotification(remainingAmount) {
+  const robertPhone = process.env.ROBERT_WHATSAPP || '+584223115105';
+  const cleanPhone = robertPhone.replace(/[^0-9]/g, '');
+  const token = process.env.KOMMO_TOKEN;
+  const subdomain = process.env.KOMMO_SUBDOMAIN;
+
+  const warningMsg = `⚠️ *ALERTA SALDO CLAUDE AI - TU TECHO IDEAL* ⚠️\n\n` +
+    `El saldo de Claude en OpenRouter está por agotarse:\n` +
+    `💰 *Saldo restante:* $${Number(remainingAmount).toFixed(2)} USD\n\n` +
+    `Para que el bot siga atendiendo 100% con Claude sin interrupciones, por favor recargar créditos aquí:\n` +
+    `🔗 https://openrouter.ai/settings/credits\n\n` +
+    `_Atentamente, Sistema de Notificaciones Tu Techo Ideal_`;
+
+  console.log(`[Low Balance Alert] Notificando a Robert (+584223115105) sobre saldo ($${Number(remainingAmount).toFixed(2)} USD)...`);
+
+  // 1. WhatsApp vía CallMeBot
+  if (process.env.CALLMEBOT_API_KEY) {
+    try {
+      const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodeURIComponent(warningMsg)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
+      await axios.get(callmebotUrl, { timeout: 8000 });
+      console.log(`[Low Balance Alert] Mensaje enviado a WhatsApp ${robertPhone}`);
+    } catch (e) {
+      console.warn(`[Low Balance Alert CallMeBot Error]:`, e.message);
+    }
+  }
+
+  // 2. WhatsApp Gateway si existe
+  if (process.env.WHATSAPP_GATEWAY_URL) {
+    try {
+      await axios.post(process.env.WHATSAPP_GATEWAY_URL, {
+        phone: cleanPhone,
+        message: warningMsg
+      }, { timeout: 8000 });
+      console.log(`[Low Balance Alert] Mensaje enviado vía Gateway a ${robertPhone}`);
+    } catch (e) {
+      console.warn(`[Low Balance Alert Gateway Error]:`, e.message);
+    }
+  }
+
+  // 3. Tarea urgente en Kommo para Robert
+  try {
+    const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
+    const nowSec = Math.floor(Date.now() / 1000);
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/tasks`, [
+      {
+        responsible_user_id: robertUserId,
+        text: `⚠️ RECARGA CLAUDE AI URGENTE: Saldo bajo en OpenRouter ($${Number(remainingAmount).toFixed(2)} USD restantes). Recargar en https://openrouter.ai/settings/credits`,
+        complete_till: nowSec + 3600,
+        task_type_id: 1
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Low Balance Alert] Tarea urgente creada en Kommo para Robert`);
+  } catch (err) {
+    console.warn(`[Low Balance Alert Kommo Task Error]:`, err.message);
+  }
+}
+
+async function checkAndAlertLowBalance() {
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY || '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';
+  if (!apiKey) return;
+
+  try {
+    const res = await axios.get('https://openrouter.ai/api/v1/credits', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 5000
+    });
+
+    const total = res.data?.data?.total_credits || 0;
+    const usage = res.data?.data?.total_usage || 0;
+    const remaining = total - usage;
+
+    console.log(`[OpenRouter Balance] Restante: $${remaining.toFixed(3)} USD (Total: $${total}, Consumo: $${usage.toFixed(4)})`);
+
+    const now = Date.now();
+    if (remaining <= LOW_BALANCE_THRESHOLD && (now - lastBalanceAlertTimestamp > LOW_BALANCE_COOLDOWN)) {
+      lastBalanceAlertTimestamp = now;
+      await sendLowBalanceNotification(remaining);
+    }
+  } catch (err) {
+    console.warn('[Balance Check Warning]:', err.message);
+  }
+}
 
 // ==========================================
 // 🧠 MOTOR DE CONVERSACIÓN INTELIGENTE
@@ -236,9 +329,13 @@ async function generateClaudeResponse(userMessage, availableProperties) {
   if (!apiKey) return null;
 
   try {
+    // Verificación de saldo en segundo plano
+    checkAndAlertLowBalance().catch(e => console.warn('[Bg Balance Check]:', e.message));
+
+    // Formatear inventario SIN códigos de referencia internos (REF-xxx)
     const formattedInventory = availableProperties.map((p, i) => {
       const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
-      return `${i + 1}. [${p.ID_PROPIEDAD || 'PROP'}] ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${p.LINK_FOTOS || 'No link'}`;
+      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${p.LINK_FOTOS || 'No link'}`;
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
@@ -254,7 +351,8 @@ ${formattedInventory}
 5. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
 6. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
 7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
-8. Si el cliente solicita agendar una cita o visita, o muestra interés en comprar, indícale amablemente que puede escribir directamente al WhatsApp de Robert Jiménez: https://wa.me/584223115105`;
+8. Si el cliente solicita agendar una cita o visita, o muestra interés en comprar, indícale amablemente que puede escribir directamente al WhatsApp de Robert Jiménez: https://wa.me/584223115105
+9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
@@ -276,15 +374,21 @@ ${formattedInventory}
       timeout: 12000
     });
 
-    const aiMessage = response.data?.choices?.[0]?.message?.content?.trim();
+    let aiMessage = response.data?.choices?.[0]?.message?.content?.trim();
     if (aiMessage) {
+      // Limpieza de seguridad: eliminar cualquier mención accidental a códigos tipo [REF-xxx] o REF-xxx
+      aiMessage = aiMessage.replace(/\[\s*REF-[^\]]+\]\s*/gi, '').replace(/\bREF-\d+\b\s*/gi, '');
       console.log(`[Claude via OpenRouter] Response generated successfully (${aiMessage.length} chars)`);
       return aiMessage;
     }
     return null;
   } catch (err) {
     console.warn('[Claude/OpenRouter Error]:', err.response?.data || err.message);
-    return null; // Fallback al motor determinístico
+    if (err.response?.status === 402 || err.response?.data?.error?.code === 402) {
+      console.error('[CRITICAL] OpenRouter credits exhausted (402)! Notifying Robert...');
+      sendLowBalanceNotification(0.00);
+    }
+    return null; // Fallback al motor determinístico de emergencia
   }
 }
 
@@ -624,12 +728,25 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  let remainingCredits = null;
+  try {
+    const key = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY || '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';
+    const cRes = await axios.get('https://openrouter.ai/api/v1/credits', {
+      headers: { Authorization: `Bearer ${key}` },
+      timeout: 3000
+    });
+    const total = cRes.data?.data?.total_credits || 0;
+    const usage = cRes.data?.data?.total_usage || 0;
+    remainingCredits = Number((total - usage).toFixed(3));
+  } catch (e) {}
+
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.0 Claude AI Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.1 Claude Pure Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
+    credits_remaining_usd: remainingCredits,
     uptime_seconds: Math.floor(process.uptime())
   });
 });
