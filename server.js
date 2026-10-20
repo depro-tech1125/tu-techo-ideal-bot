@@ -149,7 +149,7 @@ function formatSingleProperty(p) {
 // 🤖 INTEGRACIÓN CON CLAUDE AI (OPENROUTER)
 // ==========================================
 async function generateClaudeResponse(userMessage, availableProperties) {
-  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY || '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';
   if (!apiKey) return null;
 
   try {
@@ -172,7 +172,7 @@ ${formattedInventory}
 6. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
 7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.`;
 
-    const model = process.env.CLAUDE_MODEL || 'anthropic/claude-3.5-sonnet';
+    const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: model,
@@ -214,8 +214,9 @@ async function generateResponse(userMessage, allProperties) {
     return status === 'disponible';
   });
 
-  // Si Claude está activado y configurado en Render / .env, usamos Claude AI
-  if (process.env.USE_CLAUDE === 'true') {
+  // Si Claude está configurado y no está explícitamente apagado, usamos Claude AI
+  const isClaudeEnabled = process.env.USE_CLAUDE !== 'false';
+  if (isClaudeEnabled) {
     const claudeResult = await generateClaudeResponse(userMessage, available);
     if (claudeResult) {
       return claudeResult;
@@ -539,7 +540,13 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.send({ status: 'running', service: 'Tu Techo Ideal Bot Microservice - v2.1 Precision Edition' });
+  res.send({
+    status: 'running',
+    service: 'Tu Techo Ideal Bot Microservice - v3.0 Claude AI Edition',
+    claude_enabled: process.env.USE_CLAUDE !== 'false',
+    claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
+    uptime_seconds: Math.floor(process.uptime())
+  });
 });
 
 app.listen(PORT, () => {

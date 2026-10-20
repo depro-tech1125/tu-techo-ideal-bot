@@ -20,6 +20,8 @@ services:
       - key: GOOGLE_SHEET_CSV_URL
         sync: false
       - key: USE_CLAUDE
-        value: "false"
-      - key: CLAUDE_API_KEY
-        sync: false
+        value: "true"
+      - key: CLAUDE_MODEL
+        value: "anthropic/claude-sonnet-4.5"
+      - key: OPENROUTER_API_KEY
+        value: "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"
