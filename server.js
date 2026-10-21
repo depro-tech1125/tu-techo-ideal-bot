@@ -297,7 +297,7 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
   console.log(`\n🚨 [${alertHeadline}] 🚨`);
   console.log(`Cliente / Colega: ${clientIdentifier}`);
   console.log(`Pregunta recibida: "${userText}"`);
-  console.log(`Inmueble / Zona: ${requestedItem}`);
+  console.log(`Inmueble / Zona / Enlace: ${requestedItem}`);
   console.log(`Destinatario WhatsApp: ${primaryPhone}`);
   console.log(`Lead URL: ${leadUrl}`);
 
@@ -309,7 +309,7 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
         responsible_user_id: robertUserId,
         entity_id: parseInt(leadId, 10),
         entity_type: 'leads',
-        text: `🚨 ${alertHeadline} | ${clientIdentifier}: "${userText}". Lead: ${leadUrl}`,
+        text: `🚨 Cargar en Sheets: No puedo responder a ${clientIdentifier} sobre "${requestedItem}". Mensaje: "${userText}". Lead: ${leadUrl}`,
         complete_till: now + 1800,
         task_type_id: 1
       }
@@ -328,7 +328,7 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
       {
         note_type: 'common',
         params: {
-          text: `🚨 ${alertHeadline}\n\nCliente/Remitente: ${clientIdentifier}\nPregunta recibida: "${userText}"\nInmueble consultado: ${requestedItem}\nEnlace Lead: ${leadUrl}\n\n⚡ El bot no respondió a esta persona y guarda silencio para que Robert responda directamente.`
+          text: `🚨 ${alertHeadline}\n\n⚠️ RECUERDA CARGAR LA INFORMACIÓN DE ESTE INMUEBLE EN GOOGLE SHEETS.\nNo puedo responder al cliente porque no tengo información de este inmueble en Google Sheets y no puedo inventarla.\n\nCliente/Remitente: ${clientIdentifier}\nPregunta recibida: "${userText}"\nInmueble / Enlace consultado: ${requestedItem}\nEnlace Lead: ${leadUrl}\n\n⚡ El bot no respondió a esta persona y guarda silencio para que Robert o Bárbara respondan directamente.`
         }
       }
     ], {
@@ -342,11 +342,13 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
 
   // 3. Envío directo por WhatsApp a Robert
   const alertWhatsAppText = `🚨 *${alertHeadline}* 🚨\n\n` +
-    `👤 *Cliente / Colega:* ${clientIdentifier}\n` +
-    `💬 *Pregunta:* "${userText}"\n` +
-    `📍 *Inmueble:* ${requestedItem || 'No registrado en Sheets'}\n\n` +
-    `🔗 *Ver chat en Kommo:*\n${leadUrl}\n\n` +
-    `⚡ _El bot NO respondió este mensaje y guarda silencio para que atiendas personalmente._`;
+    `⚠️ *Recuerda cargar la información de este inmueble en Google Sheets.*\n` +
+    `_No puedo responder al cliente porque NO tengo información de este inmueble en Google Sheets y no puedo inventarla._\n\n` +
+    `👤 *Cliente / Remitente:* ${clientIdentifier}\n` +
+    `📍 *Inmueble / Enlace consultado:* ${requestedItem || 'Inmueble no registrado'}\n` +
+    `💬 *Mensaje del cliente:* "${userText}"\n\n` +
+    `🔗 *Atender chat directamente en Kommo:*\n${leadUrl}\n\n` +
+    `⚡ _El bot NO respondió nada al cliente y guarda silencio para que atiendas directamente._`;
 
   // 3.1 Envío directo al WhatsApp de Robert a través de su chat en Kommo (Lead #7882504)
   try {
@@ -583,11 +585,11 @@ ${formattedInventory}
 9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
 10. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
 Tu único propósito es ofrecer inmuebles del inventario y coordinar citas. NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción, charla informal, comentario casual o ajeno a buscar o visitar un inmueble, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO". NO debes conversar, eso lo hacen Robert y Bárbara.
-11. CONSULTA DE INMUEBLE, ZONA O DETALLE NO REGISTRADO EN GOOGLE SHEETS:
-Si el cliente o colega pregunta por un inmueble, zona, alquiler, características, aceptación de mascotas o cualquier condición de una propiedad que NO esté claramente en el inventario real de Google Sheets de arriba (por ejemplo: pregunta si un apartamento en La California Norte acepta mascotas, o si tenemos apartamentos en alquiler, o casas en venta en zonas no listadas):
-NO DEBES RESPONDERLE AL CLIENTE NI SALUDARLO.
+11. CONSULTA DE INMUEBLE, ENLACES (WASI, CONEXA, PORTALES), ZONAS O DETALLES NO REGISTRADOS EN GOOGLE SHEETS:
+Si el cliente o colega pregunta por un inmueble, enlace de Wasi, enlace web, código externo, zona, alquiler, características, aceptación de mascotas o cualquier propiedad que NO esté claramente en el inventario real de Google Sheets de arriba (por ejemplo: enlace o código de Wasi como 10493109 o Los Samanes, apartamento en La California Norte, o alquiler de apartamentos):
+NO DEBES RESPONDERLE AL CLIENTE NI SALUDARLO BAJO NINGUNA CIRCUNSTANCIA. NUNCA INVENTES INFORMACIÓN.
 Responde ÚNICAMENTE en este formato exacto de una sola línea:
-NO_DISPONIBLE: [Escribe aquí el inmueble, zona o detalle consultado, por ejemplo: Apartamento en La California Norte - Mascotas]`;
+NO_DISPONIBLE: [Escribe aquí el inmueble, enlace o consulta no registrada, por ejemplo: Apartamento en Los Samanes - Wasi 10493109]`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
@@ -1063,7 +1065,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.6 Silent Missing Property & Anti-Chitchat Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.7 Strict Sheets-Only & Wasi Alert Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
