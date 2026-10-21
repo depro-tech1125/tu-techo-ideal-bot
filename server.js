@@ -139,6 +139,40 @@ function isCasualOrChitChat(text) {
 }
 
 // ==========================================
+// 🎯 COMPROBACIÓN ESTRICTA DE INTENCIÓN INMOBILIARIA
+// "NO SE RESPONDE a menos que te diga hola estoy interesada o interesado en comprar, alquilar un inmueble o vender..."
+// ==========================================
+function hasExplicitRealEstateIntent(text) {
+  const q = normalizeText(text);
+
+  // Descartar mensajes del sistema, menciones de historias, reels o restricciones de Instagram
+  if (
+    q.includes('menciono en su historia') ||
+    q.includes('restricciones de instagram') ||
+    q.includes('no podemos mostrar este mensaje') ||
+    q.includes('abrir en instagram')
+  ) {
+    return false;
+  }
+
+  const intentKeywords = [
+    'comprar', 'compra', 'compro', 'adquirir',
+    'alquilar', 'alquiler', 'rentar', 'renta',
+    'vender', 'venta', 'vendo',
+    'interesado', 'interesada', 'interesados', 'interesa', 'interesan',
+    'busco', 'buscando',
+    'casa', 'casas', 'apto', 'aptos', 'apartamento', 'apartamentos',
+    'quinta', 'quintas', 'local', 'locales', 'oficina', 'oficinas',
+    'comercial', 'galpon', 'terreno', 'inmueble', 'inmuebles', 'propiedad', 'propiedades',
+    'precio', 'precios', 'costo', 'presupuesto',
+    'macaracuay', 'alta florida', 'florida', 'boyera', 'hatillo',
+    'wasi', 'http'
+  ];
+
+  return intentKeywords.some(kw => q.includes(kw));
+}
+
+// ==========================================
 // 🚨 DETECCIÓN Y ALERTAS DE LEADS CALIENTES
 // ==========================================
 function detectLeadIntent(text) {
@@ -654,16 +688,11 @@ async function generateResponse(userMessage, allProperties) {
   // Saludo oficial corregido exactamente según instrucciones del usuario
   const baseGreeting = `¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
 
-  // 🛑 OPTIMIZACIÓN AHORRO DE TOKENS: Saludos iniciales responden a costo $0 sin llamar a la API
-  const greetingsList = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'hola buenas'];
-  const isOnlyGreeting = greetingsList.some(g => q === g || q === `${g}!` || q === `${g}.`);
-  if (isOnlyGreeting || q.length < 5) {
-    console.log('[Cost Optimization] Simple greeting detected. Responding with base greeting at $0.00 token cost.');
-    return {
-      text: `${baseGreeting}¿En qué podemos ayudarte hoy? ¿Estás buscando comprar, alquilar o vender algún inmueble?`,
-      notFoundItem: null,
-      skip: false
-    };
+  // 🛑 FILTRO 2 ESTRICTO: NO SE RESPONDE A MENOS QUE TENGA INTENCIÓN INMOBILIARIA EXPLÍCITA
+  // Regla del usuario: "NO SE RESPONDE a menos que te diga hola estoy interesada o interesado en comprar, alquilar un inmueble o vender..."
+  if (!hasExplicitRealEstateIntent(cleanMessage)) {
+    console.log(`[Strict Intent Gate] Mensaje sin intención inmobiliaria explícita ("${cleanMessage}"). Silencio absoluto para proteger tokens y no molestar.`);
+    return { text: null, notFoundItem: null, skip: true };
   }
 
   // Filtramos solo las disponibles
@@ -1065,7 +1094,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.7 Strict Sheets-Only & Wasi Alert Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.8 Strict Intent Gate & Zero-Waste Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
