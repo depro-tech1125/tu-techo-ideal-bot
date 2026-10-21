@@ -109,7 +109,8 @@ function isCasualOrChitChat(text) {
     'voy a consultar', 'voy a pensar', 'lo voy a pensar', 'dejame pensarlo', 'dejame ver', 'dejame consultar',
     'voy a hablar con', 'hablo con mi esposa', 'hablo con mi esposo', 'hablo con mi socio',
     'como estas', 'como estan', 'que tal', 'epale', 'que hubo', 'bien y tu', 'todo bien',
-    'donde estas', 'a que hora nos vemos', 'vamos a comer', 'pasame el documento'
+    'donde estas', 'a que hora nos vemos', 'vamos a comer', 'pasame el documento',
+    'colega una pregunta', 'una pregunta', 'tengo una pregunta', 'tengo una duda', 'una consulta', 'hola colega', 'buenas colega', 'colega'
   ];
 
   if (casualPhrases.some(p => q === p || q === `${p}!` || q === `${p}.` || q === `${p}?` || q.startsWith(p + ' ') || q.endsWith(' ' + p))) {
@@ -177,7 +178,7 @@ function detectLeadIntent(text) {
 }
 
 async function dispatchAlertToRobert(leadId, clientText, clientName, intentType) {
-  const robertPhone = process.env.ROBERT_WHATSAPP || '+584223115105';
+  const robertPhone = process.env.ROBERT_WHATSAPP || '+584143115105';
   const cleanPhone = robertPhone.replace(/[^0-9]/g, '');
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN;
@@ -279,11 +280,11 @@ async function dispatchAlertToRobert(leadId, clientText, clientName, intentType)
 }
 
 // ==========================================
-// ⚠️ ALERTA DE INVENTARIO FALTANTE EN GOOGLE SHEETS
+// 🚨 ALERTA: NO TENGO INFORMACIÓN DE ESTE INMUEBLE
 // ==========================================
 async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, requestedItem, userText) {
-  const robertPhone = process.env.ROBERT_WHATSAPP || '+584223115105';
-  const cleanPhone = robertPhone.replace(/[^0-9]/g, '');
+  const primaryPhone = process.env.ROBERT_WHATSAPP || '+584143115105';
+  const phoneNumbers = [primaryPhone, '+584223115105'];
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN;
   const leadUrl = `https://${subdomain}.kommo.com/leads/detail/${leadId}`;
@@ -291,14 +292,16 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
   const alertEmail = process.env.ALERT_EMAIL || 'tutechoidealrd@gmail.com';
 
   const clientIdentifier = `${clientName || 'Cliente'}${clientPhone ? ' (' + clientPhone + ')' : ''}`;
-  const alertContent = `Recuerda cargar la informacion en google sheets el cliente ${clientIdentifier} esta preguntado por ${requestedItem || 'un inmueble'} y no tengo informacion de este inmueble`;
+  const alertHeadline = 'ALERTA NO TENGO INFORMACION DE ESTE INMUEBLE ES IMPORTANTE RESPONDER';
 
-  console.log(`\n⚠️ [ALERTA DE INVENTARIO FALTANTE EN GOOGLE SHEETS] ⚠️`);
-  console.log(`Alerta: "${alertContent}"`);
-  console.log(`Mensaje original del cliente: "${userText}"`);
+  console.log(`\n🚨 [${alertHeadline}] 🚨`);
+  console.log(`Cliente / Colega: ${clientIdentifier}`);
+  console.log(`Pregunta recibida: "${userText}"`);
+  console.log(`Inmueble / Zona: ${requestedItem}`);
+  console.log(`Destinatario WhatsApp: ${primaryPhone}`);
   console.log(`Lead URL: ${leadUrl}`);
 
-  // 1. Tarea urgente en Kommo asignada a Robert (dispara notificación interna y push)
+  // 1. Tarea urgente en Kommo asignada a Robert
   try {
     const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
     await axios.post(`https://${subdomain}.kommo.com/api/v4/tasks`, [
@@ -306,15 +309,15 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
         responsible_user_id: robertUserId,
         entity_id: parseInt(leadId, 10),
         entity_type: 'leads',
-        text: `⚠️ ${alertContent}. Consulta: "${userText}"`,
-        complete_till: now + 3600,
+        text: `🚨 ${alertHeadline} | ${clientIdentifier}: "${userText}". Lead: ${leadUrl}`,
+        complete_till: now + 1800,
         task_type_id: 1
       }
     ], {
       headers: { Authorization: token, 'Content-Type': 'application/json' },
       timeout: 5000
     });
-    console.log(`[Missing Property Task] Tarea de alerta creada en Kommo para Robert en Lead #${leadId}`);
+    console.log(`[Missing Property Task] Tarea urgente creada en Kommo para Robert en Lead #${leadId}`);
   } catch (err) {
     console.warn('[Missing Property Task Error]:', err.response?.data || err.message);
   }
@@ -325,7 +328,7 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
       {
         note_type: 'common',
         params: {
-          text: `⚠️ ALERTA: INVENTARIO NO REGISTRADO EN GOOGLE SHEETS\n\n${alertContent}\n\nMensaje original del cliente: "${userText}"\nEnlace: ${leadUrl}`
+          text: `🚨 ${alertHeadline}\n\nCliente/Remitente: ${clientIdentifier}\nPregunta recibida: "${userText}"\nInmueble consultado: ${requestedItem}\nEnlace Lead: ${leadUrl}\n\n⚡ El bot no respondió a esta persona y guarda silencio para que Robert responda directamente.`
         }
       }
     ], {
@@ -337,31 +340,47 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
     console.warn('[Missing Property Note Error]:', err.response?.data || err.message);
   }
 
-  // 3. WhatsApp directo a Robert (+584223115105)
-  const alertWhatsAppText = `⚠️ *ALERTA INVENTARIO GOOGLE SHEETS* ⚠️\n\n` +
-    `${alertContent}\n\n` +
-    `💬 *Mensaje cliente:* "${userText}"\n` +
-    `🔗 *Ver Lead:* ${leadUrl}\n\n` +
-    `⚡ _Se ha silenciado al bot para este lead. Por favor contactar al cliente._`;
+  // 3. Envío directo por WhatsApp a Robert
+  const alertWhatsAppText = `🚨 *${alertHeadline}* 🚨\n\n` +
+    `👤 *Cliente / Colega:* ${clientIdentifier}\n` +
+    `💬 *Pregunta:* "${userText}"\n` +
+    `📍 *Inmueble:* ${requestedItem || 'No registrado en Sheets'}\n\n` +
+    `🔗 *Ver chat en Kommo:*\n${leadUrl}\n\n` +
+    `⚡ _El bot NO respondió este mensaje y guarda silencio para que atiendas personalmente._`;
 
-  if (process.env.CALLMEBOT_API_KEY) {
-    try {
-      const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodeURIComponent(alertWhatsAppText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
-      await axios.get(callmebotUrl, { timeout: 8000 });
-      console.log(`[WhatsApp Alert] Notificación enviada a WhatsApp Robert (${robertPhone})`);
-    } catch (e) {
-      console.warn(`[WhatsApp Alert Error]:`, e.message);
+  // 3.1 Envío directo al WhatsApp de Robert a través de su chat en Kommo (Lead #7882504)
+  try {
+    const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || '7882504';
+    if (robertLeadId && String(leadId) !== String(robertLeadId)) {
+      await updateKommoLead(robertLeadId, alertWhatsAppText);
+      await triggerKommoSalesbot(robertLeadId);
+      console.log(`[WhatsApp Alert to Robert] Mensaje de alerta enviado al WhatsApp de Robert (+584143115105) vía Kommo Lead #${robertLeadId}`);
     }
+  } catch (e) {
+    console.warn('[WhatsApp Alert via Kommo Error]:', e.response?.data || e.message);
   }
 
-  if (process.env.WHATSAPP_GATEWAY_URL) {
-    try {
-      await axios.post(process.env.WHATSAPP_GATEWAY_URL, {
-        phone: cleanPhone,
-        message: alertWhatsAppText
-      }, { timeout: 8000 });
-      console.log(`[WhatsApp Alert] Notificación enviada vía Gateway a ${robertPhone}`);
-    } catch (e) {}
+  for (const phone of phoneNumbers) {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (process.env.CALLMEBOT_API_KEY) {
+      try {
+        const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodeURIComponent(alertWhatsAppText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
+        await axios.get(callmebotUrl, { timeout: 8000 });
+        console.log(`[WhatsApp Alert] Notificación enviada a WhatsApp ${phone}`);
+      } catch (e) {
+        console.warn(`[WhatsApp Alert CallMeBot Error]:`, e.message);
+      }
+    }
+
+    if (process.env.WHATSAPP_GATEWAY_URL) {
+      try {
+        await axios.post(process.env.WHATSAPP_GATEWAY_URL, {
+          phone: cleanPhone,
+          message: alertWhatsAppText
+        }, { timeout: 8000 });
+        console.log(`[WhatsApp Alert Gateway] Notificación enviada a ${phone}`);
+      } catch (e) {}
+    }
   }
 
   // 4. Envío de Alerta por Correo a Tu Techo Ideal (tutechoidealrd@gmail.com)
@@ -370,8 +389,8 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
     if (process.env.EMAIL_GATEWAY_URL) {
       await axios.post(process.env.EMAIL_GATEWAY_URL, {
         to: alertEmail,
-        subject: `⚠️ Cargar inventario en Google Sheets: Consulta de ${clientName}`,
-        message: alertContent,
+        subject: `🚨 ${alertHeadline} - ${clientName}`,
+        message: alertWhatsAppText,
         leadUrl: leadUrl
       }, { timeout: 5000 });
       console.log(`[Email Alert] Correo enviado a ${alertEmail}`);
@@ -428,7 +447,7 @@ const LOW_BALANCE_THRESHOLD = 2.0; // Notificar si queda menos de $2.00 USD
 const LOW_BALANCE_COOLDOWN = 6 * 60 * 60 * 1000; // Máximo 1 alerta cada 6 horas
 
 async function sendLowBalanceNotification(remainingAmount) {
-  const robertPhone = process.env.ROBERT_WHATSAPP || '+584223115105';
+  const robertPhone = process.env.ROBERT_WHATSAPP || '+584143115105';
   const cleanPhone = robertPhone.replace(/[^0-9]/g, '');
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN;
@@ -440,7 +459,7 @@ async function sendLowBalanceNotification(remainingAmount) {
     `🔗 https://openrouter.ai/settings/credits\n\n` +
     `_Atentamente, Sistema de Notificaciones Tu Techo Ideal_`;
 
-  console.log(`[Low Balance Alert] Notificando a Robert (+584223115105) sobre saldo ($${Number(remainingAmount).toFixed(2)} USD)...`);
+  console.log(`[Low Balance Alert] Notificando a Robert (${robertPhone}) sobre saldo ($${Number(remainingAmount).toFixed(2)} USD)...`);
 
   // 1. WhatsApp vía CallMeBot
   if (process.env.CALLMEBOT_API_KEY) {
@@ -564,13 +583,11 @@ ${formattedInventory}
 9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
 10. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
 Tu único propósito es ofrecer inmuebles del inventario y coordinar citas. NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción, charla informal, comentario casual o ajeno a buscar o visitar un inmueble, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO". NO debes conversar, eso lo hacen Robert y Bárbara.
-11. DETECCIÓN DE INMUEBLE NO REGISTRADO EN GOOGLE SHEETS:
-Si el cliente pregunta por un inmueble, zona, tipo de propiedad o condición que NO tenemos registrada en el inventario real de arriba (por ejemplo: pregunta por apartamentos en alquiler, o casas en venta en zonas no listadas, o cualquier inmueble no existente):
-DEBES RESPONDER OBLIGATORIAMENTE EN ESTE FORMATO EXACTO DE DOS LÍNEAS:
-NO_DISPONIBLE: [Escribe aquí de forma muy clara el tipo de inmueble y zona solicitada por el cliente, por ejemplo: Apartamento en Alquiler en La California o Apartamento en Alquiler]
-RESPUESTA: ¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨
-
-En este momento no disponemos en nuestro inventario activo de [tipo de inmueble/zona solicitada]. Sin embargo, ya le hemos notificado directamente a Robert y a Bárbara sobre tu solicitud para que verifiquen nuevas opciones disponibles y se comuniquen contigo en breve por este mismo chat para ayudarte personalmente. ¡Un placer atenderte!`;
+11. CONSULTA DE INMUEBLE, ZONA O DETALLE NO REGISTRADO EN GOOGLE SHEETS:
+Si el cliente o colega pregunta por un inmueble, zona, alquiler, características, aceptación de mascotas o cualquier condición de una propiedad que NO esté claramente en el inventario real de Google Sheets de arriba (por ejemplo: pregunta si un apartamento en La California Norte acepta mascotas, o si tenemos apartamentos en alquiler, o casas en venta en zonas no listadas):
+NO DEBES RESPONDERLE AL CLIENTE NI SALUDARLO.
+Responde ÚNICAMENTE en este formato exacto de una sola línea:
+NO_DISPONIBLE: [Escribe aquí el inmueble, zona o detalle consultado, por ejemplo: Apartamento en La California Norte - Mascotas]`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
@@ -601,13 +618,11 @@ En este momento no disponemos en nuestro inventario activo de [tipo de inmueble/
       // Limpieza de seguridad: eliminar cualquier mención accidental a códigos tipo [REF-xxx] o REF-xxx
       aiMessage = aiMessage.replace(/\[\s*REF-[^\]]+\]\s*/gi, '').replace(/\bREF-\d+\b\s*/gi, '');
 
-      // Verificar si detectó inmueble no disponible en Google Sheets
+      // Verificar si detectó inmueble o detalle no disponible en Google Sheets
       if (aiMessage.includes('NO_DISPONIBLE:')) {
-        const parts = aiMessage.split(/RESPUESTA:\s*/i);
-        const notFoundLine = parts[0].replace('NO_DISPONIBLE:', '').trim();
-        const clientText = parts[1] ? parts[1].trim() : aiMessage.replace(/NO_DISPONIBLE:[^\n]+/i, '').trim();
-        console.log(`[Claude Inventory Check] Inmueble no disponible detectado: "${notFoundLine}"`);
-        return { text: clientText, notFoundItem: notFoundLine, skip: false };
+        const notFoundDesc = aiMessage.replace(/NO_DISPONIBLE:\s*/i, '').split('\n')[0].trim();
+        console.log(`[Claude Inventory Check] Inmueble/Detalle no disponible detectado: "${notFoundDesc}"`);
+        return { text: null, notFoundItem: notFoundDesc, skip: false };
       }
 
       console.log(`[Claude via OpenRouter] Response generated successfully (${aiMessage.length} chars)`);
@@ -743,8 +758,8 @@ async function generateResponse(userMessage, allProperties) {
     (mentionsMacaracuay ? ' en Macaracuay' : (mentionsFlorida ? ' en Alta Florida' : (mentionsBoyera ? ' en La Boyera' : '')));
 
   return {
-    text: `${baseGreeting}En este momento no disponemos en nuestro inventario activo de esa opción específica (${requestedDesc.trim()}). Sin embargo, ya le hemos notificado directamente a Robert y a Bárbara para que verifiquen nuevas opciones y se comuniquen contigo en breve por este chat para ayudarte personalmente. ¡Un placer atenderte!`,
-    notFoundItem: requestedDesc.trim() || 'inmueble solicitado',
+    text: null,
+    notFoundItem: requestedDesc.trim() || 'Inmueble no registrado en Sheets',
     skip: false
   };
 }
@@ -930,6 +945,17 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
     const currentLeadId = String(leadId);
 
+    // 🛑 FILTRO 4.2: Ignorar si el mensaje procede del propio Robert Jiménez (Broker / Admin) o de su chat de alertas
+    const isRobertChat = currentLeadId === '7882504' ||
+      String(messageObj.contact_id) === '18822786' ||
+      clientPhone.includes('4143115105') ||
+      clientPhone.includes('4223115105');
+    if (isRobertChat) {
+      console.log(`[Webhook] Mensaje procedente del chat o número de Robert (${clientPhone || currentLeadId}). El bot no responde a Robert.`);
+      if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
+      return;
+    }
+
     // 🛑 FILTRO 5: Mutex Lock en Vuelo por Lead ID (Garantiza 0 duplicados y 0 tokens perdidos)
     if (activeProcessingLeads.has(currentLeadId)) {
       console.log(`[Webhook] Lead #${currentLeadId} ya está en procesamiento activo. Skipping para evitar duplicar tokens de Claude.`);
@@ -971,6 +997,22 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 2. Generar respuesta personalizada (Solo 1 llamada a Claude)
       console.log('[Processing] Generating response with Claude/Model...');
       const result = await generateResponse(userText, properties);
+
+      // 🛑 SI EL INMUEBLE O DETALLE NO ESTÁ EN GOOGLE SHEETS:
+      // "claude ese tipo de pregunta no debe responder sino mandar una alerta, por correo y al whatsapp de robert... Y listo..."
+      if (result && result.notFoundItem) {
+        console.log(`\n========================================`);
+        console.log(`[Missing Property] Consulta sobre "${result.notFoundItem}" no registrada en Sheets.`);
+        console.log(`El bot GUARDA SILENCIO ABSOLUTO con el cliente (${clientName}).`);
+        console.log(`Enviando alerta urgente a Robert (+584143115105) y por correo.`);
+        console.log(`========================================\n`);
+
+        await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
+        setLeadHandoff(currentLeadId); // Silenciar bot durante 24h para que Robert o Bárbara respondan personalmente
+        return; // ¡NO ENVIAR NINGÚN MENSAJE AL CLIENTE! ¡NO DISPARAR SALESBOT AL CLIENTE!
+      }
+
+      // Si el filtro determinístico o Claude clasificaron como charla casual, comentario o ignorar
       if (!result || result.skip || !result.text) {
         console.log('[Processing] No response required (casual conversation, chit-chat or personal talk). Skipping delivery.');
         return;
@@ -986,14 +1028,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log('[Processing] Triggering Salesbot single delivery...');
       await triggerKommoSalesbot(currentLeadId);
 
-      // 5. Si el inmueble NO está en Google Sheets: Alerta específica requerida
-      if (result.notFoundItem) {
-        console.log(`[Missing Property Alert] Cliente pregunta por "${result.notFoundItem}" no registrado en Sheets! Disparando alerta inmediata.`);
-        await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
-        setLeadHandoff(currentLeadId); // Silenciar bot durante 24h para que Robert o Bárbara continúen
-      }
-      // 6. Si el cliente activó intención caliente (visita, cita, compra):
-      else if (intent.isHot) {
+      // 5. Si el cliente activó intención caliente (visita, cita, compra):
+      if (intent.isHot) {
         console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${currentLeadId}! Disparando alerta inmediata WhatsApp + Correo.`);
         dispatchAlertToRobert(currentLeadId, userText, clientName, intent.type);
         setLeadHandoff(currentLeadId); // Activamos silencio de 24h para que Robert y Bárbara atiendan personalmente
@@ -1027,7 +1063,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.5 Strict Inventory & Anti-Chitchat Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.6 Silent Missing Property & Anti-Chitchat Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
