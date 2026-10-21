@@ -37,25 +37,27 @@ function rateLimiter(req, res, next) {
 }
 app.use(rateLimiter);
 
-// Deduplicación y Debounce por Lead para evitar envíos dobles
+// Deduplicación, Mutex en Vuelo y Debounce por Lead para evitar envíos dobles y tokens perdidos
 const processedMessages = new Set();
 const leadLastProcessed = new Map();
+const activeProcessingLeads = new Set();
+const activeProcessingTalks = new Set();
 
-function isDuplicate(msgId) {
-  if (!msgId) return false;
-  if (processedMessages.has(msgId)) return true;
-  processedMessages.add(msgId);
-  setTimeout(() => processedMessages.delete(msgId), 60000);
+function isDuplicate(key) {
+  if (!key) return false;
+  if (processedMessages.has(key)) return true;
+  processedMessages.add(key);
+  setTimeout(() => processedMessages.delete(key), 60000);
   return false;
 }
 
 function isDebounced(leadId) {
   const now = Date.now();
-  const last = leadLastProcessed.get(leadId);
-  if (last && (now - last) < 5000) { // 5 segundos de protección anti-doble envío
+  const last = leadLastProcessed.get(String(leadId));
+  if (last && (now - last) < 15000) { // 15 segundos de cooldown estricto anti-doble procesamiento
     return true;
   }
-  leadLastProcessed.set(leadId, now);
+  leadLastProcessed.set(String(leadId), now);
   return false;
 }
 
@@ -708,11 +710,24 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
-    // 🛑 FILTRO 4: Deduplicación por Message ID
-    const msgId = messageObj.id;
-    if (isDuplicate(msgId)) {
-      console.log(`[Webhook] Duplicate message ID ${msgId}. Skipping.`);
+    // 🛑 FILTRO 4: Deduplicación Robusta por Message ID y Huella de Contenido
+    const rawId = messageObj.id || messageObj.message_id || messageObj.element_id;
+    const contentHash = `${normalizeText(userText).substring(0, 50)}_${userText.length}`;
+    const msgKey = rawId ? `id_${rawId}` : `talk_${messageObj.talk_id || 'none'}_${contentHash}`;
+
+    if (isDuplicate(msgKey)) {
+      console.log(`[Webhook] Duplicate message key [${msgKey}]. Skipping.`);
       return;
+    }
+
+    // 🛑 FILTRO 4.1: Mutex Lock en Vuelo por Talk ID (Previene carreras concurrentes antes de resolver el lead)
+    const currentTalkId = messageObj.talk_id ? String(messageObj.talk_id) : null;
+    if (currentTalkId && activeProcessingTalks.has(currentTalkId)) {
+      console.log(`[Webhook] Talk #${currentTalkId} ya está en procesamiento en vuelo. Skipping petición paralela.`);
+      return;
+    }
+    if (currentTalkId) {
+      activeProcessingTalks.add(currentTalkId);
     }
 
     // Resolver Lead ID
@@ -744,61 +759,80 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
     if (!leadId) {
       console.log('[Webhook] Could not resolve lead entity_id. Skipping.');
+      if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
       return;
     }
 
-    // 🛑 FILTRO 5: Debounce de 5 segundos por Lead para evitar doble envío
-    if (isDebounced(leadId)) {
-      console.log(`[Webhook] Debounce activado para Lead #${leadId}. Skipping para evitar doble respuesta.`);
+    const currentLeadId = String(leadId);
+
+    // 🛑 FILTRO 5: Mutex Lock en Vuelo por Lead ID (Garantiza 0 duplicados y 0 tokens perdidos)
+    if (activeProcessingLeads.has(currentLeadId)) {
+      console.log(`[Webhook] Lead #${currentLeadId} ya está en procesamiento activo. Skipping para evitar duplicar tokens de Claude.`);
+      if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
       return;
     }
 
-    const clientName = messageObj.author?.name || 'Cliente';
-
-    console.log(`\n========================================`);
-    console.log(`[Processing New Message]`);
-    console.log(`Lead ID: ${leadId}`);
-    console.log(`Cliente: ${clientName}`);
-    console.log(`Message: "${userText}"`);
-    console.log(`========================================`);
-
-    // 🛑 CONTROL DE TRASPASO A HUMANO (HANDOFF)
-    const handoffStatus = checkLeadHandoffStatus(leadId);
-    const intent = detectLeadIntent(userText);
-
-    if (handoffStatus.inHandoff) {
-      console.log(`[Handoff Silence] Lead #${leadId} está en atención manual con Robert/Bárbara (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+    // 🛑 FILTRO 6: Debounce de 15 segundos por Lead
+    if (isDebounced(currentLeadId)) {
+      console.log(`[Webhook] Debounce activado para Lead #${currentLeadId} (ventana 15s). Skipping para evitar doble respuesta.`);
+      if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
       return;
     }
 
-    // 1. Obtener propiedades de Google Sheets
-    const properties = await getAvailableProperties();
+    activeProcessingLeads.add(currentLeadId);
 
-    // 2. Generar respuesta personalizada
-    console.log('[Processing] Generating response...');
-    const responseText = await generateResponse(userText, properties);
-    if (!responseText) {
-      console.log('[Processing] No response required (personal conversation or non-real estate). Skipping delivery.');
-      return;
+    try {
+      const clientName = messageObj.author?.name || 'Cliente';
+
+      console.log(`\n========================================`);
+      console.log(`[Processing New Message]`);
+      console.log(`Lead ID: ${currentLeadId}`);
+      console.log(`Cliente: ${clientName}`);
+      console.log(`Message: "${userText}"`);
+      console.log(`========================================`);
+
+      // 🛑 CONTROL DE TRASPASO A HUMANO (HANDOFF)
+      const handoffStatus = checkLeadHandoffStatus(currentLeadId);
+      const intent = detectLeadIntent(userText);
+
+      if (handoffStatus.inHandoff) {
+        console.log(`[Handoff Silence] Lead #${currentLeadId} está en atención manual con Robert/Bárbara (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+        return;
+      }
+
+      // 1. Obtener propiedades de Google Sheets
+      const properties = await getAvailableProperties();
+
+      // 2. Generar respuesta personalizada (Solo 1 llamada a Claude)
+      console.log('[Processing] Generating response with Claude/Model...');
+      const responseText = await generateResponse(userText, properties);
+      if (!responseText) {
+        console.log('[Processing] No response required (personal conversation or non-real estate). Skipping delivery.');
+        return;
+      }
+      console.log('[Processing] Response text:\n', responseText);
+
+      // 3. Guardar en Kommo
+      console.log('[Processing] Saving response to Kommo lead field...');
+      await updateKommoLead(currentLeadId, responseText);
+
+      // 4. Disparar Salesbot ÚNICA VEZ
+      console.log('[Processing] Triggering Salesbot single delivery...');
+      await triggerKommoSalesbot(currentLeadId);
+
+      // 5. Si el cliente activó intención caliente (visita, cita, compra):
+      if (intent.isHot) {
+        console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${currentLeadId}! Disparando alerta inmediata WhatsApp + Correo.`);
+        dispatchAlertToRobert(currentLeadId, userText, clientName, intent.type);
+        setLeadHandoff(currentLeadId); // Activamos silencio de 24h para que Robert y Bárbara atiendan personalmente
+      }
+
+      console.log(`[Success] Message strictly processed 1 single time for Lead #${currentLeadId}!\n`);
+
+    } finally {
+      activeProcessingLeads.delete(currentLeadId);
+      if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
     }
-    console.log('[Processing] Response text:\n', responseText);
-
-    // 3. Guardar en Kommo
-    console.log('[Processing] Saving response to Kommo lead field...');
-    await updateKommoLead(leadId, responseText);
-
-    // 4. Disparar Salesbot
-    console.log('[Processing] Triggering Salesbot delivery...');
-    await triggerKommoSalesbot(leadId);
-
-    // 5. Si el cliente activó intención caliente (visita, cita, compra):
-    if (intent.isHot) {
-      console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${leadId}! Disparando alerta inmediata WhatsApp + Correo.`);
-      dispatchAlertToRobert(leadId, userText, clientName, intent.type);
-      setLeadHandoff(leadId); // Activamos silencio de 24h para que Robert y Bárbara atiendan personalmente
-    }
-
-    console.log(`[Success] Message processed and delivered for Lead #${leadId}!\n`);
 
   } catch (err) {
     console.error('[Webhook Processing Error]:', err.response?.data || err.message);
@@ -821,7 +855,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.3 Smart Handoff Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.4 Anti-Duplicate & Mutex Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
