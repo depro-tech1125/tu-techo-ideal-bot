@@ -90,6 +90,54 @@ function normalizeText(text) {
 }
 
 // ==========================================
+// 🛑 FILTRO DETERMINÍSTICO ANTI-CHITCHAT Y CHARLA CASUAL
+// ==========================================
+function isCasualOrChitChat(text) {
+  const q = normalizeText(text);
+
+  // Lista de comentarios casuales, exclamaciones, bromas y opiniones
+  const casualPhrases = [
+    'si es una locura', 'una locura', 'que locura', 'es una locura', 'locura',
+    'jajaja', 'jaja', 'jeje', 'jiji', 'lol', 'xd',
+    'ok', 'oka', 'okey', 'okay', 'vale', 'dale', 'dale pues', 'dale fino', 'listo',
+    'gracias', 'muchas gracias', 'mil gracias', 'gracias amigo', 'gracias amiga',
+    'perfecto', 'excelente', 'bueno', 'buenisimo', 'fino', 'chevere', 'que fino', 'que chevere',
+    'de acuerdo', 'entendido', 'anotado', 'copiado',
+    'chao', 'adios', 'hasta luego', 'nos vemos', 'feliz dia', 'feliz tarde', 'feliz noche',
+    'muy caro', 'esta caro', 'esta muy caro', 'demasiado caro', 'no me alcanza', 'no llego a eso',
+    'yo te aviso', 'yo les aviso', 'despues te aviso', 'te estoy avisando', 'cualquier cosa te aviso',
+    'voy a consultar', 'voy a pensar', 'lo voy a pensar', 'dejame pensarlo', 'dejame ver', 'dejame consultar',
+    'voy a hablar con', 'hablo con mi esposa', 'hablo con mi esposo', 'hablo con mi socio',
+    'como estas', 'como estan', 'que tal', 'epale', 'que hubo', 'bien y tu', 'todo bien',
+    'donde estas', 'a que hora nos vemos', 'vamos a comer', 'pasame el documento'
+  ];
+
+  if (casualPhrases.some(p => q === p || q === `${p}!` || q === `${p}.` || q === `${p}?` || q.startsWith(p + ' ') || q.endsWith(' ' + p))) {
+    return true;
+  }
+
+  // Palabras clave de intención inmobiliaria
+  const realEstateKeywords = [
+    'casa', 'casas', 'apto', 'aptos', 'apartamento', 'apartamentos', 'quinta', 'quintas',
+    'local', 'locales', 'oficina', 'oficinas', 'comercial', 'galpon', 'terreno',
+    'venta', 'comprar', 'compra', 'alquiler', 'alquilar', 'renta', 'rentar',
+    'precio', 'precios', 'costo', 'valor', 'cuanto', 'presupuesto',
+    'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion',
+    'cita', 'visita', 'visitar', 'agendar', 'verlo', 'verla', 'disponible', 'disponibles',
+    'inmueble', 'inmuebles', 'propiedad', 'propiedades'
+  ];
+
+  const hasRealEstateIntent = realEstateKeywords.some(kw => q.includes(kw));
+
+  // Si no menciona nada del negocio inmobiliario y es un mensaje corto (< 40 caracteres):
+  if (!hasRealEstateIntent && q.length < 40) {
+    return true;
+  }
+
+  return false;
+}
+
+// ==========================================
 // 🚨 DETECCIÓN Y ALERTAS DE LEADS CALIENTES
 // ==========================================
 function detectLeadIntent(text) {
@@ -224,6 +272,109 @@ async function dispatchAlertToRobert(leadId, clientText, clientName, intentType)
         leadUrl: leadUrl
       }, { timeout: 5000 });
       console.log(`[Email Alert] Correo enviado vía Email Gateway a ${alertEmail}`);
+    }
+  } catch (e) {
+    console.warn(`[Email Alert Error]:`, e.message);
+  }
+}
+
+// ==========================================
+// ⚠️ ALERTA DE INVENTARIO FALTANTE EN GOOGLE SHEETS
+// ==========================================
+async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, requestedItem, userText) {
+  const robertPhone = process.env.ROBERT_WHATSAPP || '+584223115105';
+  const cleanPhone = robertPhone.replace(/[^0-9]/g, '');
+  const token = process.env.KOMMO_TOKEN;
+  const subdomain = process.env.KOMMO_SUBDOMAIN;
+  const leadUrl = `https://${subdomain}.kommo.com/leads/detail/${leadId}`;
+  const now = Math.floor(Date.now() / 1000);
+  const alertEmail = process.env.ALERT_EMAIL || 'tutechoidealrd@gmail.com';
+
+  const clientIdentifier = `${clientName || 'Cliente'}${clientPhone ? ' (' + clientPhone + ')' : ''}`;
+  const alertContent = `Recuerda cargar la informacion en google sheets el cliente ${clientIdentifier} esta preguntado por ${requestedItem || 'un inmueble'} y no tengo informacion de este inmueble`;
+
+  console.log(`\n⚠️ [ALERTA DE INVENTARIO FALTANTE EN GOOGLE SHEETS] ⚠️`);
+  console.log(`Alerta: "${alertContent}"`);
+  console.log(`Mensaje original del cliente: "${userText}"`);
+  console.log(`Lead URL: ${leadUrl}`);
+
+  // 1. Tarea urgente en Kommo asignada a Robert (dispara notificación interna y push)
+  try {
+    const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/tasks`, [
+      {
+        responsible_user_id: robertUserId,
+        entity_id: parseInt(leadId, 10),
+        entity_type: 'leads',
+        text: `⚠️ ${alertContent}. Consulta: "${userText}"`,
+        complete_till: now + 3600,
+        task_type_id: 1
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Missing Property Task] Tarea de alerta creada en Kommo para Robert en Lead #${leadId}`);
+  } catch (err) {
+    console.warn('[Missing Property Task Error]:', err.response?.data || err.message);
+  }
+
+  // 2. Nota interna en el Lead de Kommo
+  try {
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}/notes`, [
+      {
+        note_type: 'common',
+        params: {
+          text: `⚠️ ALERTA: INVENTARIO NO REGISTRADO EN GOOGLE SHEETS\n\n${alertContent}\n\nMensaje original del cliente: "${userText}"\nEnlace: ${leadUrl}`
+        }
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Missing Property Note] Nota registrada en Lead #${leadId}`);
+  } catch (err) {
+    console.warn('[Missing Property Note Error]:', err.response?.data || err.message);
+  }
+
+  // 3. WhatsApp directo a Robert (+584223115105)
+  const alertWhatsAppText = `⚠️ *ALERTA INVENTARIO GOOGLE SHEETS* ⚠️\n\n` +
+    `${alertContent}\n\n` +
+    `💬 *Mensaje cliente:* "${userText}"\n` +
+    `🔗 *Ver Lead:* ${leadUrl}\n\n` +
+    `⚡ _Se ha silenciado al bot para este lead. Por favor contactar al cliente._`;
+
+  if (process.env.CALLMEBOT_API_KEY) {
+    try {
+      const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodeURIComponent(alertWhatsAppText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
+      await axios.get(callmebotUrl, { timeout: 8000 });
+      console.log(`[WhatsApp Alert] Notificación enviada a WhatsApp Robert (${robertPhone})`);
+    } catch (e) {
+      console.warn(`[WhatsApp Alert Error]:`, e.message);
+    }
+  }
+
+  if (process.env.WHATSAPP_GATEWAY_URL) {
+    try {
+      await axios.post(process.env.WHATSAPP_GATEWAY_URL, {
+        phone: cleanPhone,
+        message: alertWhatsAppText
+      }, { timeout: 8000 });
+      console.log(`[WhatsApp Alert] Notificación enviada vía Gateway a ${robertPhone}`);
+    } catch (e) {}
+  }
+
+  // 4. Envío de Alerta por Correo a Tu Techo Ideal (tutechoidealrd@gmail.com)
+  try {
+    console.log(`[Email Alert] Alerta de inventario dirigida a: ${alertEmail}`);
+    if (process.env.EMAIL_GATEWAY_URL) {
+      await axios.post(process.env.EMAIL_GATEWAY_URL, {
+        to: alertEmail,
+        subject: `⚠️ Cargar inventario en Google Sheets: Consulta de ${clientName}`,
+        message: alertContent,
+        leadUrl: leadUrl
+      }, { timeout: 5000 });
+      console.log(`[Email Alert] Correo enviado a ${alertEmail}`);
     }
   } catch (e) {
     console.warn(`[Email Alert Error]:`, e.message);
@@ -397,7 +548,7 @@ async function generateClaudeResponse(userMessage, availableProperties) {
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
-Tu objetivo es responder de forma amable, profesional, concisa y persuasiva para agendar visitas presenciales.
+Tu único objetivo es responder de forma concisa, profesional y directa con los inmuebles disponibles en el inventario real de Google Sheets para agendar visitas presenciales.
 
 REGLAS CRÍTICAS E INVIOLABLES:
 1. Comienza siempre tus respuestas iniciales con el saludo oficial exacto:
@@ -411,7 +562,15 @@ ${formattedInventory}
 7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
 8. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
 9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
-10. FILTRO DE CONVERSACIÓN PERSONAL: Si el mensaje del remitente es una conversación personal, familiar, saludo informal entre amigos, o algo totalmente ajeno al negocio inmobiliario (por ejemplo: "¿dónde estás?", "¿a qué hora nos vemos?", "vamos a comer", "pásame el documento"), responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".`;
+10. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
+Tu único propósito es ofrecer inmuebles del inventario y coordinar citas. NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción, charla informal, comentario casual o ajeno a buscar o visitar un inmueble, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO". NO debes conversar, eso lo hacen Robert y Bárbara.
+11. DETECCIÓN DE INMUEBLE NO REGISTRADO EN GOOGLE SHEETS:
+Si el cliente pregunta por un inmueble, zona, tipo de propiedad o condición que NO tenemos registrada en el inventario real de arriba (por ejemplo: pregunta por apartamentos en alquiler, o casas en venta en zonas no listadas, o cualquier inmueble no existente):
+DEBES RESPONDER OBLIGATORIAMENTE EN ESTE FORMATO EXACTO DE DOS LÍNEAS:
+NO_DISPONIBLE: [Escribe aquí de forma muy clara el tipo de inmueble y zona solicitada por el cliente, por ejemplo: Apartamento en Alquiler en La California o Apartamento en Alquiler]
+RESPUESTA: ¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨
+
+En este momento no disponemos en nuestro inventario activo de [tipo de inmueble/zona solicitada]. Sin embargo, ya le hemos notificado directamente a Robert y a Bárbara sobre tu solicitud para que verifiquen nuevas opciones disponibles y se comuniquen contigo en breve por este mismo chat para ayudarte personalmente. ¡Un placer atenderte!`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
@@ -436,13 +595,23 @@ ${formattedInventory}
     let aiMessage = response.data?.choices?.[0]?.message?.content?.trim();
     if (aiMessage) {
       if (aiMessage.includes('IGNORAR_NO_INMOBILIARIO')) {
-        console.log('[Claude Filter] Mensaje clasificado como conversación personal/ajena. No se responde.');
-        return 'SKIP_MESSAGE';
+        console.log('[Claude Filter] Mensaje clasificado como conversación personal/ajena/comentario casual. No se responde.');
+        return { text: null, notFoundItem: null, skip: true };
       }
       // Limpieza de seguridad: eliminar cualquier mención accidental a códigos tipo [REF-xxx] o REF-xxx
       aiMessage = aiMessage.replace(/\[\s*REF-[^\]]+\]\s*/gi, '').replace(/\bREF-\d+\b\s*/gi, '');
+
+      // Verificar si detectó inmueble no disponible en Google Sheets
+      if (aiMessage.includes('NO_DISPONIBLE:')) {
+        const parts = aiMessage.split(/RESPUESTA:\s*/i);
+        const notFoundLine = parts[0].replace('NO_DISPONIBLE:', '').trim();
+        const clientText = parts[1] ? parts[1].trim() : aiMessage.replace(/NO_DISPONIBLE:[^\n]+/i, '').trim();
+        console.log(`[Claude Inventory Check] Inmueble no disponible detectado: "${notFoundLine}"`);
+        return { text: clientText, notFoundItem: notFoundLine, skip: false };
+      }
+
       console.log(`[Claude via OpenRouter] Response generated successfully (${aiMessage.length} chars)`);
-      return aiMessage;
+      return { text: aiMessage, notFoundItem: null, skip: false };
     }
     return null;
   } catch (err) {
@@ -459,6 +628,12 @@ async function generateResponse(userMessage, allProperties) {
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
+  // 🛑 FILTRO 1: Descartar charla casual, reacciones y comentarios sin intención inmobiliaria
+  if (isCasualOrChitChat(cleanMessage)) {
+    console.log(`[Anti-Chitchat Filter] Comentario casual o reacción detectada ("${cleanMessage}"). El bot guarda silencio para no gastar tokens.`);
+    return { text: null, notFoundItem: null, skip: true };
+  }
+
   // Saludo oficial corregido exactamente según instrucciones del usuario
   const baseGreeting = `¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
 
@@ -467,7 +642,11 @@ async function generateResponse(userMessage, allProperties) {
   const isOnlyGreeting = greetingsList.some(g => q === g || q === `${g}!` || q === `${g}.`);
   if (isOnlyGreeting || q.length < 5) {
     console.log('[Cost Optimization] Simple greeting detected. Responding with base greeting at $0.00 token cost.');
-    return `${baseGreeting}¿En qué podemos ayudarte hoy? ¿Estás buscando comprar, alquilar o vender algún inmueble?`;
+    return {
+      text: `${baseGreeting}¿En qué podemos ayudarte hoy? ¿Estás buscando comprar, alquilar o vender algún inmueble?`,
+      notFoundItem: null,
+      skip: false
+    };
   }
 
   // Filtramos solo las disponibles
@@ -480,10 +659,8 @@ async function generateResponse(userMessage, allProperties) {
   const isClaudeEnabled = process.env.DISABLE_CLAUDE !== 'true';
   if (isClaudeEnabled) {
     const claudeResult = await generateClaudeResponse(userMessage, available);
-    if (claudeResult === 'SKIP_MESSAGE') {
-      return null; // Mensaje personal ignorado
-    }
     if (claudeResult) {
+      if (claudeResult.skip) return { text: null, notFoundItem: null, skip: true };
       return claudeResult;
     }
     console.log('[Fallback] Claude no respondió o dio error, usando motor determinístico de respaldo.');
@@ -491,7 +668,11 @@ async function generateResponse(userMessage, allProperties) {
 
   // 2. Cliente pide cita o visita directamente
   if (detectLeadIntent(q).isHot && !q.includes('casa') && !q.includes('apto') && !q.includes('venta') && !q.includes('alquiler')) {
-    return `${baseGreeting}¡Excelente! En este momento le acabo de avisar a Robert y a Bárbara sobre tu interés para coordinar la visita. En breve uno de ellos continuará la conversación contigo directamente por aquí para definir la fecha y la hora. ¡Un placer atenderte!`;
+    return {
+      text: `${baseGreeting}¡Excelente! En este momento le acabo de avisar a Robert y a Bárbara sobre tu interés para coordinar la visita. En breve uno de ellos continuará la conversación contigo directamente por aquí para definir la fecha y la hora. ¡Un placer atenderte!`,
+      notFoundItem: null,
+      skip: false
+    };
   }
 
   // Detectar intención de Operación (Venta vs Alquiler)
@@ -506,8 +687,7 @@ async function generateResponse(userMessage, allProperties) {
   // Detectar Zonas
   const mentionsMacaracuay = q.includes('macaracuay');
   const mentionsFlorida = q.includes('florida') || q.includes('alta florida') || q.includes('libertador');
-  const mentionsAltamira = q.includes('altamira');
-  const mentionsMercedes = q.includes('mercedes');
+  const mentionsBoyera = q.includes('boyera') || q.includes('hatillo');
 
   // Filtrado estricto por Operación si fue solicitada
   let filtered = available;
@@ -520,7 +700,6 @@ async function generateResponse(userMessage, allProperties) {
 
   // Filtrado por Tipo de Inmueble
   if (wantsCasa) {
-    // Si busca casa comercial específicamente
     if (wantsComercial) {
       filtered = filtered.filter(p => normalizeText(p.TIPO).includes('comercial'));
     } else {
@@ -534,11 +713,11 @@ async function generateResponse(userMessage, allProperties) {
 
   // Filtrado por Zona si fue solicitada
   if (mentionsMacaracuay) {
-    const zoneFiltered = filtered.filter(p => normalizeText(p.ZONA).includes('macaracuay'));
-    if (zoneFiltered.length > 0) filtered = zoneFiltered;
+    filtered = filtered.filter(p => normalizeText(p.ZONA).includes('macaracuay'));
   } else if (mentionsFlorida) {
-    const zoneFiltered = filtered.filter(p => normalizeText(p.ZONA).includes('florida'));
-    if (zoneFiltered.length > 0) filtered = zoneFiltered;
+    filtered = filtered.filter(p => normalizeText(p.ZONA).includes('florida'));
+  } else if (mentionsBoyera) {
+    filtered = filtered.filter(p => normalizeText(p.ZONA).includes('boyera') || normalizeText(p.ZONA).includes('hatillo'));
   }
 
   // ==========================================
@@ -555,40 +734,19 @@ async function generateResponse(userMessage, allProperties) {
     });
 
     text += `¿Te gustaría coordinar una visita presencial para conocer alguna de estas opciones o recibir información adicional?`;
-    return text;
+    return { text: text, notFoundItem: null, skip: false };
   }
 
-  // Si pidió una combinación que NO existe disponible (ejemplo: Casas en Venta si no hubiera, o Apartamentos en Venta)
-  if (wantsBuy) {
-    const availableSales = available.filter(p => normalizeText(p.OPERACION).includes('venta'));
-    if (availableSales.length > 0) {
-      let text = `${baseGreeting}Actualmente para la búsqueda exacta que solicitas no disponemos de opciones inmediatas. Sin embargo, en **VENTA** tenemos disponible esta excelente propiedad:\n\n`;
-      text += formatSingleProperty(availableSales[0]) + '\n';
-      text += `¿Te gustaría recibir detalles o agendar una visita para conocerla?`;
-      return text;
-    }
-  }
+  // Si pidió un inmueble que NO existe en Google Sheets
+  const requestedDesc = (wantsApto ? 'Apartamento' : (wantsCasa ? 'Casa' : (wantsComercial ? 'Comercial' : 'Inmueble'))) +
+    (wantsBuy ? ' en Venta' : (wantsRent ? ' en Alquiler' : '')) +
+    (mentionsMacaracuay ? ' en Macaracuay' : (mentionsFlorida ? ' en Alta Florida' : (mentionsBoyera ? ' en La Boyera' : '')));
 
-  if (wantsRent) {
-    const availableRentals = available.filter(p => normalizeText(p.OPERACION).includes('alquiler'));
-    if (availableRentals.length > 0) {
-      let text = `${baseGreeting}Actualmente en esa categoría específica no disponemos de opciones inmediatas. En **ALQUILER** tenemos disponibles estas magníficas opciones:\n\n`;
-      availableRentals.slice(0, 2).forEach(p => {
-        text += formatSingleProperty(p) + '\n';
-      });
-      text += `¿Te gustaría recibir más información o coordinar una visita presencial?`;
-      return text;
-    }
-  }
-
-  // Si es una pregunta general ("qué tienen", "busco opciones")
-  let text = `${baseGreeting}En nuestro inventario actualmente contamos con las siguientes opciones disponibles:\n\n`;
-  available.forEach((p, idx) => {
-    const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
-    text += `${idx + 1}. **${p.TIPO} en ${p.ZONA} (${p.OPERACION})** - US$ ${cleanPrice}\n`;
-  });
-  text += `\nCuéntanos, ¿cuál de estas se adapta mejor a lo que estás buscando o en qué zona específica te interesaría?`;
-  return text;
+  return {
+    text: `${baseGreeting}En este momento no disponemos en nuestro inventario activo de esa opción específica (${requestedDesc.trim()}). Sin embargo, ya le hemos notificado directamente a Robert y a Bárbara para que verifiquen nuevas opciones y se comuniquen contigo en breve por este chat para ayudarte personalmente. ¡Un placer atenderte!`,
+    notFoundItem: requestedDesc.trim() || 'inmueble solicitado',
+    skip: false
+  };
 }
 
 // ==========================================
@@ -745,15 +903,22 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       }
     }
 
-    if (!leadId && messageObj.contact_id) {
+    let clientPhone = '';
+    if (messageObj.contact_id) {
       try {
         const contactRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/contacts/${messageObj.contact_id}?with=leads`, {
           headers: { Authorization: process.env.KOMMO_TOKEN },
           timeout: 5000
         });
-        leadId = contactRes.data._embedded?.leads?.[0]?.id;
+        if (!leadId) {
+          leadId = contactRes.data._embedded?.leads?.[0]?.id;
+        }
+        const phoneField = contactRes.data.custom_fields_values?.find(f => f.field_code === 'PHONE' || f.field_name === 'Phone' || f.field_name === 'Teléfono');
+        if (phoneField?.values?.[0]?.value) {
+          clientPhone = phoneField.values[0].value;
+        }
       } catch (err) {
-        console.warn('[Webhook] Could not resolve lead from contact_id:', err.message);
+        console.warn('[Webhook] Could not resolve lead/phone from contact_id:', err.message);
       }
     }
 
@@ -805,11 +970,12 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       // 2. Generar respuesta personalizada (Solo 1 llamada a Claude)
       console.log('[Processing] Generating response with Claude/Model...');
-      const responseText = await generateResponse(userText, properties);
-      if (!responseText) {
-        console.log('[Processing] No response required (personal conversation or non-real estate). Skipping delivery.');
+      const result = await generateResponse(userText, properties);
+      if (!result || result.skip || !result.text) {
+        console.log('[Processing] No response required (casual conversation, chit-chat or personal talk). Skipping delivery.');
         return;
       }
+      const responseText = result.text;
       console.log('[Processing] Response text:\n', responseText);
 
       // 3. Guardar en Kommo
@@ -820,8 +986,14 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log('[Processing] Triggering Salesbot single delivery...');
       await triggerKommoSalesbot(currentLeadId);
 
-      // 5. Si el cliente activó intención caliente (visita, cita, compra):
-      if (intent.isHot) {
+      // 5. Si el inmueble NO está en Google Sheets: Alerta específica requerida
+      if (result.notFoundItem) {
+        console.log(`[Missing Property Alert] Cliente pregunta por "${result.notFoundItem}" no registrado en Sheets! Disparando alerta inmediata.`);
+        await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
+        setLeadHandoff(currentLeadId); // Silenciar bot durante 24h para que Robert o Bárbara continúen
+      }
+      // 6. Si el cliente activó intención caliente (visita, cita, compra):
+      else if (intent.isHot) {
         console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${currentLeadId}! Disparando alerta inmediata WhatsApp + Correo.`);
         dispatchAlertToRobert(currentLeadId, userText, clientName, intent.type);
         setLeadHandoff(currentLeadId); // Activamos silencio de 24h para que Robert y Bárbara atiendan personalmente
@@ -855,7 +1027,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.4 Anti-Duplicate & Mutex Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.5 Strict Inventory & Anti-Chitchat Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
