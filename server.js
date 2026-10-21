@@ -569,6 +569,376 @@ async function checkAndAlertLowBalance() {
 }
 
 // ==========================================
+// 📊 SISTEMA DE REPORTE DIARIO DE SALDO Y PROYECCIONES IA
+// ==========================================
+async function getDailyStats() {
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY || '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';
+  try {
+    const [cRes, kRes] = await Promise.all([
+      axios.get('https://openrouter.ai/api/v1/credits', { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 6000 }),
+      axios.get('https://openrouter.ai/api/v1/auth/key', { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 6000 })
+    ]);
+
+    const total = cRes.data?.data?.total_credits || 10.0;
+    const usage = cRes.data?.data?.total_usage || 0;
+    const remaining = Math.max(0, total - usage);
+    const dailyUsage = kRes.data?.data?.usage_daily || 0.15;
+    const weeklyUsage = kRes.data?.data?.usage_weekly || 0.23;
+    const monthlyUsage = kRes.data?.data?.usage_monthly || usage;
+
+    // Costo promedio por mensaje con Claude Sonnet 4.5: ~$0.0035 USD (~800 prompt tokens + 150 completion tokens)
+    const costPerMsg = 0.0035;
+    const msgsRemaining = Math.floor(remaining / costPerMsg);
+
+    // Días de autonomía estimados según ritmo de consumo
+    const safeDailyBurn = dailyUsage > 0.02 ? dailyUsage : 0.15;
+    const daysRunway = Math.floor(remaining / safeDailyBurn);
+
+    // Fecha proyectada de recarga y fecha de hoy en hora de Venezuela (America/Caracas)
+    const now = new Date();
+    const caracasDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Caracas' }));
+    const rechargeDate = new Date(caracasDate.getTime() + daysRunway * 86400000);
+    const projectedDateStr = rechargeDate.toLocaleDateString('es-VE', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const todayDateStr = caracasDate.toLocaleDateString('es-VE', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const percentRemaining = Number(((remaining / (total || 10)) * 100).toFixed(1));
+
+    let statusEmoji = '🟢';
+    let statusLabel = 'SALUDABLE / ÓPTIMO';
+    let statusColor = '#10b981';
+    if (remaining < 2.0) {
+      statusEmoji = '🔴';
+      statusLabel = 'CRÍTICO / RECARGAR HOY';
+      statusColor = '#f43f5e';
+    } else if (remaining < 5.0) {
+      statusEmoji = '🟡';
+      statusLabel = 'ATENCIÓN / RECARGA PRÓXIMA';
+      statusColor = '#f59e0b';
+    }
+
+    return {
+      success: true,
+      todayDateStr,
+      totalCredits: Number(total.toFixed(2)),
+      totalUsage: Number(usage.toFixed(4)),
+      remainingUsd: Number(remaining.toFixed(2)),
+      dailyUsageUsd: Number(dailyUsage.toFixed(4)),
+      weeklyUsageUsd: Number(weeklyUsage.toFixed(4)),
+      monthlyUsageUsd: Number(monthlyUsage.toFixed(4)),
+      msgsRemaining,
+      daysRunway,
+      projectedDateStr,
+      percentRemaining,
+      statusEmoji,
+      statusLabel,
+      statusColor
+    };
+  } catch (err) {
+    console.error('[Stats Error]:', err.message);
+    return null;
+  }
+}
+
+function generateWhatsAppDailyReport(stats) {
+  return `📊 *REPORTE DIARIO DE SALDO CLAUDE AI* 📊\n` +
+    `*Tu Techo Ideal - Control y Proyección*\n` +
+    `🗓️ _${stats.todayDateStr}_\n\n` +
+    `💰 *Saldo Disponible:* $${stats.remainingUsd.toFixed(2)} USD\n` +
+    `💳 *Créditos Totales:* $${stats.totalCredits.toFixed(2)} USD\n` +
+    `📉 *Consumo Hoy:* $${stats.dailyUsageUsd.toFixed(4)} USD\n` +
+    `📈 *Consumo Acumulado:* $${stats.totalUsage.toFixed(4)} USD\n\n` +
+    `🤖 *Capacidad y Proyecciones:*\n` +
+    `💬 *Mensajes Disponibles:* ~${stats.msgsRemaining.toLocaleString()} respuestas restantes\n` +
+    `⏳ *Autonomía Estimada:* ~${stats.daysRunway} días al ritmo actual\n` +
+    `📅 *Fecha Proyectada de Recarga:*\n*${stats.projectedDateStr}*\n\n` +
+    `${stats.statusEmoji} *Estado del Saldo:* ${stats.statusLabel}\n` +
+    `⚡ _El bot está activo y respondiendo solo consultas inmobiliarias válidas de Google Sheets._\n\n` +
+    `🔗 *Enlace directo para recargar saldo:* \nhttps://openrouter.ai/settings/credits`;
+}
+
+function generateHtmlDailyReport(stats) {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reporte Diario IA - Tu Techo Ideal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, var(--bg) 60%);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 30px 16px;
+    }
+    .container { width: 100%; max-width: 680px; margin: 0 auto; }
+    .header { text-align: center; margin-bottom: 24px; }
+    .brand-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: #a5b4fc; padding: 6px 14px; border-radius: 9999px;
+      font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em;
+      text-transform: uppercase; margin-bottom: 12px;
+    }
+    h1 { font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; color: #ffffff; margin-bottom: 6px; }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; }
+    .status-banner {
+      background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);
+      color: ${stats.statusColor}; padding: 12px 18px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px; font-size: 0.92rem; font-weight: 600;
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+    @media (max-width: 500px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card-bg); backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border); border-radius: 16px; padding: 18px;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .card:hover { transform: translateY(-2px); border-color: rgba(255, 255, 255, 0.18); }
+    .card-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 6px; }
+    .card-value { font-family: 'Outfit', sans-serif; font-size: 1.7rem; font-weight: 700; color: #ffffff; }
+    .card-subtext { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; }
+    .progress-section {
+      background: var(--card-bg); border: 1px solid var(--card-border);
+      border-radius: 16px; padding: 18px; margin-bottom: 20px;
+    }
+    .progress-header { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
+    .progress-bar-bg { width: 100%; height: 10px; background: rgba(255, 255, 255, 0.08); border-radius: 9999px; overflow: hidden; }
+    .progress-bar-fill { height: 100%; width: ${stats.percentRemaining}%; background: linear-gradient(90deg, #10b981 0%, #38bdf8 100%); border-radius: 9999px; }
+    .details-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 10px; }
+    .details-table tr { border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+    .details-table tr:last-child { border-bottom: none; }
+    .details-table td { padding: 10px 0; }
+    .details-table td:last-child { text-align: right; font-weight: 600; color: #ffffff; }
+    .btn-recharge {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      color: #ffffff; text-decoration: none; padding: 14px 20px; border-radius: 12px;
+      font-weight: 600; text-align: center; font-size: 0.95rem;
+      display: block; margin-top: 20px;
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.4);
+      transition: all 0.2s ease;
+    }
+    .btn-recharge:hover { box-shadow: 0 6px 20px rgba(79, 70, 229, 0.6); transform: translateY(-1px); }
+    .footer { text-align: center; margin-top: 24px; font-size: 0.78rem; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand-badge">✨ Tu Techo Ideal • Control de IA</div>
+      <h1>Reporte Diario de Saldo e IA</h1>
+      <div class="subtitle">${stats.todayDateStr}</div>
+    </div>
+
+    <div class="status-banner">
+      <span>${stats.statusEmoji} Estado: ${stats.statusLabel}</span>
+      <span>${stats.percentRemaining}% disponible</span>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">💰 Saldo Disponible</div>
+        <div class="card-value">$${stats.remainingUsd.toFixed(2)} <span style="font-size: 0.9rem; color: #94a3b8;">USD</span></div>
+        <div class="card-subtext">De $${stats.totalCredits.toFixed(2)} USD recargados</div>
+      </div>
+      <div class="card">
+        <div class="card-label">💬 Mensajes Disponibles</div>
+        <div class="card-value">~${stats.msgsRemaining.toLocaleString()}</div>
+        <div class="card-subtext">Respuestas con Claude Sonnet 4.5</div>
+      </div>
+      <div class="card">
+        <div class="card-label">⏳ Autonomía Estimada</div>
+        <div class="card-value">~${stats.daysRunway} <span style="font-size: 0.9rem; color: #94a3b8;">días</span></div>
+        <div class="card-subtext">Al ritmo de consumo actual</div>
+      </div>
+      <div class="card">
+        <div class="card-label">📅 Fecha Sugerida de Recarga</div>
+        <div class="card-value" style="font-size: 1.12rem; line-height: 1.35; color: #38bdf8;">${stats.projectedDateStr}</div>
+        <div class="card-subtext">Proyección matemática calculada</div>
+      </div>
+    </div>
+
+    <div class="progress-section">
+      <div class="progress-header">
+        <span>Presupuesto Utilizado: $${stats.totalUsage.toFixed(4)} USD</span>
+        <span>${stats.percentRemaining}% Restante</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill"></div>
+      </div>
+      <table class="details-table">
+        <tr>
+          <td>Consumo de hoy</td>
+          <td>$${stats.dailyUsageUsd.toFixed(4)} USD</td>
+        </tr>
+        <tr>
+          <td>Consumo semanal</td>
+          <td>$${stats.weeklyUsageUsd.toFixed(4)} USD</td>
+        </tr>
+        <tr>
+          <td>Modelo de IA Activo</td>
+          <td>Claude Sonnet 4.5 (Anthropic)</td>
+        </tr>
+        <tr>
+          <td>Costo promedio por consulta</td>
+          <td>~$0.0035 USD</td>
+        </tr>
+      </table>
+    </div>
+
+    <a href="https://openrouter.ai/settings/credits" target="_blank" class="btn-recharge">
+      💳 Recargar Saldo en OpenRouter
+    </a>
+
+    <div class="footer">
+      Sistema Automatizado de Monitoreo • Tu Techo Ideal C.A. • Generado automáticamente
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+async function sendDailyBalanceReport() {
+  const stats = await getDailyStats();
+  if (!stats) return { error: 'Could not fetch stats' };
+
+  const robertPhone = process.env.ROBERT_WHATSAPP || '+584143115105';
+  const cleanPhone = robertPhone.replace(/[^0-9]/g, '');
+  const token = process.env.KOMMO_TOKEN;
+  const subdomain = process.env.KOMMO_SUBDOMAIN;
+  const alertEmail = process.env.ALERT_EMAIL || 'tutechoidealrd@gmail.com';
+
+  const waText = generateWhatsAppDailyReport(stats);
+  const htmlContent = generateHtmlDailyReport(stats);
+
+  console.log(`\n========================================`);
+  console.log(`[Daily Report] Enviando reporte diario a Robert (+584143115105)...`);
+  console.log(`Saldo: $${stats.remainingUsd} USD | Mensajes: ~${stats.msgsRemaining} | Recarga aprox: ${stats.projectedDateStr}`);
+  console.log(`========================================\n`);
+
+  // 1. Envío directo al WhatsApp de Robert vía su chat en Kommo (Lead #7882504)
+  try {
+    const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || '7882504';
+    if (robertLeadId) {
+      await updateKommoLead(robertLeadId, waText);
+      await triggerKommoSalesbot(robertLeadId);
+      console.log(`[Daily Report WhatsApp] Reporte enviado al WhatsApp de Robert (+584143115105) vía Kommo Lead #${robertLeadId}`);
+    }
+  } catch (e) {
+    console.warn('[Daily Report WhatsApp via Kommo Error]:', e.response?.data || e.message);
+  }
+
+  // 2. Envío por CallMeBot si está configurado
+  if (process.env.CALLMEBOT_API_KEY) {
+    try {
+      const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodeURIComponent(waText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
+      await axios.get(callmebotUrl, { timeout: 8000 });
+      console.log(`[Daily Report WhatsApp] Enviado a ${robertPhone} vía CallMeBot`);
+    } catch (e) {
+      console.warn(`[Daily Report CallMeBot Error]:`, e.message);
+    }
+  }
+
+  // 3. Envío por WhatsApp Gateway si está configurado
+  if (process.env.WHATSAPP_GATEWAY_URL) {
+    try {
+      await axios.post(process.env.WHATSAPP_GATEWAY_URL, {
+        phone: cleanPhone,
+        message: waText
+      }, { timeout: 8000 });
+      console.log(`[Daily Report WhatsApp] Enviado vía Gateway a ${robertPhone}`);
+    } catch (e) {}
+  }
+
+  // 4. Envío por Correo Electrónico a Tu Techo Ideal
+  try {
+    if (process.env.EMAIL_GATEWAY_URL) {
+      await axios.post(process.env.EMAIL_GATEWAY_URL, {
+        to: alertEmail,
+        subject: `📊 Reporte Diario de Saldo e IA: $${stats.remainingUsd} USD disponibles (~${stats.msgsRemaining} respuestas)`,
+        message: waText,
+        html: htmlContent
+      }, { timeout: 6000 });
+      console.log(`[Daily Report Email] Correo enviado a ${alertEmail}`);
+    }
+  } catch (e) {
+    console.warn(`[Daily Report Email Error]:`, e.message);
+  }
+
+  // 5. Tarea de control en Kommo para Robert
+  try {
+    const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
+    const nowSec = Math.floor(Date.now() / 1000);
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/tasks`, [
+      {
+        responsible_user_id: robertUserId,
+        text: `📊 REPORTE DIARIO CLAUDE: Saldo $${stats.remainingUsd} USD (~${stats.msgsRemaining} respuestas restantes | Autonomía ~${stats.daysRunway} días | Recargar aprox ${stats.projectedDateStr}). Recargar en https://openrouter.ai/settings/credits`,
+        complete_till: nowSec + 86400,
+        task_type_id: 1
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Daily Report Task] Tarea de reporte diario registrada en Kommo para Robert`);
+  } catch (e) {}
+
+  return { success: true, stats };
+}
+
+// Programador diario a las 8:00 AM hora de Venezuela (America/Caracas)
+let lastScheduledReportDay = '';
+function initDailyReportScheduler() {
+  function checkSchedule() {
+    try {
+      const now = new Date();
+      const caracasDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Caracas' }));
+      const hour = caracasDate.getHours();
+      const minute = caracasDate.getMinutes();
+      const dayKey = caracasDate.toISOString().split('T')[0];
+
+      // Ejecutar a las 8:00 AM hora Caracas
+      if (hour === 8 && minute < 6 && lastScheduledReportDay !== dayKey) {
+        lastScheduledReportDay = dayKey;
+        console.log(`[Scheduler] Ejecutando reporte diario programado de las 8:00 AM para ${dayKey}...`);
+        sendDailyBalanceReport().catch(err => console.error('[Scheduler Report Error]:', err.message));
+      }
+    } catch (e) {
+      console.warn('[Scheduler Check Error]:', e.message);
+    }
+  }
+
+  setInterval(checkSchedule, 2 * 60 * 1000);
+  console.log('[Scheduler] Cron de reporte diario activo: Todos los días a las 8:00 AM (Hora Venezuela).');
+}
+
+// ==========================================
 // 🧠 MOTOR DE CONVERSACIÓN INTELIGENTE
 // ==========================================
 function formatSingleProperty(p) {
@@ -1094,7 +1464,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.8 Strict Intent Gate & Zero-Waste Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v3.9 Daily AI Intelligence & Balance Report Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
@@ -1102,6 +1472,24 @@ app.get('/health', async (req, res) => {
   });
 });
 
+// Endpoints del Reporte Diario y Estadísticas
+app.get(['/stats', '/report', '/dashboard'], async (req, res) => {
+  const stats = await getDailyStats();
+  if (!stats) return res.status(500).send('Error obteniendo estadísticas');
+  res.send(generateHtmlDailyReport(stats));
+});
+
+app.get('/api/daily-stats', async (req, res) => {
+  const stats = await getDailyStats();
+  res.send(stats || { error: 'No data' });
+});
+
+app.get('/api/send-daily-report', async (req, res) => {
+  const result = await sendDailyBalanceReport();
+  res.send(result);
+});
+
 app.listen(PORT, () => {
   console.log(`Tu Techo Ideal Bot running on port ${PORT}`);
+  initDailyReportScheduler();
 });
