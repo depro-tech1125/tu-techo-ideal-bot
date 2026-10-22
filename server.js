@@ -40,6 +40,7 @@ app.use(rateLimiter);
 // Deduplicación, Mutex en Vuelo y Debounce por Lead para evitar envíos dobles y tokens perdidos
 const processedMessages = new Set();
 const leadLastProcessed = new Map();
+const lastLeadProcessedMessages = new Map(); // leadId -> { textHash, timestamp }
 const activeProcessingLeads = new Set();
 const activeProcessingTalks = new Set();
 
@@ -47,7 +48,20 @@ function isDuplicate(key) {
   if (!key) return false;
   if (processedMessages.has(key)) return true;
   processedMessages.add(key);
-  setTimeout(() => processedMessages.delete(key), 60000);
+  setTimeout(() => processedMessages.delete(key), 900000); // 15 minutos en vez de 60 segundos
+  return false;
+}
+
+function isSameLeadMessageRecent(leadId, text) {
+  if (!leadId || !text) return false;
+  const clean = normalizeText(text).substring(0, 100);
+  const now = Date.now();
+  const last = lastLeadProcessedMessages.get(String(leadId));
+  if (last && last.text === clean && (now - last.timestamp) < 900000) { // 15 minutos
+    return true;
+  }
+  lastLeadProcessedMessages.set(String(leadId), { text: clean, timestamp: now });
+  if (lastLeadProcessedMessages.size > 2000) lastLeadProcessedMessages.clear();
   return false;
 }
 
@@ -973,27 +987,39 @@ async function generateClaudeResponse(userMessage, availableProperties) {
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
-Tu único objetivo es responder de forma concisa, profesional y directa con los inmuebles disponibles en el inventario real de Google Sheets para agendar visitas presenciales.
 
-REGLAS CRÍTICAS E INVIOLABLES:
-1. Comienza siempre tus respuestas iniciales con el saludo oficial exacto:
+🚨 REGLA #0 - MÁXIMA PRIORIDAD ABSOLUTA (BLINDAJE DE INVENTARIO Y RESTRICCIÓN TOTAL):
+Tu único inventario real en tiempo real es ESTE:
+${formattedInventory}
+
+SI EL CLIENTE PREGUNTA POR:
+1. Un tipo de inmueble, local o negocio que NO esté exactamente en la lista anterior (por ejemplo: BAR, discoteca, tasca, restaurante, hotel, posada, galpón, panadería, etc.).
+2. Una propiedad, enlace de Wasi, código externo, enlace web, o zona que NO esté en la lista anterior.
+3. Un tipo de operación distinto (ej: alquiler de una zona que solo tiene ventas, o alquiler de apartamentos cuando solo hay casas).
+4. Cualquier característica o detalle no presente en el inventario.
+
+QUEDA ESTRICTAMENTE PROHIBIDO:
+❌ NO SALUDES.
+❌ NO PIDAS DISCULPAS NI DIGAS "Lamento informarte que no tengo...".
+❌ NO PREGUNTES MÁS DETALLES NI PIDAS ACLARATORIAS ("cuéntame qué buscas", "¿qué zona buscas?").
+❌ NUNCA OFREZCAS PROPIEDADES ALTERNATIVAS O SUSTITUTAS (¡Si preguntan por un BAR o negocio comercial, JAMÁS ofrezcas apartamentos, casas ni penthouses residenciales!).
+❌ NO ESCRIBAS NINGÚN MENSAJE DE TEXTO AL CLIENTE.
+
+En cualquiera de esos casos, debes responder ÚNICA Y EXCLUSIVAMENTE esta línea exacta:
+NO_DISPONIBLE: [Escribe aquí el inmueble, tipo o consulta no registrada, ej: Bar en El Hatillo]
+
+REGLAS EXCLUSIVAS PARA CUANDO EL INMUEBLE SÍ EXISTE EN EL INVENTARIO:
+1. Comienza siempre tus respuestas con el saludo oficial exacto:
 "¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨"
 2. SI EL CLIENTE PIDE CASAS EN VENTA: Solo ofrece propiedades cuya "Operación" sea estrictamente "Venta". NUNCA ofrezcas un alquiler si el cliente pidió comprar o venta.
 3. SI EL CLIENTE PIDE ALQUILER: Solo ofrece propiedades cuya "Operación" sea "Alquiler".
-4. INVENTARIO REAL EN TIEMPO REAL:
-${formattedInventory}
-5. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
-6. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
-7. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
-8. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
-9. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
-10. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
-Tu único propósito es ofrecer inmuebles del inventario y coordinar citas. NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción, charla informal, comentario casual o ajeno a buscar o visitar un inmueble, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO". NO debes conversar, eso lo hacen Robert y Bárbara.
-11. CONSULTA DE INMUEBLE, ENLACES (WASI, CONEXA, PORTALES), ZONAS O DETALLES NO REGISTRADOS EN GOOGLE SHEETS:
-Si el cliente o colega pregunta por un inmueble, enlace de Wasi, enlace web, código externo, zona, alquiler, características, aceptación de mascotas o cualquier propiedad que NO esté claramente en el inventario real de Google Sheets de arriba (por ejemplo: enlace o código de Wasi como 10493109 o Los Samanes, apartamento en La California Norte, o alquiler de apartamentos):
-NO DEBES RESPONDERLE AL CLIENTE NI SALUDARLO BAJO NINGUNA CIRCUNSTANCIA. NUNCA INVENTES INFORMACIÓN.
-Responde ÚNICAMENTE en este formato exacto de una sola línea:
-NO_DISPONIBLE: [Escribe aquí el inmueble, enlace o consulta no registrada, por ejemplo: Apartamento en Los Samanes - Wasi 10493109]`;
+4. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
+5. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
+6. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
+7. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
+8. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
+9. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
+NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción o comentario casual, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
@@ -1003,7 +1029,7 @@ NO_DISPONIBLE: [Escribe aquí el inmueble, enlace o consulta no registrada, por 
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }
       ],
-      temperature: 0.3,
+      temperature: 0.1,
       max_tokens: 350
     }, {
       headers: {
@@ -1029,6 +1055,25 @@ NO_DISPONIBLE: [Escribe aquí el inmueble, enlace o consulta no registrada, por 
         const notFoundDesc = aiMessage.replace(/NO_DISPONIBLE:\s*/i, '').split('\n')[0].trim();
         console.log(`[Claude Inventory Check] Inmueble/Detalle no disponible detectado: "${notFoundDesc}"`);
         return { text: null, notFoundItem: notFoundDesc, skip: false };
+      }
+
+      // 🛡️ GUARDIÁN DE SEGURIDAD INTERCEPTOR:
+      // Si Claude generó una respuesta diciendo que "no tengo", "lamento informarte", "no cuento con",
+      // significa que el inmueble o negocio NO está en inventario.
+      // ¡NUNCA enviar esa disculpa ni sugerir alternativas de otros tipos (ej. apartamentos a quien pide un bar)!
+      const missingPhrases = [
+        'lamento informarte', 'no tengo registrado', 'no tengo en mi inventario',
+        'no esta en mi inventario', 'no está en mi inventario', 'no disponemos',
+        'no contamos con', 'no tenemos registrado', 'no tengo disponible ningun',
+        'no tengo disponible ningún', 'no tengo disponible ninguna', 'no disponemos de ningun',
+        'no disponemos de ningún', 'no disponemos de ninguna', 'no cuento con',
+        'no tenemos en inventario'
+      ];
+      const aiLower = normalizeText(aiMessage);
+      const detectedMissing = missingPhrases.some(phrase => aiLower.includes(normalizeText(phrase)));
+      if (detectedMissing) {
+        console.log(`[Safety Guard Interceptor] Claude intentó disculparse o indicar que no tiene el inmueble ("${aiMessage.substring(0, 80)}..."). Interceptado como NO_DISPONIBLE.`);
+        return { text: null, notFoundItem: userMessage, skip: false };
       }
 
       console.log(`[Claude via OpenRouter] Response generated successfully (${aiMessage.length} chars)`);
@@ -1070,6 +1115,27 @@ async function generateResponse(userMessage, allProperties) {
     const status = normalizeText(row.ESTATUS || row.Estatus || row.estatus);
     return status === 'disponible';
   });
+
+  // 🛑 FILTRO DETERMINÍSTICO PRE-CLAUDE: Tipos de negocio/inmueble no existentes en Google Sheets
+  // Si piden bar, discoteca, tasca, restaurante, panadería, taller, etc., y el inventario no tiene ningún inmueble de ese tipo:
+  const businessTypes = ['bar', 'discoteca', 'tasca', 'bodegon', 'bodegón', 'restaurante', 'panaderia', 'panadería', 'farmacia', 'taller', 'posada', 'hotel', 'galpon', 'galpón'];
+  const requestedBusiness = businessTypes.find(t => {
+    const rx = new RegExp(`\\b${normalizeText(t)}\\b`, 'i');
+    return rx.test(q);
+  });
+  if (requestedBusiness) {
+    const businessRx = new RegExp(`\\b${requestedBusiness}\\b`, 'i');
+    const hasMatchingCommercialInSheets = available.some(p => {
+      const tipoClean = normalizeText(p.TIPO);
+      const isCommercial = tipoClean.includes('local') || tipoClean.includes('comercial');
+      const descClean = normalizeText(p.DESCRIPCION_BREVE || '');
+      return isCommercial && (businessRx.test(tipoClean) || businessRx.test(descClean));
+    });
+    if (!hasMatchingCommercialInSheets) {
+      console.log(`[Deterministic Business Filter] Negocio/local comercial "${requestedBusiness}" NO disponible en inventario. Derivando a mensaje de espera y alerta.`);
+      return { text: null, notFoundItem: `${requestedBusiness.toUpperCase()} en ${q.includes('hatillo') ? 'El Hatillo' : 'zona consultada'}`, skip: false };
+    }
+  }
 
   // Usamos Claude AI para consultas reales de inmuebles
   const isClaudeEnabled = process.env.DISABLE_CLAUDE !== 'true';
@@ -1371,6 +1437,14 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
+    // 🛑 FILTRO 6.1: Antiduplicado Estricto de Mensaje Reciente (Ventana 15 minutos)
+    // Si este mismo lead ya envió este mismo texto en los últimos 15 minutos, IGNORAR (previene reintentos de Kommo/Make).
+    if (isSameLeadMessageRecent(currentLeadId, userText)) {
+      console.log(`[Webhook] Mensaje idéntico detectado recientemente para Lead #${currentLeadId} ("${userText.substring(0, 40)}..."). Skipping para evitar respuesta duplicada.`);
+      if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
+      return;
+    }
+
     activeProcessingLeads.add(currentLeadId);
 
     try {
@@ -1425,6 +1499,17 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         await updateKommoLead(currentLeadId, holdingMessage);
         await triggerKommoSalesbot(currentLeadId);
 
+        // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS)
+        // Evita que automatizaciones de Kommo o de Make re-envíen el mismo mensaje si vuelven a disparar Salesbot minutos después.
+        setTimeout(async () => {
+          try {
+            await updateKommoLead(currentLeadId, ' ');
+            console.log(`[Anti-Duplicate] Campo Respuesta_IA vaciado para Lead #${currentLeadId}`);
+          } catch (e) {
+            console.warn('[Anti-Duplicate Clear Error]:', e.message);
+          }
+        }, 15000);
+
         // 2. ¡PUMMM! Disparar alertas por todos lados (WhatsApp Robert +584143115105, Correo, Kommo Task & Note)
         await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
 
@@ -1448,6 +1533,17 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 4. Disparar Salesbot ÚNICA VEZ
       console.log('[Processing] Triggering Salesbot single delivery...');
       await triggerKommoSalesbot(currentLeadId);
+
+      // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS)
+      // Evita que automatizaciones de Kommo o de Make re-envíen el mismo mensaje si vuelven a disparar Salesbot minutos después.
+      setTimeout(async () => {
+        try {
+          await updateKommoLead(currentLeadId, ' ');
+          console.log(`[Anti-Duplicate] Campo Respuesta_IA vaciado para Lead #${currentLeadId}`);
+        } catch (e) {
+          console.warn('[Anti-Duplicate Clear Error]:', e.message);
+        }
+      }, 15000);
 
       // 5. Si el cliente activó intención caliente (visita, cita, compra):
       if (intent.isHot) {
