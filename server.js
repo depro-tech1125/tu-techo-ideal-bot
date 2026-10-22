@@ -1010,7 +1010,7 @@ NO_DISPONIBLE: [Escribe aquí el inmueble, tipo o consulta no registrada, ej: Ba
 
 REGLAS EXCLUSIVAS PARA CUANDO EL INMUEBLE SÍ EXISTE EN EL INVENTARIO:
 1. Comienza siempre tus respuestas con el saludo oficial exacto:
-"¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨"
+"Hola, bienvenido a Tu techo ideal"
 2. SI EL CLIENTE PIDE CASAS EN VENTA: Solo ofrece propiedades cuya "Operación" sea estrictamente "Venta". NUNCA ofrezcas un alquiler si el cliente pidió comprar o venta.
 3. SI EL CLIENTE PIDE ALQUILER: Solo ofrece propiedades cuya "Operación" sea "Alquiler".
 4. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
@@ -1060,14 +1060,16 @@ NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas socia
       // 🛡️ GUARDIÁN DE SEGURIDAD INTERCEPTOR:
       // Si Claude generó una respuesta diciendo que "no tengo", "lamento informarte", "no cuento con",
       // significa que el inmueble o negocio NO está en inventario.
-      // ¡NUNCA enviar esa disculpa ni sugerir alternativas de otros tipos (ej. apartamentos a quien pide un bar)!
+      // ¡ESTÁ TERMINANTEMENTE PROHIBIDO enviar esa disculpa ni sugerir alternativas de otros tipos (ej. apartamentos a quien pide un bar)!
       const missingPhrases = [
         'lamento informarte', 'no tengo registrado', 'no tengo en mi inventario',
         'no esta en mi inventario', 'no está en mi inventario', 'no disponemos',
         'no contamos con', 'no tenemos registrado', 'no tengo disponible ningun',
         'no tengo disponible ningún', 'no tengo disponible ninguna', 'no disponemos de ningun',
         'no disponemos de ningún', 'no disponemos de ninguna', 'no cuento con',
-        'no tenemos en inventario'
+        'no tenemos en inventario', 'actualmente no tengo', 'por los momentos no tengo',
+        'por el momento no tengo', 'no dispongo de', 'no poseo en mi inventario',
+        'no dispongo en inventario', 'no poseo'
       ];
       const aiLower = normalizeText(aiMessage);
       const detectedMissing = missingPhrases.some(phrase => aiLower.includes(normalizeText(phrase)));
@@ -1101,7 +1103,7 @@ async function generateResponse(userMessage, allProperties) {
   }
 
   // Saludo oficial corregido exactamente según instrucciones del usuario
-  const baseGreeting = `¡Hola! Gracias por comunicarte con, Tu Techo Ideal, somos Bárbara Bravo y Robert Jiménez. ✨\n\n`;
+  const baseGreeting = `Hola, bienvenido a Tu techo ideal\n\n`;
 
   // 🛑 FILTRO 2 ESTRICTO: NO SE RESPONDE A MENOS QUE TENGA INTENCIÓN INMOBILIARIA EXPLÍCITA
   // Regla del usuario: "NO SE RESPONDE a menos que te diga hola estoy interesada o interesado en comprar, alquilar un inmueble o vender..."
@@ -1508,7 +1510,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           } catch (e) {
             console.warn('[Anti-Duplicate Clear Error]:', e.message);
           }
-        }, 15000);
+        }, 5000);
 
         // 2. ¡PUMMM! Disparar alertas por todos lados (WhatsApp Robert +584143115105, Correo, Kommo Task & Note)
         await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
@@ -1543,7 +1545,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         } catch (e) {
           console.warn('[Anti-Duplicate Clear Error]:', e.message);
         }
-      }, 15000);
+      }, 5000);
 
       // 5. Si el cliente activó intención caliente (visita, cita, compra):
       if (intent.isHot) {
