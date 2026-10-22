@@ -1399,18 +1399,38 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log('[Processing] Generating response with Claude/Model...');
       const result = await generateResponse(userText, properties);
 
-      // 🛑 SI EL INMUEBLE O DETALLE NO ESTÁ EN GOOGLE SHEETS:
-      // "claude ese tipo de pregunta no debe responder sino mandar una alerta, por correo y al whatsapp de robert... Y listo..."
+      // 🛑 SI EL INMUEBLE O DETALLE NO ESTÁ EN GOOGLE SHEETS (O consulta de Wasi/Portales/Inmueble no disponible):
+      // "Vamos a colocar un mensaje para que el cliente y le jefe vea que el bot si funciona en esos casos y que el bot esta esperando que ingrese una respuesta humana:
+      // 'Ok xxxx dejame consultar con un asesor para atenderte inmediatamente' Y pummmm lanzamos alerta por todos lados..."
       if (result && result.notFoundItem) {
+        // Formatear nombre del cliente (extraer primer nombre si existe y no es número o "Cliente")
+        let cleanName = '';
+        if (clientName && clientName !== 'Cliente' && !clientName.includes('+') && !clientName.includes('wa.me')) {
+          const firstName = clientName.trim().split(/\s+/)[0];
+          if (firstName && firstName.length > 1 && !firstName.includes('@')) {
+            cleanName = ` ${firstName}`;
+          }
+        }
+        const holdingMessage = `Ok${cleanName}, déjame consultar con un asesor para atenderte inmediatamente.`;
+
         console.log(`\n========================================`);
-        console.log(`[Missing Property] Consulta sobre "${result.notFoundItem}" no registrada en Sheets.`);
-        console.log(`El bot GUARDA SILENCIO ABSOLUTO con el cliente (${clientName}).`);
-        console.log(`Enviando alerta urgente a Robert (+584143115105) y por correo.`);
+        console.log(`[Missing Property / Holding Response]`);
+        console.log(`Inmueble consultado: "${result.notFoundItem}"`);
+        console.log(`Cliente: ${clientName} (${clientPhone || 'Sin tel'})`);
+        console.log(`Respuesta al cliente: "${holdingMessage}"`);
+        console.log(`¡PUMMM! Disparando alertas por todos lados a Robert (+584143115105) y por correo...`);
         console.log(`========================================\n`);
 
+        // 1. Enviar mensaje de espera al cliente (1 sola vez vía Kommo)
+        await updateKommoLead(currentLeadId, holdingMessage);
+        await triggerKommoSalesbot(currentLeadId);
+
+        // 2. ¡PUMMM! Disparar alertas por todos lados (WhatsApp Robert +584143115105, Correo, Kommo Task & Note)
         await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
-        setLeadHandoff(currentLeadId); // Silenciar bot durante 24h para que Robert o Bárbara respondan personalmente
-        return; // ¡NO ENVIAR NINGÚN MENSAJE AL CLIENTE! ¡NO DISPARAR SALESBOT AL CLIENTE!
+
+        // 3. Activar silencio de 24 horas (Handoff) para que Robert o Bárbara respondan humanamente
+        setLeadHandoff(currentLeadId);
+        return;
       }
 
       // Si el filtro determinístico o Claude clasificaron como charla casual, comentario o ignorar
@@ -1464,7 +1484,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v3.9 Daily AI Intelligence & Balance Report Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v4.0 Holding Message & Multi-Channel Alert Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
