@@ -1580,7 +1580,7 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v4.0 Holding Message & Multi-Channel Alert Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v4.1 Anti-Substitution & Anti-Duplicate Shield Edition',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
