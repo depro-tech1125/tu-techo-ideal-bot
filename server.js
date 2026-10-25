@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const path = require('path');
 const { parse } = require('csv-parse/sync');
 
 const app = express();
@@ -12,6 +13,7 @@ const PORT = process.env.PORT || 3000;
 app.disable('x-powered-by');
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(express.json({ limit: '2mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Rate Limiter en memoria (Máximo 40 peticiones por minuto por IP)
 const ipRequestCounts = new Map();
@@ -454,7 +456,6 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
 // 🤝 GESTIÓN DE TRASPASO A HUMANO (HANDOFF)
 // ==========================================
 const fs = require('fs');
-const path = require('path');
 const HANDOFF_FILE = path.join(__dirname, 'handoffs.json');
 
 let leadHandoffs = {};
@@ -1588,6 +1589,11 @@ app.get('/health', async (req, res) => {
     credits_remaining_usd: remainingCredits,
     uptime_seconds: Math.floor(process.uptime())
   });
+});
+
+// 🚀 PORTAFOLIO WEB INTERACTIVO - DEPRO TECH IA SOLUTIONS
+app.get(['/', '/portfolio', '/deprotech'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Endpoints del Reporte Diario y Estadísticas

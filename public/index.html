@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Depro Tech IA Solutions | Arquitectura de Software & Agentes de Inteligencia Artificial</title>
+  <meta name="description" content="Automatizaciones empresariales de alto nivel, agentes conversacionales con Claude AI sin alucinaciones, integración profunda con Kommo CRM, WhatsApp y bases de datos en tiempo real.">
+  
+  <!-- Google Fonts: Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Background Glow Orbs -->
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+  <div class="glow-orb orb-3"></div>
+
+  <!-- Navbar -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="brand-logo">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">Depro Tech</span>
+          <span class="brand-badge">IA Solutions</span>
+        </div>
+      </div>
+      <nav class="nav-links">
+        <a href="#proyectos">Proyectos</a>
+        <a href="#simulador">Simulador IA</a>
+        <a href="#servicios">Servicios</a>
+        <a href="#arquitectura">Arquitectura</a>
+      </nav>
+      <a href="https://wa.me/584143115105?text=Hola%20Depro%20Tech%2C%20vi%20tu%20portafolio%20y%20me%20gustar%C3%ADa%20automatizar%20mi%20negocio%20con%20IA" target="_blank" class="btn-nav-cta">
+        <span>Hablar por WhatsApp</span>
+        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2m.01 1.67c2.2 0 4.26.86 5.82 2.42a8.23 8.23 0 0 1 2.41 5.83c0 4.54-3.7 8.24-8.24 8.24-1.42 0-2.82-.37-4.06-1.07l-.29-.17-3.12.82.83-3.04-.19-.3A8.2 8.2 0 0 1 3.8 11.91c0-4.54 3.69-8.24 8.25-8.24m4.52 11.66c-.25-.13-1.47-.72-1.7-.81-.23-.08-.39-.13-.56.13-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.13-1.06-.39-2.02-1.25-.75-.67-1.25-1.5-1.4-1.75-.15-.25-.02-.39.11-.51.11-.11.25-.29.38-.44.12-.14.17-.25.25-.42.08-.17.04-.31-.02-.44-.06-.13-.56-1.34-.76-1.84-.2-.49-.4-.42-.55-.43-.14-.01-.31-.01-.47-.01-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.1 0 1.24.9 2.44 1.03 2.61.12.17 1.77 2.71 4.3 3.8 2.53 1.09 2.53.73 2.98.69.46-.04 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.17-.48-.29"/></svg>
+      </a>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero-section">
+    <div class="container hero-content">
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        <span>Sistemas de IA Activos en Producción 24/7</span>
+      </div>
+      
+      <h1 class="hero-title">
+        Ingeniería de Software & <span class="gradient-text">Agentes de IA</span> para Empresas
+      </h1>
+      
+      <p class="hero-subtitle">
+        Desarrollamos ecosistemas inteligentes que automatizan tus ventas: bots conversacionales con <strong>cero alucinaciones</strong>, sincronización de inventario en tiempo real, integración nativa con <strong>Kommo CRM</strong> y alertas inmediatas a WhatsApp.
+      </p>
+
+      <div class="hero-actions">
+        <a href="#simulador" class="btn-primary">
+          <span>Probar Simulador Interactivo</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+        <a href="#proyectos" class="btn-secondary">
+          <span>Ver Caso de Éxito Real</span>
+        </a>
+      </div>
+
+      <!-- Quick Proof Metrics -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-number">24/7</div>
+          <div class="metric-label">Atención Ininterrumpida</div>
+          <div class="metric-sub">Cero demoras en responder leads</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-number">&lt; 3 seg</div>
+          <div class="metric-label">Tiempo de Respuesta</div>
+          <div class="metric-sub">Atención en el segundo exacto</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-number">0%</div>
+          <div class="metric-label">Alucinaciones / Inventos</div>
+          <div class="metric-sub">100% blindado a datos de Sheets</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-number">$0.00</div>
+          <div class="metric-label">Tokens en Charla Casual</div>
+          <div class="metric-sub">Filtros determinísticos anti-gasto</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive AI Simulator Section -->
+  <section id="simulador" class="section-simulator">
+    <div class="container">
+      <div class="section-header text-center">
+        <div class="section-tag">Demostración en Vivo</div>
+        <h2 class="section-title">Prueba el <span class="gradient-text">Simulador de Agente IA</span></h2>
+        <p class="section-desc">
+          Interactúa con el mismo motor de inteligencia artificial que utilizamos en producción. Prueba consultas inmobiliarias reales o pregúntale por un bar/negocio para ver cómo reacciona sin inventar datos.
+        </p>
+      </div>
+
+      <div class="simulator-wrapper">
+        <!-- Phone Mockup Container -->
+        <div class="phone-mockup">
+          <div class="phone-speaker"></div>
+          
+          <!-- Chat Header -->
+          <div class="chat-header">
+            <div class="chat-avatar">
+              <div class="bot-badge-icon">🤖</div>
+              <span class="online-indicator"></span>
+            </div>
+            <div class="chat-info">
+              <div class="chat-title">Agente Inmobiliario IA</div>
+              <div class="chat-status">Tu Techo Ideal • Depro Tech Engine</div>
+            </div>
+            <div class="chat-actions">
+              <button id="btn-reset-chat" title="Reiniciar Chat" class="btn-icon">↺</button>
+            </div>
+          </div>
+
+          <!-- Alert Simulation Banner (Hidden by default, triggered on special flows) -->
+          <div id="sim-alert-banner" class="sim-alert-banner">
+            <div class="sim-alert-icon">🚨</div>
+            <div class="sim-alert-text">
+              <strong>¡Alerta Multicanal Disparada!</strong>
+              <span>WhatsApp enviado a Robert (+58 414 311 5105) + Tarea urgente creada en Kommo.</span>
+            </div>
+          </div>
+
+          <!-- Chat Messages Body -->
+          <div class="chat-body" id="chat-body">
+            <div class="chat-msg bot">
+              <div class="msg-bubble">
+                <p>Hola, bienvenido a Tu techo ideal 👋</p>
+                <p>Soy el asistente virtual de Bárbara Bravo y Robert Jiménez. ¿En qué podemos ayudarte hoy? ¿Buscas comprar, alquilar o información de algún inmueble?</p>
+                <span class="msg-time">Ahora</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Preset Chips to click -->
+          <div class="chat-presets">
+            <span class="presets-label">Prueba con un clic:</span>
+            <div class="chips-container">
+              <button class="chip" data-msg="Busco apartamento en venta en La Boyera">🏠 Apartamento en La Boyera</button>
+              <button class="chip" data-msg="Estoy interesado en el anuncio del bar en El Hatillo">🍸 Anuncio del bar en El Hatillo</button>
+              <button class="chip" data-msg="Casa comercial para alquiler en Alta Florida">🏢 Casa Comercial Alta Florida</button>
+              <button class="chip" data-msg="si es una locura jaja">💬 Charla casual / broma</button>
+            </div>
+          </div>
+
+          <!-- Chat Input Area -->
+          <form id="chat-form" class="chat-input-area">
+            <input type="text" id="chat-input" placeholder="Escribe un mensaje de prueba..." autocomplete="off">
+            <button type="submit" id="btn-send" class="btn-send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>
+          </form>
+        </div>
+
+        <!-- Simulator Explanation Card -->
+        <div class="simulator-details">
+          <div class="feature-box">
+            <div class="feature-icon">🛡️</div>
+            <div>
+              <h3>Blindaje Anti-Alucinaciones</h3>
+              <p>Si un cliente pregunta por un inmueble no registrado (como un bar), el bot <strong>jamás inventa datos ni pide disculpas absurdas</strong>. Responde con un mensaje amable de espera y alerta inmediatamente a los dueños para atención humana.</p>
+            </div>
+          </div>
+
+          <div class="feature-box">
+            <div class="feature-icon">⚡</div>
+            <div>
+              <h3>Filtro Anti-Gasto de Tokens</h3>
+              <p>Comentarios informales ("si es una locura", "jajaja", stickers) son filtrados determinísticamente en milisegundos con <strong>$0 de costo de IA</strong>. No se gastan tokens de Claude en charla ociosa.</p>
+            </div>
+          </div>
+
+          <div class="feature-box">
+            <div class="feature-icon">📊</div>
+            <div>
+              <h3>Sincronización con Google Sheets</h3>
+              <p>Tu equipo solo agrega o modifica una fila en Google Sheets y en ese mismo segundo el bot conoce el precio, características y link de fotos actualizado.</p>
+            </div>
+          </div>
+
+          <div class="feature-box">
+            <div class="feature-icon">📲</div>
+            <div>
+              <h3>Alertas Automáticas por WhatsApp</h3>
+              <p>Cuando un prospecto muestra intención real o pregunta por un inmueble nuevo, el sistema envía un mensaje prioritario al WhatsApp de los asesores con teléfono y link directo.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Featured Case Study Section -->
+  <section id="proyectos" class="section-case-study">
+    <div class="container">
+      <div class="section-header text-center">
+        <div class="section-tag">Caso de Éxito en Producción</div>
+        <h2 class="section-title">Ecosistema IA: <span class="gradient-text">Tu Techo Ideal C.A.</span></h2>
+        <p class="section-desc">
+          Infraestructura de ventas inmobiliarias automatizadas de punta a punta, atendiendo prospectos en WhatsApp e Instagram sin intervención humana hasta el cierre.
+        </p>
+      </div>
+
+      <div class="case-card">
+        <div class="case-grid">
+          <div class="case-info">
+            <div class="case-badge">Inmobiliaria & Ventas de Alta Gama</div>
+            <h3 class="case-title">Broker Robert Jiménez & Bárbara Bravo</h3>
+            <p class="case-text">
+              Tu Techo Ideal recibía decenas de mensajes diarios por Instagram Direct y WhatsApp procedentes de portales como Wasi y redes sociales. El reto: responder de inmediato, no perder prospectos fuera de horario y evitar que una IA inventara precios o propiedades.
+            </p>
+            
+            <div class="results-list">
+              <div class="result-item">
+                <span class="check-icon">✓</span>
+                <span><strong>Respuestas en &lt; 3s:</strong> Clientes atendidos al instante sin esperas.</span>
+              </div>
+              <div class="result-item">
+                <span class="check-icon">✓</span>
+                <span><strong>Inventario Blindado:</strong> 100% fiel a Google Sheets en tiempo real.</span>
+              </div>
+              <div class="result-item">
+                <span class="check-icon">✓</span>
+                <span><strong>Handoff Inteligente:</strong> Cuando entra un asesor, el bot guarda silencio 24h.</span>
+              </div>
+              <div class="result-item">
+                <span class="check-icon">✓</span>
+                <span><strong>Reportes Diarios Automáticos:</strong> Saldo de tokens y proyecciones a las 8:00 AM.</span>
+              </div>
+            </div>
+
+            <div class="case-links">
+              <a href="/stats" target="_blank" class="btn-case-outline">
+                <span>Ver Dashboard de Monitoreo en Vivo</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+              </a>
+            </div>
+          </div>
+
+          <!-- Architecture Visual Diagram -->
+          <div class="case-architecture" id="arquitectura">
+            <h4 class="arch-title">Flujo Arquitectónico en Producción</h4>
+            <div class="arch-flow">
+              <div class="arch-step">
+                <div class="step-num">01</div>
+                <div class="step-content">
+                  <h5>Canales de Entrada</h5>
+                  <p>WhatsApp Business API + Instagram Direct</p>
+                </div>
+              </div>
+
+              <div class="flow-arrow">↓</div>
+
+              <div class="arch-step highlight-step">
+                <div class="step-num">02</div>
+                <div class="step-content">
+                  <h5>Microservicio Node.js en Render</h5>
+                  <p>Deduplicación, Mutex locks, debouncing y filtros de costo</p>
+                </div>
+              </div>
+
+              <div class="flow-arrow">↓</div>
+
+              <div class="arch-step">
+                <div class="step-num">03</div>
+                <div class="step-content">
+                  <h5>Cerebro IA: Claude Sonnet 4.5</h5>
+                  <p>Evaluación semántica de intención y consulta de Sheets</p>
+                </div>
+              </div>
+
+              <div class="flow-arrow">↓</div>
+
+              <div class="arch-step">
+                <div class="step-num">04</div>
+                <div class="step-content">
+                  <h5>Kommo CRM + Alertas WhatsApp</h5>
+                  <p>Salesbot actualiza el lead y alerta a Robert con enlace directo</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Services Section -->
+  <section id="servicios" class="section-services">
+    <div class="container">
+      <div class="section-header text-center">
+        <div class="section-tag">Nuestras Capacidades</div>
+        <h2 class="section-title">Soluciones que Diseñamos en <span class="gradient-text">Depro Tech</span></h2>
+        <p class="section-desc">
+          Tecnología a la medida para empresas que desean escalar su atención, cerrar más ventas y eliminar procesos repetitivos.
+        </p>
+      </div>
+
+      <div class="services-grid">
+        <div class="service-card">
+          <div class="service-icon">🤖</div>
+          <h3>Agentes de IA Especializados</h3>
+          <p>Modelos de lenguaje entrenados estrictamente con tus reglas comerciales, catálogos y políticas. Cero alucinaciones, respuestas empáticas y calificación de leads en frío.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon">🔄</div>
+          <h3>Automatización Integral de CRM</h3>
+          <p>Configuración experta de Kommo, HubSpot y Make. Creación de embudos digitales automáticos, asignación de tareas a asesores y seguimiento sin intervención humana.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon">⚡</div>
+          <h3>Microservicios & APIs en la Nube</h3>
+          <p>Servidores dedicados con Express, Node.js y Python desplegados en Render o AWS. Webhooks ultra-rápidos, sistemas de cola anti-duplicación y alta disponibilidad 99.9%.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon">📊</div>
+          <h3>Bases de Datos & Dashboards</h3>
+          <p>Conexión en tiempo real con Google Sheets, Airtable, PostgreSQL y paneles analíticos en vivo para medir consumo de tokens, clientes atendidos y conversiones.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon">🚨</div>
+          <h3>Alertas Multicanal en Caliente</h3>
+          <p>Notificaciones push directas al WhatsApp y correo electrónico de tus vendedores en el instante exacto en que un prospecto muestra intención de compra.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon">🔒</div>
+          <h3>Protección de Costos y Tokens</h3>
+          <p>Filtros de intención inteligentes para que tu presupuesto de IA solo se use en clientes reales y jamás en charla casual, spam o mensajes irrelevantes.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tech Stack Grid -->
+  <section class="section-tech">
+    <div class="container text-center">
+      <div class="section-tag">Tecnologías Dominadas</div>
+      <h3 class="tech-title">Stack Tecnológico de Nivel Empresarial</h3>
+      
+      <div class="tech-grid">
+        <div class="tech-pill">Claude Sonnet 4.5 (Anthropic)</div>
+        <div class="tech-pill">OpenAI GPT-4o</div>
+        <div class="tech-pill">Kommo CRM (API v4)</div>
+        <div class="tech-pill">WhatsApp Cloud API</div>
+        <div class="tech-pill">Node.js & Express</div>
+        <div class="tech-pill">Render Cloud Infrastructure</div>
+        <div class="tech-pill">Google Sheets Cloud API</div>
+        <div class="tech-pill">Make.com Automations</div>
+        <div class="tech-pill">Webhooks & RESTful APIs</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA Section -->
+  <section class="section-cta">
+    <div class="container">
+      <div class="cta-box">
+        <h2 class="cta-title">¿Listo para Automatizar tu Negocio con IA?</h2>
+        <p class="cta-desc">
+          Hablemos hoy mismo. Evaluamos tus canales de venta y diseñamos un agente de inteligencia artificial a la medida de tu empresa.
+        </p>
+        <div class="cta-buttons">
+          <a href="https://wa.me/584143115105?text=Hola%20Depro%20Tech%2C%20vi%20tu%20portafolio%20web%20y%20me%20gustar%C3%ADa%20agendar%20una%20demostraci%C3%B3n%20para%20mi%20negocio" target="_blank" class="btn-primary btn-cta-lg">
+            <span>Conversar con Nosotros por WhatsApp</span>
+            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2m.01 1.67c2.2 0 4.26.86 5.82 2.42a8.23 8.23 0 0 1 2.41 5.83c0 4.54-3.7 8.24-8.24 8.24-1.42 0-2.82-.37-4.06-1.07l-.29-.17-3.12.82.83-3.04-.19-.3A8.2 8.2 0 0 1 3.8 11.91c0-4.54 3.69-8.24 8.25-8.24m4.52 11.66c-.25-.13-1.47-.72-1.7-.81-.23-.08-.39-.13-.56.13-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.13-1.06-.39-2.02-1.25-.75-.67-1.25-1.5-1.4-1.75-.15-.25-.02-.39.11-.51.11-.11.25-.29.38-.44.12-.14.17-.25.25-.42.08-.17.04-.31-.02-.44-.06-.13-.56-1.34-.76-1.84-.2-.49-.4-.42-.55-.43-.14-.01-.31-.01-.47-.01-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.1 0 1.24.9 2.44 1.03 2.61.12.17 1.77 2.71 4.3 3.8 2.53 1.09 2.53.73 2.98.69.46-.04 1.47-.6 1.68-1.18.21-.58.21-1.08.15-1.18-.06-.1-.23-.17-.48-.29"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container footer-content">
+      <div class="footer-brand">
+        <div class="brand-text">
+          <span class="brand-name">Depro Tech</span>
+          <span class="brand-badge">IA Solutions</span>
+        </div>
+        <p class="footer-desc">Soluciones de Software, Agentes de Inteligencia Artificial & Automatización para Negocios.</p>
+      </div>
+      <div class="footer-copy">
+        <p>© 2026 Depro Tech IA Solutions. Todos los derechos reservados.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
