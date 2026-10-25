@@ -13,7 +13,6 @@ const PORT = process.env.PORT || 3000;
 app.disable('x-powered-by');
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Rate Limiter en memoria (Máximo 40 peticiones por minuto por IP)
 const ipRequestCounts = new Map();
@@ -1591,9 +1590,8 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// 🚀 PORTAFOLIO WEB INTERACTIVO - DEPRO TECH IA SOLUTIONS
-app.get(['/', '/portfolio', '/deprotech'], (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.get('/', (req, res) => {
+  res.redirect('/health');
 });
 
 // Endpoints del Reporte Diario y Estadísticas
