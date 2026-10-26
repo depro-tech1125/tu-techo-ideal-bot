@@ -1029,7 +1029,7 @@ REGLAS EXCLUSIVAS PARA CUANDO EL INMUEBLE SÍ EXISTE EN EL INVENTARIO:
 3. SI EL CLIENTE PIDE ALQUILER: Solo ofrece propiedades cuya "Operación" sea "Alquiler".
 4. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
 5. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible (que empiece por http), inclúyelo para que el cliente pueda verlas. Si dice "No link" o no tiene fotos, no menciones nada sobre fotos y JAMÁS coloques el símbolo "-" ni inventes enlaces.
-6. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
+6. Al final de tu mensaje, incluye siempre exactamente esta pregunta de cierre: "¿Te gustaría coordinar una visita presencial, para conocerlo en persona?"
 7. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
 8. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
 9. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
@@ -1240,7 +1240,7 @@ async function generateResponse(userMessage, allProperties) {
       text += formatSingleProperty(p) + '\n';
     });
 
-    text += `¿Te gustaría coordinar una visita presencial para conocer alguna de estas opciones o recibir información adicional?`;
+    text += `¿Te gustaría coordinar una visita presencial, para conocerlo en persona?`;
     return { text: text, notFoundItem: null, skip: false };
   }
 
