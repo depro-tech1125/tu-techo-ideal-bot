@@ -963,8 +963,9 @@ function formatSingleProperty(p) {
   if (p.DESCRIPCION_BREVE && p.DESCRIPCION_BREVE.trim() !== '-' && p.DESCRIPCION_BREVE.trim() !== '') {
     out += `• **Detalles:** ${p.DESCRIPCION_BREVE.trim()}\n`;
   }
-  if (p.LINK_FOTOS && p.LINK_FOTOS.trim() !== '') {
-    out += `• **Fotos:** ${p.LINK_FOTOS.trim()}\n`;
+  const rawPhoto = (p.URL_FOTOS_SISTEMA || p.LINK_FOTOS || '').trim();
+  if (rawPhoto && rawPhoto !== '-' && rawPhoto.startsWith('http')) {
+    out += `• **Fotos:** ${rawPhoto}\n`;
   }
   return out;
 }
@@ -983,7 +984,9 @@ async function generateClaudeResponse(userMessage, availableProperties) {
     // Formatear inventario SIN códigos de referencia internos (REF-xxx)
     const formattedInventory = availableProperties.map((p, i) => {
       const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
-      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${p.LINK_FOTOS || 'No link'}`;
+      const rawPhoto = (p.URL_FOTOS_SISTEMA || p.LINK_FOTOS || '').trim();
+      const validPhoto = (rawPhoto && rawPhoto !== '-' && rawPhoto.startsWith('http')) ? rawPhoto : 'No link';
+      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
@@ -1014,7 +1017,7 @@ REGLAS EXCLUSIVAS PARA CUANDO EL INMUEBLE SÍ EXISTE EN EL INVENTARIO:
 2. SI EL CLIENTE PIDE CASAS EN VENTA: Solo ofrece propiedades cuya "Operación" sea estrictamente "Venta". NUNCA ofrezcas un alquiler si el cliente pidió comprar o venta.
 3. SI EL CLIENTE PIDE ALQUILER: Solo ofrece propiedades cuya "Operación" sea "Alquiler".
 4. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
-5. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible, inclúyelo para que el cliente pueda verlas.
+5. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible (que empiece por http), inclúyelo para que el cliente pueda verlas. Si dice "No link" o no tiene fotos, no menciones nada sobre fotos y JAMÁS coloques el símbolo "-" ni inventes enlaces.
 6. Al final invita siempre a coordinar una visita presencial con Bárbara o Robert Jiménez para conocer el inmueble.
 7. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
 8. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
@@ -1049,6 +1052,8 @@ NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas socia
       }
       // Limpieza de seguridad: eliminar cualquier mención accidental a códigos tipo [REF-xxx] o REF-xxx
       aiMessage = aiMessage.replace(/\[\s*REF-[^\]]+\]\s*/gi, '').replace(/\bREF-\d+\b\s*/gi, '');
+      // Blindaje de fotos: nunca enviar un guion "-" ni "No link" al cliente
+      aiMessage = aiMessage.replace(/•?\s*\**Fotos:\***\s*-\s*\n?/gi, '').replace(/•?\s*\**Fotos:\***\s*No link\s*\n?/gi, '');
 
       // Verificar si detectó inmueble o detalle no disponible en Google Sheets
       if (aiMessage.includes('NO_DISPONIBLE:')) {
