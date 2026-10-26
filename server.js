@@ -140,7 +140,8 @@ function isCasualOrChitChat(text) {
     'precio', 'precios', 'costo', 'valor', 'cuanto', 'presupuesto',
     'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion',
     'cita', 'visita', 'visitar', 'agendar', 'verlo', 'verla', 'disponible', 'disponibles',
-    'inmueble', 'inmuebles', 'propiedad', 'propiedades'
+    'inmueble', 'inmuebles', 'propiedad', 'propiedades',
+    'mascota', 'mascotas', 'perro', 'perros', 'gato', 'gatos', 'animal', 'animales', 'pet friendly'
   ];
 
   const hasRealEstateIntent = realEstateKeywords.some(kw => q.includes(kw));
@@ -181,7 +182,8 @@ function hasExplicitRealEstateIntent(text) {
     'comercial', 'galpon', 'terreno', 'inmueble', 'inmuebles', 'propiedad', 'propiedades',
     'precio', 'precios', 'costo', 'presupuesto',
     'macaracuay', 'alta florida', 'florida', 'boyera', 'hatillo',
-    'wasi', 'http'
+    'wasi', 'http',
+    'mascota', 'mascotas', 'perro', 'perros', 'gato', 'gatos', 'animal', 'animales', 'pet friendly'
   ];
 
   return intentKeywords.some(kw => q.includes(kw));
@@ -960,6 +962,10 @@ function formatSingleProperty(p) {
   let out = `📍 **${p.TIPO} en ${p.ZONA} (${p.OPERACION})**\n`;
   out += `• **Precio:** US$ ${cleanPrice}\n`;
   out += `• **Distribución:** ${p.HABITACIONES} Habs | ${p.BANOS} Baños | ${p.ESTACIONAMIENTOS} Puestos\n`;
+  const mascotas = (p.Mascotas || p.mascotas || '').trim();
+  if (mascotas && mascotas !== '-' && mascotas !== 'Por consultar') {
+    out += `• **Mascotas:** ${mascotas}\n`;
+  }
   if (p.DESCRIPCION_BREVE && p.DESCRIPCION_BREVE.trim() !== '-' && p.DESCRIPCION_BREVE.trim() !== '') {
     out += `• **Detalles:** ${p.DESCRIPCION_BREVE.trim()}\n`;
   }
@@ -986,7 +992,8 @@ async function generateClaudeResponse(userMessage, availableProperties) {
       const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
       const rawPhoto = (p.URL_FOTOS_SISTEMA || p.LINK_FOTOS || '').trim();
       const validPhoto = (rawPhoto && rawPhoto !== '-' && rawPhoto.startsWith('http')) ? rawPhoto : 'No link';
-      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
+      const mascotasVal = (p.Mascotas || p.mascotas || 'Por consultar').trim();
+      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${mascotasVal} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
@@ -1022,7 +1029,14 @@ REGLAS EXCLUSIVAS PARA CUANDO EL INMUEBLE SÍ EXISTE EN EL INVENTARIO:
 7. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
 8. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
 9. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
-NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción o comentario casual, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".`;
+NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción o comentario casual, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".
+10. POLÍTICA DE MASCOTAS (PET FRIENDLY):
+Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
+• Revisa el campo "Mascotas" de la propiedad consultada:
+  - Si dice "Si aceptan": Confírmale con entusiasmo y agrado que SÍ aceptan mascotas en esa propiedad.
+  - Si dice "No aceptan": Infórmale con amabilidad y respeto que en esa propiedad específica el propietario NO acepta mascotas. Si en tu inventario disponible hay otra propiedad en la misma zona u operación que SÍ acepte mascotas, ofrécesela cordialmente.
+  - Si dice "Por consultar" o no está especificado: Coméntale amablemente que con gusto le consultarás al asesor/propietario para confirmarle con certeza el permiso para su mascota.
+• JAMÁS afirmes que aceptan mascotas si el campo dice "No aceptan".`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
