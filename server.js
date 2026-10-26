@@ -1051,7 +1051,7 @@ Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
         { role: 'user', content: userMessage }
       ],
       temperature: 0.1,
-      max_tokens: 350
+      max_tokens: 550
     }, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
