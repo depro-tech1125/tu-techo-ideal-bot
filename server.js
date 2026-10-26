@@ -963,8 +963,10 @@ function formatSingleProperty(p) {
   out += `• **Precio:** US$ ${cleanPrice}\n`;
   out += `• **Distribución:** ${p.HABITACIONES} Habs | ${p.BANOS} Baños | ${p.ESTACIONAMIENTOS} Puestos\n`;
   const mascotas = (p.Mascotas || p.mascotas || '').trim();
+  const tipoMascotas = (p['Tipo de Mascotas'] || p.tipo_de_mascotas || '').trim();
   if (mascotas && mascotas !== '-' && mascotas !== 'Por consultar') {
-    out += `• **Mascotas:** ${mascotas}\n`;
+    const petText = (tipoMascotas && tipoMascotas !== 'No aplica' && tipoMascotas !== '-') ? `${mascotas} (${tipoMascotas})` : mascotas;
+    out += `• **Mascotas:** ${petText}\n`;
   }
   if (p.DESCRIPCION_BREVE && p.DESCRIPCION_BREVE.trim() !== '-' && p.DESCRIPCION_BREVE.trim() !== '') {
     out += `• **Detalles:** ${p.DESCRIPCION_BREVE.trim()}\n`;
@@ -993,7 +995,9 @@ async function generateClaudeResponse(userMessage, availableProperties) {
       const rawPhoto = (p.URL_FOTOS_SISTEMA || p.LINK_FOTOS || '').trim();
       const validPhoto = (rawPhoto && rawPhoto !== '-' && rawPhoto.startsWith('http')) ? rawPhoto : 'No link';
       const mascotasVal = (p.Mascotas || p.mascotas || 'Por consultar').trim();
-      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${mascotasVal} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
+      const tipoMascotas = (p['Tipo de Mascotas'] || p.tipo_de_mascotas || '').trim();
+      const petDetails = (tipoMascotas && tipoMascotas !== 'No aplica' && tipoMascotas !== '-') ? `${mascotasVal} (${tipoMascotas})` : mascotasVal;
+      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${petDetails} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
