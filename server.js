@@ -684,7 +684,117 @@ async function dispatchAdvisorAlertAndRobertReport(property, clientName, clientP
 }
 
 // ==========================================
-// 🔍 DETECCIÓN Y EMPAREJAMIENTO DE INMUEBLES WASI
+// 🧠 MEMORIA CONVERSACIONAL Y CONTEXTO POR LEAD
+// ==========================================
+const LEAD_CONTEXT_FILE = path.join(__dirname, 'lead_context.json');
+const leadContextCache = new Map();
+
+try {
+  if (fs.existsSync(LEAD_CONTEXT_FILE)) {
+    const raw = fs.readFileSync(LEAD_CONTEXT_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    for (const [k, v] of Object.entries(parsed)) {
+      leadContextCache.set(String(k), v);
+    }
+    console.log(`[Lead Context] Cargados ${leadContextCache.size} contextos de leads previos.`);
+  }
+} catch (e) {
+  console.warn('[Lead Context Init Warning]:', e.message);
+}
+
+function getLeadPropertyContext(leadId, allProperties) {
+  if (!leadId) return null;
+  const ctx = leadContextCache.get(String(leadId));
+  if (!ctx || !ctx.propertyRef) return null;
+  const isFresh = (Date.now() - ctx.updatedAt) < (7 * 24 * 60 * 60 * 1000);
+  if (!isFresh) return null;
+  return allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === ctx.propertyRef.toUpperCase()) || null;
+}
+
+function saveLeadPropertyContext(leadId, property) {
+  if (!leadId || !property || !property.ID_PROPIEDAD) return;
+  const ctx = {
+    propertyRef: property.ID_PROPIEDAD,
+    wasiCode: property.CODIGO_WASI || '',
+    updatedAt: Date.now()
+  };
+  leadContextCache.set(String(leadId), ctx);
+  try {
+    const obj = {};
+    for (const [k, v] of leadContextCache.entries()) obj[k] = v;
+    fs.writeFileSync(LEAD_CONTEXT_FILE, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[Lead Context Save Error]:', e.message);
+  }
+}
+
+// ==========================================
+// 🕒 SALUDO DINÁMICO POR HORA (HORA VENEZUELA UTC-4)
+// ==========================================
+function getVenezuelaGreeting() {
+  const now = new Date();
+  const vHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Caracas', hour12: false, hour: 'numeric' }), 10);
+  if (vHour >= 5 && vHour < 12) {
+    return 'buen día';
+  } else if (vHour >= 12 && vHour < 19) {
+    return 'buenas tardes';
+  } else {
+    return 'buenas noches';
+  }
+}
+
+// ==========================================
+// 🎯 DETECCIONES DE INTENCIÓN
+// ==========================================
+function isVisitSchedulingIntent(text) {
+  const t = normalizeText(text);
+  return /(?:agendar|coordinar|cuadrar|pautar|fijar)\s*(?:para\s*(?:verla|verlo|visitar)|(?:una\s*)?(?:cita|visita))|\bagendar\b|quiero\s*(?:agendar|verla|verlo|visitar)|(?:cuando|cuándo)\s*(?:podr[ií]amos|podemos|se\s*puede)\s*(?:ir|verla|verlo|visitar)|interesad[oa].*?(?:agendar|cita|visita|verla|verlo)/i.test(t);
+}
+
+function isExplicitAvailabilityQuery(text) {
+  const t = normalizeText(text);
+  return /(?:est[aá]\s*disponible|saber\s*si\s*est[aá]\s*disponible|tienes\s*(?:un|el|este)|estoy\s*interesad[oa]|quisiera\s*saber\s*del|informaci[oó]n\s*del\s*inmueble|compartiste\s*en\s*(?:la\s*red\s*)?wasi)/i.test(t);
+}
+
+// ==========================================
+// 📲 DISPATCH DIRECTO DE ALERTA WHATSAPP A ROBERT
+// ==========================================
+async function dispatchDirectWhatsAppToRobert(messageText) {
+  const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || '7882504';
+  const robertPhone = (process.env.ROBERT_WHATSAPP || '+584143115105').replace(/[^0-9]/g, '');
+
+  console.log(`\n📲 [DISPATCH WHATSAPP DIRECTO A ROBERT]`);
+  console.log(`Destinatario: Robert Jiménez (${robertPhone}) | Kommo Lead #${robertLeadId}`);
+  console.log(`Mensaje:\n${messageText}\n`);
+
+  try {
+    await updateKommoLead(robertLeadId, messageText);
+    await triggerKommoSalesbot(robertLeadId);
+    console.log(`[WhatsApp to Robert] Notificación enviada al WhatsApp de Robert vía Kommo Lead #${robertLeadId}`);
+  } catch (e) {
+    console.warn('[WhatsApp to Robert Kommo Error]:', e.response?.data || e.message);
+  }
+
+  if (process.env.CALLMEBOT_API_KEY) {
+    try {
+      const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${robertPhone}&text=${encodeURIComponent(messageText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
+      await axios.get(callmebotUrl, { timeout: 8000 });
+      console.log(`[WhatsApp to Robert] Notificación enviada vía CallMeBot`);
+    } catch (e) {
+      console.warn('[WhatsApp to Robert CallMeBot Error]:', e.message);
+    }
+  }
+
+  if (process.env.WHATSAPP_GATEWAY_URL) {
+    try {
+      await axios.post(process.env.WHATSAPP_GATEWAY_URL, { phone: robertPhone, message: messageText }, { timeout: 8000 });
+      console.log(`[WhatsApp to Robert] Notificación enviada vía WhatsApp Gateway`);
+    } catch (e) { }
+  }
+}
+
+// ==========================================
+// 🔍 DETECCIÓN Y EMPAREJAMIENTO DE INMUEBLES
 // ==========================================
 function matchWasiOrProperty(text, properties) {
   let wasiCode = null;
@@ -713,43 +823,274 @@ function matchWasiOrProperty(text, properties) {
       return { status: 'NOT_FOUND', code: wasiCode, item: `Inmueble código Wasi ${wasiCode}` };
     }
   }
+
+  // Emparejamiento por código REF directo (ej: REF-005)
+  const refMatch = text.match(/\b(REF-\d{3})\b/i);
+  if (refMatch) {
+    const refUpper = refMatch[1].toUpperCase();
+    const matched = properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === refUpper);
+    if (matched) return { status: 'MATCH', property: matched, code: refUpper };
+  }
+
+  // Emparejamiento por link de fotos Rexup (cod_inmueble)
+  const rexupMatch = text.match(/cod_inmueble=(\d+)/i);
+  if (rexupMatch) {
+    const matched = properties.find(p => (p.LINK_FOTOS_URL || p.LINK_FOTOS || '').includes(rexupMatch[1]));
+    if (matched) return { status: 'MATCH', property: matched, code: rexupMatch[1] };
+  }
+
+  // Emparejamiento por Mercado Libre (MLV)
+  const mlMatch = text.match(/MLV-?(\d+)/i);
+  if (mlMatch) {
+    const matched = properties.find(p => (p.MercadoLibre_URL || p['Mercado Libre'] || '').includes(mlMatch[1]));
+    if (matched) return { status: 'MATCH', property: matched, code: mlMatch[1] };
+  }
+
+  // Emparejamiento por zona y tipo si se especifica claramente en el texto
+  const qNorm = normalizeText(text);
+  if (qNorm.includes('mercedes') && qNorm.includes('apartamento')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-005');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-005' };
+  }
+  if (qNorm.includes('palos grandes') && (qNorm.includes('apartamento') || qNorm.includes('apto'))) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-007');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-007' };
+  }
+  if (qNorm.includes('macaracuay')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-002');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-002' };
+  }
+  if (qNorm.includes('alta florida') || (qNorm.includes('florida') && qNorm.includes('casa'))) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-001' || p.ID_PROPIEDAD === 'REF-003');
+    if (matched) return { status: 'MATCH', property: matched, code: matched.ID_PROPIEDAD };
+  }
+  if (qNorm.includes('boyera')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-004');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-004' };
+  }
+  if (qNorm.includes('san ignacio') || (qNorm.includes('castellana') && qNorm.includes('local'))) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-022');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-022' };
+  }
+
   return { status: 'NONE' };
 }
 
-function formatWasiPropertyResponse(p, userText) {
+function formatAvailabilityResponse(property, userText) {
+  const greeting = getVenezuelaGreeting();
   const wantsNoContactLink = /sin\s+datos|sin\s+contacto|ficha\s+blanca|enlace\s+neutro/i.test(userText);
-  const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
-  const tipoZona = `${p.TIPO} en ${p.OPERACION} en ${p.ZONA}`;
+  const wantsPhotos = /fotos?|im[aá]genes|link|enlace/i.test(userText);
+  const photoUrl = property.LINK_FOTOS_URL || (property.LINK_FOTOS && property.LINK_FOTOS.startsWith('http') ? property.LINK_FOTOS : null);
 
-  let resp = `Hola, bienvenido a Tu techo ideal\n\n`;
-  resp += `¡Sí, está totalmente disponible! Te comparto la información de este ${tipoZona}:\n\n`;
-  resp += `• Inversión: US$ ${cleanPrice}\n`;
-  if (p.HABITACIONES || p.BANOS || p.ESTACIONAMIENTOS) {
-    const habs = p.HABITACIONES ? `${p.HABITACIONES} hab.` : '';
-    const banos = p.BANOS ? `${p.BANOS} baños` : '';
-    const puestos = p.ESTACIONAMIENTOS ? `${p.ESTACIONAMIENTOS} estac.` : '';
-    const distrib = [habs, banos, puestos].filter(Boolean).join(', ');
-    if (distrib) resp += `• Distribución: ${distrib}\n`;
-  }
-  if (p.DESCRIPCION_BREVE) {
-    const shortDesc = p.DESCRIPCION_BREVE.length > 250 ? p.DESCRIPCION_BREVE.substring(0, 240) + '...' : p.DESCRIPCION_BREVE;
-    resp += `• Detalles: ${shortDesc}\n`;
+  let resp = `Bienvenido a Tu Techo Ideal, ${greeting}, sí disponible.`;
+
+  if ((wantsNoContactLink || wantsPhotos) && photoUrl) {
+    if (wantsNoContactLink) {
+      resp += ` Aquí tienes el enlace sin datos de contacto: ${photoUrl}`;
+    } else {
+      resp += ` Aquí puedes ver las fotos del inmueble: ${photoUrl}`;
+    }
   }
 
-  const rexupLink = p.LINK_FOTOS_URL || (p.LINK_FOTOS && p.LINK_FOTOS.startsWith('http') ? p.LINK_FOTOS : null);
-  const wasiLink = p.Wasi_URL || (p.Wasi && p.Wasi.startsWith('http') ? p.Wasi : null);
-  const webLink = p.PaginaWeb_URL || (p['Pagina Web'] && p['Pagina Web'].startsWith('http') ? p['Pagina Web'] : null);
-
-  if (wantsNoContactLink && rexupLink) {
-    resp += `• Enlace / Fotos sin datos de contacto: ${rexupLink}\n`;
-  } else {
-    if (rexupLink) resp += `• Fotos del inmueble: ${rexupLink}\n`;
-    if (wasiLink) resp += `• Ver en Wasi: ${wasiLink}\n`;
-    else if (webLink) resp += `• Ver en Web: ${webLink}\n`;
-  }
-
-  resp += `\n¿Te gustaría coordinar una visita presencial, para conocerlo en persona?`;
   return resp;
+}
+
+// ==========================================
+// 🤖 CONSULTAS BASADAS EN "DESCRIPCION_BREVE" (CLAUDE AI)
+// ==========================================
+async function generateClaudePropertyQA(userMessage, property, clientName = '') {
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
+  const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
+  const descBreve = property.DESCRIPCION_BREVE || '';
+  const mascotas = property.Mascotas || 'No especificado';
+  const tipoMascotas = property['Tipo de Mascotas'] || '';
+  const estatus = property.ESTATUS || 'Disponible';
+  const fotos = property.LINK_FOTOS_URL || property.LINK_FOTOS || '';
+
+  const systemPrompt = `Eres el asistente de atención al cliente de "Tu Techo Ideal", inmobiliaria en Caracas.
+Tu labor es responder de forma breve, fluida, natural y humana a las preguntas de los clientes en WhatsApp, basándote ÚNICAMENTE en la columna "DESCRIPCION_BREVE" del inmueble consultado.
+
+DATOS DEL INMUEBLE CONSULTADO:
+- Tipo: ${property.TIPO || 'Inmueble'}
+- Operación: ${property.OPERACION || 'Venta'}
+- Estatus: ${estatus}
+- Mascotas permitidas: ${mascotas} ${tipoMascotas ? `(${tipoMascotas})` : ''}
+- Enlace fotos: ${fotos}
+- DESCRIPCION_BREVE:
+"""
+${descBreve}
+"""
+
+REGLAS ESTRICTAS DE RESPUESTA:
+1. SI EL CLIENTE QUIERE AGENDAR UNA CITA, VER O VISITAR EL INMUEBLE (ej: "quiero agendar para verla", "visitarlo", "ir a verlo"):
+   Responde exactamente: "Ok, ya consulto con mi jefe para agendar la cita"
+   Coloca al final: [ACCION: AGENDAR_CITA]
+
+2. SI EL CLIENTE HACE UNA PREGUNTA CUYA RESPUESTA EXISTE EN DESCRIPCION_BREVE (habitaciones, baños, metros, puesto de estacionamiento, precio/inversión/canon, áreas comunes, servicios, acabados):
+   Responde de manera concisa, directa y fluida (ejemplo: "Tiene 1 habitación", "Cuenta con 80,45 m²", "Sí, cuenta con puesto de estacionamiento", "La inversión total es de $355.674").
+   Coloca al final: [ACCION: RESPONDER_INFO]
+
+3. SI EL CLIENTE PREGUNTA ALGO QUE NO EXISTE O NO ESTÁ 100% CONFIRMADO EN DESCRIPCION_BREVE:
+   Responde exactamente: "Deme un momento, voy a consultar"
+   Coloca al final: [ACCION: NO_EXISTE_EN_DESCRIPCION]
+
+4. PROHIBICIONES:
+   - NUNCA inventes información que no esté en DESCRIPCION_BREVE. Si no está 100% claro, responde "Deme un momento, voy a consultar".
+   - NO uses textos largos ni listas de viñetas innecesarias. Sé conversacional y fluido como una persona por WhatsApp.
+   - NO menciones códigos internos como REF-xxx al cliente.`;
+
+  try {
+    const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+      model: model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ],
+      temperature: 0.1,
+      max_tokens: 180
+    }, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://tu-techo-ideal-bot-1.onrender.com',
+        'X-Title': 'Tu Techo Ideal Bot',
+        'Content-Type': 'application/json'
+      },
+      timeout: 15000
+    });
+
+    const aiMessage = response.data?.choices?.[0]?.message?.content?.trim();
+    if (!aiMessage) return null;
+
+    let action = 'RESPONDER_INFO';
+    if (aiMessage.includes('[ACCION: AGENDAR_CITA]')) {
+      action = 'AGENDAR_CITA';
+    } else if (aiMessage.includes('[ACCION: NO_EXISTE_EN_DESCRIPCION]')) {
+      action = 'NO_EXISTE_EN_DESCRIPCION';
+    }
+
+    const cleanText = aiMessage.replace(/\[ACCION:\s*[A-Z_]+\]/gi, '').trim();
+    return { text: cleanText, action };
+  } catch (err) {
+    console.warn('[Claude Property QA Error]:', err.message);
+    return null;
+  }
+}
+
+// Fallback determinístico si Claude no estuviera disponible
+function deterministicPropertyQA(userMessage, property) {
+  const q = normalizeText(userMessage);
+  const desc = property.DESCRIPCION_BREVE || '';
+  const descNorm = normalizeText(desc);
+
+  if (isVisitSchedulingIntent(userMessage)) {
+    return { text: 'Ok, ya consulto con mi jefe para agendar la cita', action: 'AGENDAR_CITA' };
+  }
+
+  if (q.includes('habitacion') || q.includes('habitaciones') || q.includes('hab') || q.includes('cuartos') || q.includes('dormitorio')) {
+    const habMatch = desc.match(/(\d+|una|dos|tres|cuatro|cinco)\s*(?:habitación|habitaciones|hab\b|cuarto|dormitorio)/i);
+    if (habMatch) {
+      return { text: `Tiene ${habMatch[1]} habitación${habMatch[1] === '1' || habMatch[1] === 'una' ? '' : 'es'}.`, action: 'RESPONDER_INFO' };
+    }
+  }
+
+  if (q.includes('baño') || q.includes('banos') || q.includes('bano')) {
+    const banoMatch = desc.match(/(\d+|un|dos|tres)\s*(?:baño|baños|bano|banos)/i);
+    if (banoMatch) {
+      return { text: `Tiene ${banoMatch[0]}.`, action: 'RESPONDER_INFO' };
+    }
+  }
+
+  if (q.includes('metro') || q.includes('metraje') || q.includes('m2') || q.includes('tamano') || q.includes('superficie')) {
+    const m2Match = desc.match(/(\d+[\d,\.]*)\s*(?:m²|m2|metros)/i);
+    if (m2Match) {
+      return { text: `Tiene ${m2Match[0]}.`, action: 'RESPONDER_INFO' };
+    }
+  }
+
+  if (q.includes('estacionamiento') || q.includes('puesto') || q.includes('parqueo') || q.includes('carro')) {
+    if (descNorm.includes('estacionamiento') || descNorm.includes('puesto')) {
+      return { text: 'Sí, cuenta con puesto de estacionamiento.', action: 'RESPONDER_INFO' };
+    }
+  }
+
+  if (q.includes('precio') || q.includes('costo') || q.includes('cuanto') || q.includes('inversion') || q.includes('canon')) {
+    const priceMatch = desc.match(/\$(\d+[\d,\.]*)/);
+    if (priceMatch) {
+      return { text: `El precio es de $${priceMatch[1]}.`, action: 'RESPONDER_INFO' };
+    }
+  }
+
+  return { text: 'Deme un momento, voy a consultar', action: 'NO_EXISTE_EN_DESCRIPCION' };
+}
+
+// Búsqueda general de inmuebles por presupuesto o zona si no hay un inmueble específico
+async function handleGeneralPropertySearch(userMessage, allProperties) {
+  const q = normalizeText(userMessage);
+  const available = allProperties.filter(row => normalizeText(row.ESTATUS || '').includes('disponible'));
+
+  // Consulta por presupuesto (ej: apartamentos en menos de $40 mil)
+  const budgetMatch = q.match(/(?:menos\s+de|hasta|m[aá]ximo|presupuesto\s+de)\s*\$?\s*(\d+[\d\.]*)\s*(?:mil|k)?/i);
+  if (budgetMatch) {
+    let maxBudget = parseFloat(budgetMatch[1].replace(/\./g, ''));
+    if (budgetMatch[0].includes('mil') || budgetMatch[0].includes('k')) {
+      if (maxBudget < 1000) maxBudget *= 1000;
+    }
+    const wantsBuy = q.includes('venta') || q.includes('compr') || maxBudget > 10000;
+
+    const matches = available.filter(p => {
+      const isSale = normalizeText(p.OPERACION || '').includes('venta');
+      if (wantsBuy && !isSale) return false;
+      const priceNum = parseFloat(String(p.PRECIO || p.DESCRIPCION_BREVE || '').replace(/[^0-9]/g, ''));
+      return priceNum && priceNum <= maxBudget;
+    });
+
+    const greeting = getVenezuelaGreeting();
+    if (matches.length > 0) {
+      const best = matches[0];
+      return {
+        text: `Bienvenido a Tu Techo Ideal, ${greeting}. Tenemos disponible en ese rango en ${best.ZONA || 'Caracas'}: ${best.TIPO} por $${best.PRECIO || ''}.`,
+        action: 'DISPONIBILIDAD',
+        matchedProperty: best,
+        skip: false
+      };
+    } else {
+      const closest = available.find(p => normalizeText(p.OPERACION || '').includes('venta')) || available[0];
+      if (closest) {
+        return {
+          text: `Bienvenido a Tu Techo Ideal, ${greeting}. No tenemos disponible en menos de $${maxBudget.toLocaleString('es-VE')}, pero lo más cercano es este ${closest.TIPO} en ${closest.ZONA || 'la zona'}.`,
+          action: 'DISPONIBILIDAD',
+          matchedProperty: closest,
+          skip: false
+        };
+      }
+    }
+  }
+
+  // Consulta por zona específica (ej: anexo cerca del Marqués)
+  const zones = ['marques', 'marqués', 'lecheria', 'lechería', 'chacao', 'las mercedes', 'los palos grandes', 'la boyera', 'macaracuay', 'alta florida'];
+  const mentionedZone = zones.find(z => q.includes(z));
+  if (mentionedZone) {
+    const greeting = getVenezuelaGreeting();
+    const inZone = available.find(p => normalizeText(p.ZONA || p.DESCRIPCION_BREVE || '').includes(mentionedZone));
+    if (inZone) {
+      return {
+        text: `Bienvenido a Tu Techo Ideal, ${greeting}, sí disponible en ${inZone.ZONA || mentionedZone}.`,
+        action: 'DISPONIBILIDAD',
+        matchedProperty: inZone,
+        skip: false
+      };
+    } else {
+      const closest = available[0];
+      return {
+        text: `Bienvenido a Tu Techo Ideal, ${greeting}. No tenemos disponible en esa zona, pero lo más cercano es este ${closest.TIPO} en ${closest.ZONA || 'Caracas'}.`,
+        action: 'DISPONIBILIDAD',
+        matchedProperty: closest,
+        skip: false
+      };
+    }
+  }
+
+  return null;
 }
 
 // ==========================================
@@ -1419,160 +1760,165 @@ Al final de todo tu mensaje, en una nueva línea separada al final, coloca SIEMP
   }
 }
 
-async function generateResponse(userMessage, allProperties, imageUrl = null) {
+async function matchPropertyByImage(imageUrl, properties) {
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
+  const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
+
+  const summary = properties.slice(0, 30).map(p =>
+    `${p.ID_PROPIEDAD}: ${p.TIPO} en ${p.OPERACION} en ${p.ZONA || ''} - Wasi: ${p.CODIGO_WASI || ''} - ${p.DESCRIPCION_BREVE?.substring(0, 140) || ''}`
+  ).join('\n');
+
+  try {
+    const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+      model: model,
+      messages: [
+        {
+          role: 'system',
+          content: `Analiza la imagen de la publicación inmobiliaria y compárala con el siguiente inventario de Tu Techo Ideal:\n${summary}\n\nResponde ÚNICAMENTE con el código del inmueble (ej: REF-005) o responde "NO_MATCH".`
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageUrl } },
+            { type: 'text', text: '¿A cuál inmueble de Tu Techo Ideal corresponde esta imagen?' }
+          ]
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 20
+    }, {
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 15000
+    });
+
+    const matchText = response.data?.choices?.[0]?.message?.content?.trim();
+    if (matchText && matchText.includes('REF-')) {
+      const codeMatch = matchText.match(/REF-\d+/i);
+      if (codeMatch) {
+        return properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === codeMatch[0].toUpperCase()) || null;
+      }
+    }
+  } catch (e) {
+    console.warn('[Vision Property Match Warning]:', e.message);
+  }
+  return null;
+}
+
+async function generateResponse(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente') {
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
   // 🛑 FILTRO 1: Descartar charla casual, reacciones y comentarios sin intención inmobiliaria
   if (isCasualOrChitChat(cleanMessage, imageUrl)) {
-    console.log(`[Anti-Chitchat Filter] Comentario casual o reacción detectada ("${cleanMessage}"). El bot guarda silencio para no gastar tokens.`);
+    console.log(`[Anti-Chitchat Filter] Comentario casual o reacción detectada ("${cleanMessage}"). Silencio para no gastar tokens.`);
     return { text: null, notFoundItem: null, skip: true };
   }
 
-  // Saludo oficial corregido exactamente según instrucciones del usuario
-  const baseGreeting = `Hola, bienvenido a Tu techo ideal\n\n`;
-
-  // 🛑 FILTRO 2 ESTRICTO: NO SE RESPONDE A MENOS QUE TENGA INTENCIÓN INMOBILIARIA EXPLÍCITA
-  if (!hasExplicitRealEstateIntent(cleanMessage, imageUrl)) {
-    console.log(`[Strict Intent Gate] Mensaje sin intención inmobiliaria explícita ("${cleanMessage}"). Silencio absoluto para proteger tokens y no molestar.`);
-    return { text: null, notFoundItem: null, skip: true };
-  }
-
-  // Filtramos solo las disponibles
-  const available = allProperties.filter(row => {
-    const status = normalizeText(row.ESTATUS || row.Estatus || row.estatus);
-    return status === 'disponible';
-  });
-
-  // 🎯 EMPAREJAMIENTO DETERMINÍSTICO INMEDIATO: CONSULTAS CON CÓDIGO O ENLACE WASI
-  const wasiCheck = matchWasiOrProperty(cleanMessage, allProperties);
-  if (wasiCheck.status === 'MATCH') {
-    const prop = wasiCheck.property;
-    const isAvail = normalizeText(prop.ESTATUS || '').includes('disponible');
-    if (!isAvail) {
-      const unavailableText = `Hola, bienvenido a Tu techo ideal\n\nEl inmueble ${prop.TIPO} en ${prop.ZONA} (código Wasi: ${wasiCheck.code}) actualmente ya no se encuentra disponible (estado: ${prop.ESTATUS || 'No disponible'}).\n\n¿Te gustaría que te busquemos otra opción similar en esa misma zona?`;
-      console.log(`[Wasi Match] Propiedad ${prop.ID_PROPIEDAD} encontrada pero no disponible (${prop.ESTATUS}).`);
-      return { text: unavailableText, matchedProperty: prop, notFoundItem: null, skip: false };
-    }
-    const propertyResponse = formatWasiPropertyResponse(prop, cleanMessage);
-    console.log(`[Wasi Match] ¡Coincidencia exacta por código Wasi ${wasiCheck.code}! Propiedad ${prop.ID_PROPIEDAD} (${prop.TIPO} en ${prop.ZONA}).`);
-    return { text: propertyResponse, matchedProperty: prop, notFoundItem: null, skip: false };
-  } else if (wasiCheck.status === 'NOT_FOUND') {
-    console.log(`[Wasi Match] Código Wasi ${wasiCheck.code} consultado pero NO existe en Google Sheets. Derivando a mensaje de espera y alerta.`);
-    return { text: null, notFoundItem: wasiCheck.item, skip: false };
-  }
-
-  // 🛑 FILTRO DETERMINÍSTICO PRE-CLAUDE: Tipos de negocio/inmueble no existentes en Google Sheets
-  // Si piden bar, discoteca, tasca, restaurante, panadería, taller, etc., y el inventario no tiene ningún inmueble de ese tipo:
-  const businessTypes = ['bar', 'discoteca', 'tasca', 'bodegon', 'bodegón', 'restaurante', 'panaderia', 'panadería', 'farmacia', 'taller', 'posada', 'hotel', 'galpon', 'galpón'];
-  const requestedBusiness = businessTypes.find(t => {
-    const rx = new RegExp(`\\b${normalizeText(t)}\\b`, 'i');
-    return rx.test(q);
-  });
-  if (requestedBusiness) {
-    const businessRx = new RegExp(`\\b${requestedBusiness}\\b`, 'i');
-    const hasMatchingCommercialInSheets = available.some(p => {
-      const tipoClean = normalizeText(p.TIPO);
-      const isCommercial = tipoClean.includes('local') || tipoClean.includes('comercial');
-      const descClean = normalizeText(p.DESCRIPCION_BREVE || '');
-      return isCommercial && (businessRx.test(tipoClean) || businessRx.test(descClean));
-    });
-    if (!hasMatchingCommercialInSheets) {
-      console.log(`[Deterministic Business Filter] Negocio/local comercial "${requestedBusiness}" NO disponible en inventario. Derivando a mensaje de espera y alerta.`);
-      return { text: null, notFoundItem: `${requestedBusiness.toUpperCase()} en ${q.includes('hatillo') ? 'El Hatillo' : 'zona consultada'}`, skip: false };
-    }
-  }
-
-  // Usamos Claude AI para consultas reales de inmuebles
-  const isClaudeEnabled = process.env.DISABLE_CLAUDE !== 'true';
-  if (isClaudeEnabled) {
-    const claudeResult = await generateClaudeResponse(userMessage, available, imageUrl);
-    if (claudeResult) {
-      if (claudeResult.skip) return { text: null, notFoundItem: null, skip: true };
-      return claudeResult;
-    }
-    console.log('[Fallback] Claude no respondió o dio error, usando motor determinístico de respaldo.');
-  }
-
-  // 2. Cliente pide cita o visita directamente
-  if (detectLeadIntent(q).isHot && !q.includes('casa') && !q.includes('apto') && !q.includes('venta') && !q.includes('alquiler')) {
+  // 1. Verificar si el cliente pide AGENDAR CITA o VER/VISITAR el inmueble
+  // "si la persona sigue: Ok estoy interesa quiero agendar para verla, la ia responde 'Ok, ya consulto con mi jefe para agendar la cita'"
+  if (isVisitSchedulingIntent(cleanMessage)) {
+    const activeProp = getLeadPropertyContext(leadId, allProperties);
+    console.log(`[Visit Scheduling Intent] El cliente ${clientName} solicita agendar cita para ver inmueble.`);
     return {
-      text: `${baseGreeting}¡Excelente! En este momento le acabo de avisar al equipo de Tu Techo Ideal sobre tu interés para coordinar la visita. En breve nos comunicaremos contigo directamente por aquí para definir la fecha y la hora. ¡Un placer atenderte!`,
-      notFoundItem: null,
+      text: 'Ok, ya consulto con mi jefe para agendar la cita',
+      action: 'AGENDAR_CITA',
+      matchedProperty: activeProp,
       skip: false
     };
   }
 
-  // Detectar intención de Operación (Venta vs Alquiler)
-  const wantsBuy = q.includes('venta') || q.includes('comprar') || q.includes('compra') || q.includes('adquirir');
-  const wantsRent = q.includes('alquiler') || q.includes('alquilar') || q.includes('renta') || q.includes('rentar');
+  // 2. Emparejar propiedad mencionada en el mensaje actual (o por imagen/flyer)
+  let matchedProp = null;
+  const wasiCheck = matchWasiOrProperty(cleanMessage, allProperties);
 
-  // Detectar Tipo de Inmueble
-  const wantsCasa = q.includes('casa') || q.includes('casas') || q.includes('quinta') || q.includes('quintas');
-  const wantsComercial = q.includes('comercial') || q.includes('local') || q.includes('oficina');
-  const wantsApto = q.includes('apartamento') || q.includes('apartamentos') || q.includes('apto') || q.includes('aptos');
-
-  // Detectar Zonas
-  const mentionsMacaracuay = q.includes('macaracuay');
-  const mentionsFlorida = q.includes('florida') || q.includes('alta florida') || q.includes('libertador');
-  const mentionsBoyera = q.includes('boyera') || q.includes('hatillo');
-
-  // Filtrado estricto por Operación si fue solicitada
-  let filtered = available;
-
-  if (wantsBuy) {
-    filtered = filtered.filter(p => normalizeText(p.OPERACION).includes('venta'));
-  } else if (wantsRent) {
-    filtered = filtered.filter(p => normalizeText(p.OPERACION).includes('alquiler'));
+  if (wasiCheck.status === 'MATCH') {
+    matchedProp = wasiCheck.property;
+    saveLeadPropertyContext(leadId, matchedProp);
+    console.log(`[Property Match] Coincidencia encontrada: ${matchedProp.ID_PROPIEDAD} (${matchedProp.TIPO} en ${matchedProp.ZONA})`);
+  } else if (wasiCheck.status === 'NOT_FOUND') {
+    console.log(`[Wasi Match] Código ${wasiCheck.code} no existe en inventario. Derivando a espera y alerta.`);
+    return {
+      text: 'Deme un momento, voy a consultar',
+      action: 'NO_EXISTE_EN_DESCRIPCION',
+      notFoundItem: wasiCheck.item,
+      skip: false
+    };
   }
 
-  // Filtrado por Tipo de Inmueble
-  if (wantsCasa) {
-    if (wantsComercial) {
-      filtered = filtered.filter(p => normalizeText(p.TIPO).includes('comercial'));
-    } else {
-      filtered = filtered.filter(p => normalizeText(p.TIPO).includes('casa'));
+  // Si no vino código en el mensaje pero vino imagen, intentar emparejar por visión
+  if (!matchedProp && imageUrl) {
+    matchedProp = await matchPropertyByImage(imageUrl, allProperties);
+    if (matchedProp) {
+      saveLeadPropertyContext(leadId, matchedProp);
+      console.log(`[Vision Match] Propiedad identificada por imagen: ${matchedProp.ID_PROPIEDAD}`);
     }
-  } else if (wantsApto) {
-    filtered = filtered.filter(p => normalizeText(p.TIPO).includes('apartamento') || normalizeText(p.TIPO).includes('apto'));
-  } else if (wantsComercial) {
-    filtered = filtered.filter(p => normalizeText(p.TIPO).includes('comercial') || normalizeText(p.TIPO).includes('local'));
   }
 
-  // Filtrado por Zona si fue solicitada
-  if (mentionsMacaracuay) {
-    filtered = filtered.filter(p => normalizeText(p.ZONA).includes('macaracuay'));
-  } else if (mentionsFlorida) {
-    filtered = filtered.filter(p => normalizeText(p.ZONA).includes('florida'));
-  } else if (mentionsBoyera) {
-    filtered = filtered.filter(p => normalizeText(p.ZONA).includes('boyera') || normalizeText(p.ZONA).includes('hatillo'));
+  // Si aún no tenemos propiedad del mensaje, buscar en la memoria activa del lead
+  if (!matchedProp) {
+    matchedProp = getLeadPropertyContext(leadId, allProperties);
+    if (matchedProp) {
+      console.log(`[Lead Context Memory] Inmueble activo recuperado para Lead #${leadId}: ${matchedProp.ID_PROPIEDAD}`);
+    }
   }
 
-  // ==========================================
-  // RESPUESTAS SEGÚN COINCIDENCIAS
-  // ==========================================
+  // 3. Determinar si es una consulta de DISPONIBILIDAD o contacto inicial del inmueble
+  const isAvailabilityQuery = isExplicitAvailabilityQuery(cleanMessage) || wasiCheck.status === 'MATCH' || !!imageUrl;
 
-  // Si encontramos coincidencias exactas
-  if (filtered.length > 0) {
-    const opText = wantsBuy ? 'en venta' : (wantsRent ? 'en alquiler' : 'disponibles');
-    let text = `${baseGreeting}Revisando nuestro inventario, tenemos excelentes opciones ${opText} para ti:\n\n`;
+  if (matchedProp && isAvailabilityQuery) {
+    const isAvail = normalizeText(matchedProp.ESTATUS || '').includes('disponible');
+    const greeting = getVenezuelaGreeting();
+    if (!isAvail) {
+      return {
+        text: `Bienvenido a Tu Techo Ideal, ${greeting}, actualmente este inmueble ya no se encuentra disponible.`,
+        action: 'NO_DISPONIBLE',
+        matchedProperty: matchedProp,
+        skip: false
+      };
+    }
 
-    filtered.slice(0, 2).forEach(p => {
-      text += formatSingleProperty(p) + '\n';
-    });
-
-    text += `¿Te gustaría coordinar una visita presencial, para conocerlo en persona?`;
-    return { text: text, notFoundItem: null, skip: false };
+    const availResp = formatAvailabilityResponse(matchedProp, cleanMessage);
+    return {
+      text: availResp,
+      action: 'DISPONIBILIDAD',
+      matchedProperty: matchedProp,
+      skip: false
+    };
   }
 
-  // Si pidió un inmueble que NO existe en Google Sheets
-  const requestedDesc = (wantsApto ? 'Apartamento' : (wantsCasa ? 'Casa' : (wantsComercial ? 'Comercial' : 'Inmueble'))) +
-    (wantsBuy ? ' en Venta' : (wantsRent ? ' en Alquiler' : '')) +
-    (mentionsMacaracuay ? ' en Macaracuay' : (mentionsFlorida ? ' en Alta Florida' : (mentionsBoyera ? ' en La Boyera' : '')));
+  // 4. Si tenemos una propiedad activa y el cliente hace preguntas sobre ella (habitaciones, baños, metros, precio, etc.):
+  // "Si escribe cualquier otra pregunta que exista respuesta en 'DESCRIPCION_BREVE' lo hara de la siguiente forma ejemplo: Cuantas habitaciones tiene? 'Tiene 3 habitaciones' ... sino existe 100% validada que no existe, le respondemos 'Deme un momento, voy a consultar'"
+  if (matchedProp) {
+    const qaResult = await generateClaudePropertyQA(cleanMessage, matchedProp, clientName);
+    if (qaResult) {
+      return {
+        text: qaResult.text,
+        action: qaResult.action,
+        matchedProperty: matchedProp,
+        skip: false
+      };
+    }
 
+    const fallbackQA = deterministicPropertyQA(cleanMessage, matchedProp);
+    return {
+      text: fallbackQA.text,
+      action: fallbackQA.action,
+      matchedProperty: matchedProp,
+      skip: false
+    };
+  }
+
+  // 5. Si no hay propiedad identificada y el cliente pregunta por inmuebles generales
+  const generalResult = await handleGeneralPropertySearch(cleanMessage, allProperties);
+  if (generalResult) {
+    return generalResult;
+  }
+
+  // 6. Si no se puede validar ni responder con certeza de la BD:
   return {
-    text: null,
-    notFoundItem: requestedDesc.trim() || 'Inmueble no registrado en Sheets',
+    text: 'Deme un momento, voy a consultar',
+    action: 'NO_EXISTE_EN_DESCRIPCION',
+    notFoundItem: cleanMessage,
     skip: false
   };
 }
@@ -1838,64 +2184,20 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 1. Obtener propiedades de Google Sheets
       const properties = await getAvailableProperties();
 
-      // 2. Generar respuesta personalizada (Solo 1 llamada a Claude)
-      console.log('[Processing] Generating response with Claude/Model...');
-      const result = await generateResponse(userText, properties, imageUrl);
-
-      // 🛑 SI EL INMUEBLE O DETALLE NO ESTÁ EN GOOGLE SHEETS (O consulta de Wasi/Portales/Inmueble no disponible):
-      // "Vamos a colocar un mensaje para que el cliente y le jefe vea que el bot si funciona en esos casos y que el bot esta esperando que ingrese una respuesta humana:
-      // 'Ok xxxx dejame consultar con un asesor para atenderte inmediatamente' Y pummmm lanzamos alerta por todos lados..."
-      if (result && result.notFoundItem) {
-        // Formatear nombre del cliente (extraer primer nombre si existe y no es número o "Cliente")
-        let cleanName = '';
-        if (clientName && clientName !== 'Cliente' && !clientName.includes('+') && !clientName.includes('wa.me')) {
-          const firstName = clientName.trim().split(/\s+/)[0];
-          if (firstName && firstName.length > 1 && !firstName.includes('@')) {
-            cleanName = ` ${firstName}`;
-          }
-        }
-        const holdingMessage = `Ok${cleanName}, déjame consultar con un asesor para atenderte inmediatamente.`;
-
-        console.log(`\n========================================`);
-        console.log(`[Missing Property / Holding Response]`);
-        console.log(`Inmueble consultado: "${result.notFoundItem}"`);
-        console.log(`Cliente: ${clientName} (${clientPhone || 'Sin tel'})`);
-        console.log(`Respuesta al cliente: "${holdingMessage}"`);
-        console.log(`¡PUMMM! Disparando alertas por todos lados a Robert (+584143115105) y por correo...`);
-        console.log(`========================================\n`);
-
-        // 1. Enviar mensaje de espera al cliente (1 sola vez vía Kommo)
-        await updateKommoLead(currentLeadId, holdingMessage);
-        await triggerKommoSalesbot(currentLeadId);
-
-        // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS)
-        // Evita que automatizaciones de Kommo o de Make re-envíen el mismo mensaje si vuelven a disparar Salesbot minutos después.
-        setTimeout(async () => {
-          try {
-            await updateKommoLead(currentLeadId, ' ');
-            console.log(`[Anti-Duplicate] Campo Respuesta_IA vaciado para Lead #${currentLeadId}`);
-          } catch (e) {
-            console.warn('[Anti-Duplicate Clear Error]:', e.message);
-          }
-        }, 5000);
-
-        // 2. ¡PUMMM! Disparar alertas por todos lados (WhatsApp Robert +584143115105, Correo, Kommo Task & Note)
-        await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
-
-        // 3. Activar silencio de 24 horas (Handoff) para que el equipo de Tu Techo Ideal responda humanamente
-        setLeadHandoff(currentLeadId);
-        return;
-      }
+      // 2. Generar respuesta personalizada
+      console.log('[Processing] Generating response based on DESCRIPCION_BREVE & inventory...');
+      const result = await generateResponse(userText, properties, imageUrl, currentLeadId, clientName);
 
       // Si el filtro determinístico o Claude clasificaron como charla casual, comentario o ignorar
       if (!result || result.skip || !result.text) {
         console.log('[Processing] No response required (casual conversation, chit-chat or personal talk). Skipping delivery.');
         return;
       }
+
       const responseText = result.text;
       console.log('[Processing] Response text:\n', responseText);
 
-      // 3. Guardar en Kommo
+      // 3. Guardar respuesta en Kommo
       console.log('[Processing] Saving response to Kommo lead field...');
       await updateKommoLead(currentLeadId, responseText);
 
@@ -1904,7 +2206,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       await triggerKommoSalesbot(currentLeadId);
 
       // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS)
-      // Evita que automatizaciones de Kommo o de Make re-envíen el mismo mensaje si vuelven a disparar Salesbot minutos después.
       setTimeout(async () => {
         try {
           await updateKommoLead(currentLeadId, ' ');
@@ -1914,19 +2215,44 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         }
       }, 5000);
 
-      // 5. Alerta al Asesor asignado y Reporte Gerencial a Robert si se respondió una consulta de inmueble
+      // 5. Despacho de Alertas según la acción ejecutada
       const channel = (!clientPhone && (clientName.startsWith('@') || userText.includes('instagram'))) ? 'Instagram' : 'WhatsApp';
-      if (result.matchedProperty) {
-        console.log(`[Advisor Alert Trigger] Inmueble ${result.matchedProperty.ID_PROPIEDAD} respondido exitosamente. Despachando alerta a asesor y reporte a Robert...`);
+
+      if (result.action === 'DISPONIBILIDAD' && result.matchedProperty) {
+        console.log(`[Advisor Alert Trigger] Disponibilidad de ${result.matchedProperty.ID_PROPIEDAD} respondida. Despachando alerta a asesor y reporte a Robert...`);
         dispatchAdvisorAlertAndRobertReport(result.matchedProperty, clientName, clientPhone, channel, userText, currentLeadId)
           .catch(err => console.warn('[Advisor Alert Error]:', err.message));
-      }
+      } else if (result.action === 'AGENDAR_CITA') {
+        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
+        const robertAlertText = `📅 *SOLICITUD DE CITA / VISITA* 📅\n\n` +
+          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
+          `🏢 *Inmueble:* ${propTitle}\n` +
+          `💬 *Mensaje del cliente:* "${userText}"\n\n` +
+          `⚡ *Acción:* Se respondió al cliente "Ok, ya consulto con mi jefe para agendar la cita." Por favor coordinar la visita.`;
 
-      // 6. Si el cliente activó intención caliente (visita, cita, compra):
-      if (intent.isHot) {
-        console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${currentLeadId}! Disparando alerta inmediata WhatsApp + Correo.`);
-        dispatchAlertToRobert(currentLeadId, userText, clientName, intent.type);
-        setLeadHandoff(currentLeadId); // Activamos silencio de 24h para que el equipo atienda personalmente
+        console.log(`[Visit Alert] Despachando alerta de cita a Robert y asesor...`);
+        await dispatchDirectWhatsAppToRobert(robertAlertText);
+
+        if (result.matchedProperty) {
+          const rawAdvisorPhone = result.matchedProperty['Numero de WhatsApp'] || result.matchedProperty.WhatsApp || '';
+          const advisorLeadId = await resolveAdvisorLeadId(rawAdvisorPhone);
+          if (advisorLeadId && String(advisorLeadId) !== String(currentLeadId)) {
+            updateKommoLead(advisorLeadId, robertAlertText).then(() => triggerKommoSalesbot(advisorLeadId)).catch(() => {});
+          }
+        }
+        setLeadHandoff(currentLeadId);
+      } else if (result.action === 'NO_EXISTE_EN_DESCRIPCION') {
+        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : (result.notFoundItem || 'Inmueble consultado');
+        const robertAlertText = `🚨 *CONSULTA SIN INFORMACIÓN EN BASE DE DATOS* 🚨\n\n` +
+          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
+          `🏢 *Inmueble:* ${propTitle}\n` +
+          `💬 *Pregunta del cliente:* "${userText}"\n\n` +
+          `⚠️ *Motivo:* El cliente está preguntando información que no existe en la columna "DESCRIPCION_BREVE" de la base de datos.\n` +
+          `⚡ *Acción:* Se respondió al cliente "Deme un momento, voy a consultar." y el bot guardó silencio para que lo atiendas tú personalmente.`;
+
+        console.log(`[Missing Info Alert] Despachando alerta a Robert y pausando bot para Lead #${currentLeadId}...`);
+        await dispatchDirectWhatsAppToRobert(robertAlertText);
+        setLeadHandoff(currentLeadId);
       }
 
       console.log(`[Success] Message strictly processed 1 single time for Lead #${currentLeadId}!\n`);
