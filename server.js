@@ -192,8 +192,14 @@ function normalizeText(text) {
 // ==========================================
 // 🛑 FILTRO DETERMINÍSTICO ANTI-CHITCHAT Y CHARLA CASUAL
 // ==========================================
-function isCasualOrChitChat(text) {
+function isCasualOrChitChat(text, imageUrl = null) {
+  if (imageUrl) return false;
   const q = normalizeText(text);
+
+  // Si menciona colega, fotos o publicación inmobiliaria, no es charla casual
+  if (q.includes('colega') || q.includes('publicacion') || q.includes('publicacion') || q.includes('flyer')) {
+    return false;
+  }
 
   // Lista de comentarios casuales, exclamaciones, bromas y opiniones
   const casualPhrases = [
@@ -209,8 +215,7 @@ function isCasualOrChitChat(text) {
     'voy a consultar', 'voy a pensar', 'lo voy a pensar', 'dejame pensarlo', 'dejame ver', 'dejame consultar',
     'voy a hablar con', 'hablo con mi esposa', 'hablo con mi esposo', 'hablo con mi socio',
     'como estas', 'como estan', 'que tal', 'epale', 'que hubo', 'bien y tu', 'todo bien',
-    'donde estas', 'a que hora nos vemos', 'vamos a comer', 'pasame el documento',
-    'colega una pregunta', 'una pregunta', 'tengo una pregunta', 'tengo una duda', 'una consulta', 'hola colega', 'buenas colega', 'colega'
+    'donde estas', 'a que hora nos vemos', 'vamos a comer', 'pasame el documento'
   ];
 
   if (casualPhrases.some(p => q === p || q === `${p}!` || q === `${p}.` || q === `${p}?` || q.startsWith(p + ' ') || q.endsWith(' ' + p))) {
@@ -220,12 +225,14 @@ function isCasualOrChitChat(text) {
   // Palabras clave de intención inmobiliaria
   const realEstateKeywords = [
     'casa', 'casas', 'apto', 'aptos', 'apartamento', 'apartamentos', 'quinta', 'quintas',
-    'local', 'locales', 'oficina', 'oficinas', 'comercial', 'galpon', 'terreno',
+    'local', 'locales', 'oficina', 'oficinas', 'comercial', 'galpon', 'galpones', 'terreno', 'terrenos',
+    'anexo', 'anexos', 'penthouse', 'fondo de comercio',
     'venta', 'comprar', 'compra', 'alquiler', 'alquilar', 'renta', 'rentar',
-    'precio', 'precios', 'costo', 'valor', 'cuanto', 'presupuesto',
-    'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion',
+    'precio', 'precios', 'costo', 'valor', 'cuanto', 'presupuesto', 'menos de', 'mil',
+    'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion', 'marques', 'chacao', 'mercedes', 'palos grandes',
     'cita', 'visita', 'visitar', 'agendar', 'verlo', 'verla', 'disponible', 'disponibles',
     'inmueble', 'inmuebles', 'propiedad', 'propiedades',
+    'colega', 'publicacion', 'link', 'enlace', 'wasi', 'http', 'sin datos', 'fotos', 'foto',
     'mascota', 'mascotas', 'perro', 'perros', 'gato', 'gatos', 'animal', 'animales', 'pet friendly'
   ];
 
@@ -241,9 +248,9 @@ function isCasualOrChitChat(text) {
 
 // ==========================================
 // 🎯 COMPROBACIÓN ESTRICTA DE INTENCIÓN INMOBILIARIA
-// "NO SE RESPONDE a menos que te diga hola estoy interesada o interesado en comprar, alquilar un inmueble o vender..."
 // ==========================================
-function hasExplicitRealEstateIntent(text) {
+function hasExplicitRealEstateIntent(text, imageUrl = null) {
+  if (imageUrl) return true;
   const q = normalizeText(text);
 
   // Descartar mensajes del sistema, menciones de historias, reels o restricciones de Instagram
@@ -264,10 +271,10 @@ function hasExplicitRealEstateIntent(text) {
     'busco', 'buscando',
     'casa', 'casas', 'apto', 'aptos', 'apartamento', 'apartamentos',
     'quinta', 'quintas', 'local', 'locales', 'oficina', 'oficinas',
-    'comercial', 'galpon', 'terreno', 'inmueble', 'inmuebles', 'propiedad', 'propiedades',
-    'precio', 'precios', 'costo', 'presupuesto',
-    'macaracuay', 'alta florida', 'florida', 'boyera', 'hatillo',
-    'wasi', 'http',
+    'comercial', 'galpon', 'terreno', 'anexo', 'anexos', 'inmueble', 'inmuebles', 'propiedad', 'propiedades',
+    'precio', 'precios', 'costo', 'presupuesto', 'menos de', 'mil',
+    'macaracuay', 'alta florida', 'florida', 'boyera', 'hatillo', 'marques', 'chacao', 'mercedes', 'palos grandes',
+    'wasi', 'http', 'colega', 'link', 'enlace', 'sin datos', 'fotos', 'foto', 'publicacion',
     'mascota', 'mascotas', 'perro', 'perros', 'gato', 'gatos', 'animal', 'animales', 'pet friendly'
   ];
 
@@ -1275,7 +1282,7 @@ function formatSingleProperty(p) {
 // ==========================================
 // 🤖 INTEGRACIÓN CON CLAUDE AI (OPENROUTER)
 // ==========================================
-async function generateClaudeResponse(userMessage, availableProperties) {
+async function generateClaudeResponse(userMessage, availableProperties, imageUrl = null) {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY || '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';
   if (!apiKey) return null;
 
@@ -1296,58 +1303,67 @@ async function generateClaudeResponse(userMessage, availableProperties) {
       const mascotasVal = (p.Mascotas || p.mascotas || 'Por consultar').trim();
       const tipoMascotas = (p['Tipo de Mascotas'] || p.tipo_de_mascotas || '').trim();
       const petDetails = (tipoMascotas && tipoMascotas !== 'No aplica' && tipoMascotas !== '-') ? `${mascotasVal} (${tipoMascotas})` : mascotasVal;
-      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${petDetails}${wasiCode}${wasiPart}${webPart} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
+      return `[${p.ID_PROPIEDAD}] ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${petDetails}${wasiCode}${wasiPart}${webPart} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal".
 
-🚨 REGLA #0 - MÁXIMA PRIORIDAD ABSOLUTA (BLINDAJE DE INVENTARIO Y RESTRICCIÓN TOTAL):
-Tu único inventario real en tiempo real es ESTE:
+INVENTARIO EN TIEMPO REAL:
 ${formattedInventory}
 
-SI EL CLIENTE PREGUNTA POR:
-1. Un tipo de inmueble, local o negocio que NO esté exactamente en la lista anterior (por ejemplo: BAR, discoteca, tasca, restaurante, hotel, posada, galpón, panadería, etc.).
-2. Una propiedad, enlace de Wasi, código externo, enlace web, o zona que NO esté en la lista anterior.
-3. Un tipo de operación distinto (ej: alquiler de una zona que solo tiene ventas, o alquiler de apartamentos cuando solo hay casas).
-4. Cualquier característica o detalle no presente en el inventario.
-
-QUEDA ESTRICTAMENTE PROHIBIDO:
-❌ NO SALUDES.
-❌ NO PIDAS DISCULPAS NI DIGAS "Lamento informarte que no tengo...".
-❌ NO PREGUNTES MÁS DETALLES NI PIDAS ACLARATORIAS ("cuéntame qué buscas", "¿qué zona buscas?").
-❌ NUNCA OFREZCAS PROPIEDADES ALTERNATIVAS O SUSTITUTAS (¡Si preguntan por un BAR o negocio comercial, JAMÁS ofrezcas apartamentos, casas ni penthouses residenciales!).
-❌ NO ESCRIBAS NINGÚN MENSAJE DE TEXTO AL CLIENTE.
-
-En cualquiera de esos casos, debes responder ÚNICA Y EXCLUSIVAMENTE esta línea exacta:
-NO_DISPONIBLE: [Escribe aquí el inmueble, tipo o consulta no registrada, ej: Bar en El Hatillo]
-
-REGLAS EXCLUSIVAS PARA CUANDO EL INMUEBLE SÍ EXISTE EN EL INVENTARIO:
+INSTRUCCIONES CLAVE DE ATENCIÓN AL CLIENTE:
 1. Comienza siempre tus respuestas con el saludo oficial exacto:
 "Hola, bienvenido a Tu techo ideal"
-2. SI EL CLIENTE PIDE CASAS EN VENTA: Solo ofrece propiedades cuya "Operación" sea estrictamente "Venta". NUNCA ofrezcas un alquiler si el cliente pidió comprar o venta.
-3. SI EL CLIENTE PIDE ALQUILER: Solo ofrece propiedades cuya "Operación" sea "Alquiler".
-4. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
-5. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible (que empiece por http), inclúyelo para que el cliente pueda verlas. Si dice "No link" o no tiene fotos, no menciones nada sobre fotos y JAMÁS coloques el símbolo "-" ni inventes enlaces.
-6. Al final de tu mensaje, incluye siempre exactamente esta pregunta de cierre: "¿Te gustaría coordinar una visita presencial, para conocerlo en persona?"
-7. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a un asesor de Tu Techo Ideal y que en breve te contactará por este mismo chat para coordinar la fecha y hora personalmente.
-8. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
-9. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
-NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción o comentario casual, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".
-10. POLÍTICA DE MASCOTAS (PET FRIENDLY):
-Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
-• Revisa el campo "Mascotas" de la propiedad consultada:
-  - Si dice "Si aceptan": Confírmale con entusiasmo y agrado que SÍ aceptan mascotas en esa propiedad.
-  - Si dice "No aceptan": Infórmale con amabilidad y respeto que en esa propiedad específica el propietario NO acepta mascotas. Si en tu inventario disponible hay otra propiedad en la misma zona u operación que SÍ acepte mascotas, ofrécesela cordialmente.
-  - Si dice "Por consultar" o no está especificado: Coméntale amablemente que con gusto le consultarás al asesor/propietario para confirmarle con certeza el permiso para su mascota.
-• JAMÁS afirmes que aceptan mascotas si el campo dice "No aceptan".`;
+
+2. CONSULTAS POR PRESUPUESTO O RANGO DE PRECIO (ej: "hay apartamentos en menos de $40 mil?"):
+- Revisa el inventario disponible según el tipo y operación solicitada (ej: Apartamentos en Venta).
+- Si existen opciones en ese rango: presenta las opciones indicando su ubicación, precio y enlace de fotos.
+- Si NO existen opciones en ese rango exacto: responde con amabilidad y transparencia indicando que en ese rango no dispones en este momento, pero recomienda LA OPCIÓN MÁS CERCANA disponible en inventario (envía exactamente 1 sola opción más cercana en precio).
+  Ejemplo: "Actualmente no disponemos de apartamentos en venta en menos de US$ 40.000. Sin embargo, la opción más cercana disponible que tenemos en inventario es este Apartamento en Venta en El Encantado, El Hatillo por US$ 80.000..."
+
+3. CONSULTAS POR ZONA ESPECÍFICA O TIPO (ej: "anexo que está cerca del Marqués"):
+- Revisa el inventario disponible.
+- Si existe en esa zona exacta: confirma disponibilidad y presenta los detalles.
+- Si NO existe en esa zona exacta: indica con amabilidad que no dispones directamente en esa zona, pero recomienda LA OPCIÓN MÁS CERCANA disponible (en tipo de inmueble o cercanía geográfica).
+  Ejemplo: "Actualmente no disponemos de un anexo directamente en El Marqués. Sin embargo, la opción disponible más cercana que tenemos en inventario es este Anexo en Alquiler en Oripoto, Baruta por US$ 240 mensuales..."
+
+4. MENSAJES DE COLEGAS, ALIANZAS O CONSULTAS CON FOTOS/FLYERS DE NUESTRA PUBLICACIÓN:
+- Si el mensaje dice "Hola feliz día como estas colega?" o similar, o adjunta imagen/foto de una publicación:
+  - Valida la información consultada con el inventario de Google Sheets y responde cordialmente confirmando disponibilidad y detalles.
+  - Si el colega solicita "link sin datos de contacto", ficha blanca o enlace neutro, comparte el enlace de fotos (Rexup) que no tiene datos personales.
+
+5. REGLAS GENERALES:
+- NUNCA coloques en el texto hacia el cliente el nombre ni teléfono del asesor comercial, ya que la atención humana se coordina directamente por este mismo chat de WhatsApp.
+- NUNCA menciones códigos internos como [REF-001] ni REF-xxx en el texto al cliente. Presenta siempre por tipo y zona (ej: "Apartamento en Las Mercedes").
+- Presenta los precios en formato "US$ [monto]". Si hay fotos disponibles (http), compártelas. Si dice "No link" no menciones nada sobre fotos.
+- Al final de tu mensaje, incluye siempre exactamente esta pregunta de cierre:
+"¿Te gustaría coordinar una visita presencial, para conocerlo en persona?"
+
+6. ETIQUETA INTERNA OBLIGATORIA DE SEGUIMIENTO:
+Al final de todo tu mensaje, en una nueva línea separada al final, coloca SIEMPRE el código interno de la propiedad que estás recomendando o respondiendo:
+[PROPIEDAD_RECOMENDADA: REF-xxx]
+(Esta etiqueta será removida automáticamente por el sistema antes del envío al cliente para disparar la alerta al asesor y a Robert).`;
 
     const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
+
+    // Soporte multimodal para imágenes (flyers, capturas de publicaciones de colegas)
+    const userMessageContent = [];
+    if (imageUrl) {
+      userMessageContent.push({
+        type: 'image_url',
+        image_url: { url: imageUrl }
+      });
+    }
+    userMessageContent.push({
+      type: 'text',
+      text: userMessage || 'Revisa esta imagen/publicación y valida los datos con el inventario de Google Sheets.'
+    });
 
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: model,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage }
+        { role: 'user', content: userMessageContent }
       ],
       temperature: 0.1,
       max_tokens: 550
@@ -1358,7 +1374,7 @@ Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
         'X-Title': 'Tu Techo Ideal Bot',
         'Content-Type': 'application/json'
       },
-      timeout: 12000
+      timeout: 15000
     });
 
     let aiMessage = response.data?.choices?.[0]?.message?.content?.trim();
@@ -1367,10 +1383,22 @@ Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
         console.log('[Claude Filter] Mensaje clasificado como conversación personal/ajena/comentario casual. No se responde.');
         return { text: null, notFoundItem: null, skip: true };
       }
+
+      // Extraer etiqueta interna de propiedad recomendada
+      let matchedProperty = null;
+      const propTagMatch = aiMessage.match(/\[PROPIEDAD_RECOMENDADA:\s*(REF-\d+)\]/i);
+      if (propTagMatch) {
+        const refCode = propTagMatch[1].toUpperCase();
+        matchedProperty = availableProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === refCode);
+        aiMessage = aiMessage.replace(/\[PROPIEDAD_RECOMENDADA:\s*REF-\d+\]\s*/gi, '').trim();
+      }
+
       // Limpieza de seguridad: eliminar cualquier mención accidental a códigos tipo [REF-xxx] o REF-xxx
       aiMessage = aiMessage.replace(/\[\s*REF-[^\]]+\]\s*/gi, '').replace(/\bREF-\d+\b\s*/gi, '');
       // Blindaje de fotos: nunca enviar un guion "-" ni "No link" al cliente
       aiMessage = aiMessage.replace(/•?\s*\*+Fotos:\*+\s*-\s*\n?/gi, '').replace(/•?\s*\*+Fotos:\*+\s*No link\s*\n?/gi, '');
+      // Blindaje de asesores: nunca colocar nombres/teléfonos de asesores en texto al cliente
+      aiMessage = aiMessage.replace(/\*?\*?Asesor:\*?\*?\s*[^\n]+\n?/gi, '');
 
       // Verificar si detectó inmueble o detalle no disponible en Google Sheets
       if (aiMessage.includes('NO_DISPONIBLE:')) {
@@ -1379,29 +1407,8 @@ Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
         return { text: null, notFoundItem: notFoundDesc, skip: false };
       }
 
-      // 🛡️ GUARDIÁN DE SEGURIDAD INTERCEPTOR:
-      // Si Claude generó una respuesta diciendo que "no tengo", "lamento informarte", "no cuento con",
-      // significa que el inmueble o negocio NO está en inventario.
-      // ¡ESTÁ TERMINANTEMENTE PROHIBIDO enviar esa disculpa ni sugerir alternativas de otros tipos (ej. apartamentos a quien pide un bar)!
-      const missingPhrases = [
-        'lamento informarte', 'no tengo registrado', 'no tengo en mi inventario',
-        'no esta en mi inventario', 'no está en mi inventario', 'no disponemos',
-        'no contamos con', 'no tenemos registrado', 'no tengo disponible ningun',
-        'no tengo disponible ningún', 'no tengo disponible ninguna', 'no disponemos de ningun',
-        'no disponemos de ningún', 'no disponemos de ninguna', 'no cuento con',
-        'no tenemos en inventario', 'actualmente no tengo', 'por los momentos no tengo',
-        'por el momento no tengo', 'no dispongo de', 'no poseo en mi inventario',
-        'no dispongo en inventario', 'no poseo'
-      ];
-      const aiLower = normalizeText(aiMessage);
-      const detectedMissing = missingPhrases.some(phrase => aiLower.includes(normalizeText(phrase)));
-      if (detectedMissing) {
-        console.log(`[Safety Guard Interceptor] Claude intentó disculparse o indicar que no tiene el inmueble ("${aiMessage.substring(0, 80)}..."). Interceptado como NO_DISPONIBLE.`);
-        return { text: null, notFoundItem: userMessage, skip: false };
-      }
-
       console.log(`[Claude via OpenRouter] Response generated successfully (${aiMessage.length} chars)`);
-      return { text: aiMessage, notFoundItem: null, skip: false };
+      return { text: aiMessage, matchedProperty: matchedProperty, notFoundItem: null, skip: false };
     }
     return null;
   } catch (err) {
@@ -1414,12 +1421,12 @@ Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
   }
 }
 
-async function generateResponse(userMessage, allProperties) {
+async function generateResponse(userMessage, allProperties, imageUrl = null) {
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
   // 🛑 FILTRO 1: Descartar charla casual, reacciones y comentarios sin intención inmobiliaria
-  if (isCasualOrChitChat(cleanMessage)) {
+  if (isCasualOrChitChat(cleanMessage, imageUrl)) {
     console.log(`[Anti-Chitchat Filter] Comentario casual o reacción detectada ("${cleanMessage}"). El bot guarda silencio para no gastar tokens.`);
     return { text: null, notFoundItem: null, skip: true };
   }
@@ -1428,8 +1435,7 @@ async function generateResponse(userMessage, allProperties) {
   const baseGreeting = `Hola, bienvenido a Tu techo ideal\n\n`;
 
   // 🛑 FILTRO 2 ESTRICTO: NO SE RESPONDE A MENOS QUE TENGA INTENCIÓN INMOBILIARIA EXPLÍCITA
-  // Regla del usuario: "NO SE RESPONDE a menos que te diga hola estoy interesada o interesado en comprar, alquilar un inmueble o vender..."
-  if (!hasExplicitRealEstateIntent(cleanMessage)) {
+  if (!hasExplicitRealEstateIntent(cleanMessage, imageUrl)) {
     console.log(`[Strict Intent Gate] Mensaje sin intención inmobiliaria explícita ("${cleanMessage}"). Silencio absoluto para proteger tokens y no molestar.`);
     return { text: null, notFoundItem: null, skip: true };
   }
@@ -1482,7 +1488,7 @@ async function generateResponse(userMessage, allProperties) {
   // Usamos Claude AI para consultas reales de inmuebles
   const isClaudeEnabled = process.env.DISABLE_CLAUDE !== 'true';
   if (isClaudeEnabled) {
-    const claudeResult = await generateClaudeResponse(userMessage, available);
+    const claudeResult = await generateClaudeResponse(userMessage, available, imageUrl);
     if (claudeResult) {
       if (claudeResult.skip) return { text: null, notFoundItem: null, skip: true };
       return claudeResult;
@@ -1626,6 +1632,23 @@ async function triggerKommoSalesbot(leadId) {
   return response.data;
 }
 
+function extractImageUrl(body, messageObj) {
+  if (messageObj?.attachment?.link) return messageObj.attachment.link;
+  if (messageObj?.attachment?.url) return messageObj.attachment.url;
+  if (messageObj?.media) return messageObj.media;
+  if (messageObj?.media_url) return messageObj.media_url;
+  if (messageObj?.link && /\.(jpeg|jpg|png|webp)/i.test(messageObj.link)) return messageObj.link;
+  if (body?.['message[add][0][attachment][link]']) return body['message[add][0][attachment][link]'];
+  if (body?.['message[add][0][attachment][url]']) return body['message[add][0][attachment][url]'];
+  if (body?.['message[add][0][media]']) return body['message[add][0][media]'];
+  if (body?.['message[add][0][media_url]']) return body['message[add][0][media_url]'];
+  if (body?.['message[add][0][link]'] && /\.(jpeg|jpg|png|webp)/i.test(body['message[add][0][link]'])) return body['message[add][0][link]'];
+  const text = messageObj?.text || '';
+  const urlMatch = text.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s]+)?)/i);
+  if (urlMatch) return urlMatch[1];
+  return null;
+}
+
 // ==========================================
 // 📡 ENDPOINT DEL WEBHOOK
 // ==========================================
@@ -1668,9 +1691,15 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
-    const userText = (messageObj.text || messageObj.value || '').trim();
-    if (!userText) {
-      console.log('[Webhook] Message has no text content. Skipping.');
+    const imageUrl = extractImageUrl(body, messageObj);
+    let userText = (messageObj.text || messageObj.value || '').trim();
+
+    if (!userText && imageUrl) {
+      userText = 'Hola, quisiera información de este inmueble de la publicación';
+    }
+
+    if (!userText && !imageUrl) {
+      console.log('[Webhook] Message has no text nor image content. Skipping.');
       return;
     }
 
@@ -1813,7 +1842,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       // 2. Generar respuesta personalizada (Solo 1 llamada a Claude)
       console.log('[Processing] Generating response with Claude/Model...');
-      const result = await generateResponse(userText, properties);
+      const result = await generateResponse(userText, properties, imageUrl);
 
       // 🛑 SI EL INMUEBLE O DETALLE NO ESTÁ EN GOOGLE SHEETS (O consulta de Wasi/Portales/Inmueble no disponible):
       // "Vamos a colocar un mensaje para que el cliente y le jefe vea que el bot si funciona en esos casos y que el bot esta esperando que ingrese una respuesta humana:
