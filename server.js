@@ -2264,11 +2264,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 5. Despacho de Alertas según la acción ejecutada
       const channel = (!clientPhone && (clientName.startsWith('@') || userText.includes('instagram'))) ? 'Instagram' : 'WhatsApp';
 
-      if (result.action === 'DISPONIBILIDAD' && result.matchedProperty) {
-        console.log(`[Advisor Alert Trigger] Disponibilidad de ${result.matchedProperty.ID_PROPIEDAD} respondida. Despachando alerta a asesor y reporte a Robert...`);
-        dispatchAdvisorAlertAndRobertReport(result.matchedProperty, clientName, clientPhone, channel, userText, currentLeadId)
-          .catch(err => console.warn('[Advisor Alert Error]:', err.message));
-      } else if (result.action === 'AGENDAR_CITA') {
+      if (result.action === 'AGENDAR_CITA') {
         const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
         const robertAlertText = `📅 *SOLICITUD DE CITA / VISITA* 📅\n\n` +
           `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
@@ -2276,16 +2272,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           `💬 *Mensaje del cliente:* "${userText}"\n\n` +
           `⚡ *Acción:* Se respondió al cliente "Ok, ya consulto con mi jefe para agendar la cita." Por favor coordinar la visita.`;
 
-        console.log(`[Visit Alert] Despachando alerta de cita a Robert y asesor...`);
+        console.log(`[Visit Alert] Despachando alerta de cita a Robert...`);
         await dispatchDirectWhatsAppToRobert(robertAlertText);
-
-        if (result.matchedProperty) {
-          const rawAdvisorPhone = result.matchedProperty['Numero de WhatsApp'] || result.matchedProperty.WhatsApp || '';
-          const advisorLeadId = await resolveAdvisorLeadId(rawAdvisorPhone);
-          if (advisorLeadId && String(advisorLeadId) !== String(currentLeadId)) {
-            updateKommoLead(advisorLeadId, robertAlertText).then(() => triggerKommoSalesbot(advisorLeadId)).catch(() => {});
-          }
-        }
         setLeadHandoff(currentLeadId);
       } else if (result.action === 'NO_EXISTE_EN_DESCRIPCION') {
         const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : (result.notFoundItem || 'Inmueble consultado');
