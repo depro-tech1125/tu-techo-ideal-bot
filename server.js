@@ -379,7 +379,7 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
       {
         note_type: 'common',
         params: {
-          text: `🚨 ${alertHeadline}\n\n⚠️ RECUERDA CARGAR LA INFORMACIÓN DE ESTE INMUEBLE EN GOOGLE SHEETS.\nNo puedo responder al cliente porque no tengo información de este inmueble en Google Sheets y no puedo inventarla.\n\nCliente/Remitente: ${clientIdentifier}\nPregunta recibida: "${userText}"\nInmueble / Enlace consultado: ${requestedItem}\nEnlace Lead: ${leadUrl}\n\n⚡ El bot no respondió a esta persona y guarda silencio para que Robert o Bárbara respondan directamente.`
+          text: `🚨 ${alertHeadline}\n\n⚠️ RECUERDA CARGAR LA INFORMACIÓN DE ESTE INMUEBLE EN GOOGLE SHEETS.\nNo puedo responder al cliente porque no tengo información de este inmueble en Google Sheets y no puedo inventarla.\n\nCliente/Remitente: ${clientIdentifier}\nPregunta recibida: "${userText}"\nInmueble / Enlace consultado: ${requestedItem}\nEnlace Lead: ${leadUrl}\n\n⚡ El bot no respondió a esta persona y guarda silencio para que el equipo de Tu Techo Ideal responda directamente.`
         }
       }
     ], {
@@ -478,7 +478,7 @@ function checkLeadHandoffStatus(leadId) {
   const h = leadHandoffs[String(leadId)];
   if (!h || !h.timestamp) return { inHandoff: false, hoursElapsed: 999 };
   const hoursElapsed = (Date.now() - h.timestamp) / (1000 * 60 * 60);
-  // Si pasaron menos de 24 horas, Robert y Bárbara están atendiendo ese mismo día
+  // Si pasaron menos de 24 horas, el equipo de Tu Techo Ideal está atendiendo ese mismo día
   if (hoursElapsed < 24) {
     return { inHandoff: true, hoursElapsed };
   }
@@ -1000,7 +1000,7 @@ async function generateClaudeResponse(userMessage, availableProperties) {
       return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${petDetails} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
     }).join('\n');
 
-    const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal", atendiendo en nombre de Bárbara Bravo y Robert Jiménez.
+    const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal".
 
 🚨 REGLA #0 - MÁXIMA PRIORIDAD ABSOLUTA (BLINDAJE DE INVENTARIO Y RESTRICCIÓN TOTAL):
 Tu único inventario real en tiempo real es ESTE:
@@ -1030,7 +1030,7 @@ REGLAS EXCLUSIVAS PARA CUANDO EL INMUEBLE SÍ EXISTE EN EL INVENTARIO:
 4. Nunca inventes propiedades, precios, características ni ubicaciones que no estén en la lista anterior.
 5. Presenta los precios en formato "US$ [monto]". Si hay link de fotos disponible (que empiece por http), inclúyelo para que el cliente pueda verlas. Si dice "No link" o no tiene fotos, no menciones nada sobre fotos y JAMÁS coloques el símbolo "-" ni inventes enlaces.
 6. Al final de tu mensaje, incluye siempre exactamente esta pregunta de cierre: "¿Te gustaría coordinar una visita presencial, para conocerlo en persona?"
-7. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a Robert y a Bárbara y que en breve uno de ellos continuará la conversación con él por este mismo chat para coordinar la fecha y hora personalmente.
+7. ATENCIÓN PERSONALIZADA DE CITAS: NUNCA coloques enlaces a WhatsApp (como https://wa.me/...) ya que el cliente ya está hablando directamente por este mismo chat de WhatsApp. Si el cliente solicita agendar una cita o visita, o muestra intención de compra, dile con amabilidad que en este momento le has avisado a un asesor de Tu Techo Ideal y que en breve te contactará por este mismo chat para coordinar la fecha y hora personalmente.
 8. REGLA ESTRICTA DE PRIVACIDAD: NUNCA menciones códigos de referencia internos como [REF-001], [REF-002], [REF-003] ni identificadores. Presenta las propiedades directamente por su tipo y zona (por ejemplo: "Casa Comercial en Alta Florida").
 9. PROHIBICIÓN ESTRICTA DE CONVERSAR O RESPONDER COMENTARIOS CASUALES:
 NUNCA respondas a comentarios casuales, opiniones, exclamaciones o charlas sociales (como "si es una locura", "una locura", "jajaja", "ok gracias", "muy caro", "dale pues", "yo te aviso", "¿cómo estás?"). Si el mensaje del cliente es una reacción o comentario casual, responde ÚNICAMENTE la palabra: "IGNORAR_NO_INMOBILIARIO".
@@ -1176,7 +1176,7 @@ async function generateResponse(userMessage, allProperties) {
   // 2. Cliente pide cita o visita directamente
   if (detectLeadIntent(q).isHot && !q.includes('casa') && !q.includes('apto') && !q.includes('venta') && !q.includes('alquiler')) {
     return {
-      text: `${baseGreeting}¡Excelente! En este momento le acabo de avisar a Robert y a Bárbara sobre tu interés para coordinar la visita. En breve uno de ellos continuará la conversación contigo directamente por aquí para definir la fecha y la hora. ¡Un placer atenderte!`,
+      text: `${baseGreeting}¡Excelente! En este momento le acabo de avisar al equipo de Tu Techo Ideal sobre tu interés para coordinar la visita. En breve nos comunicaremos contigo directamente por aquí para definir la fecha y la hora. ¡Un placer atenderte!`,
       notFoundItem: null,
       skip: false
     };
@@ -1358,7 +1358,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     }
 
     // 🛑 FILTRO 1: Anti-Autorespuesta (Si el mensaje contiene el nombre de la empresa, es del bot)
-    if (userText.includes('Tu Techo Ideal') || userText.includes('Bárbara Bravo') || userText.includes('Robert Jiménez')) {
+    if (userText.includes('Tu Techo Ideal') || userText.includes('Robert Jiménez')) {
       console.log('[Webhook] Bot self-message detected. Skipping.');
       return;
     }
@@ -1487,7 +1487,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       const intent = detectLeadIntent(userText);
 
       if (handoffStatus.inHandoff) {
-        console.log(`[Handoff Silence] Lead #${currentLeadId} está en atención manual con Robert/Bárbara (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+        console.log(`[Handoff Silence] Lead #${currentLeadId} está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
         return;
       }
 
@@ -1538,7 +1538,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         // 2. ¡PUMMM! Disparar alertas por todos lados (WhatsApp Robert +584143115105, Correo, Kommo Task & Note)
         await dispatchMissingPropertyAlert(currentLeadId, clientName, clientPhone, result.notFoundItem, userText);
 
-        // 3. Activar silencio de 24 horas (Handoff) para que Robert o Bárbara respondan humanamente
+        // 3. Activar silencio de 24 horas (Handoff) para que el equipo de Tu Techo Ideal responda humanamente
         setLeadHandoff(currentLeadId);
         return;
       }
@@ -1574,7 +1574,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       if (intent.isHot) {
         console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${currentLeadId}! Disparando alerta inmediata WhatsApp + Correo.`);
         dispatchAlertToRobert(currentLeadId, userText, clientName, intent.type);
-        setLeadHandoff(currentLeadId); // Activamos silencio de 24h para que Robert y Bárbara atiendan personalmente
+        setLeadHandoff(currentLeadId); // Activamos silencio de 24h para que el equipo atienda personalmente
       }
 
       console.log(`[Success] Message strictly processed 1 single time for Lead #${currentLeadId}!\n`);
