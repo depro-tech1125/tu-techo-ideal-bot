@@ -610,8 +610,7 @@ async function dispatchAdvisorAlertAndRobertReport(property, clientName, clientP
     `👤 *${clientName || 'Cliente'}* por la red social *${channel || 'WhatsApp'}*, se le acaba de responder esta consulta:\n` +
     `🔗 ${propertyUrl}\n\n` +
     `💬 *Mensaje recibido:* "${userText.substring(0, 160)}"\n\n` +
-    `⚡ *¡Termina de asesorarlo!*\n` +
-    `👉 Ver chat en Kommo: ${clientLeadUrl}`;
+    `⚡ *¡Termina de asesorarlo!*`;
 
   // 2. Despacho al WhatsApp del Asesor (Vía su Lead directo en Kommo Salesbot)
   const advisorLeadId = await resolveAdvisorLeadId(cleanAdvisorPhone);
@@ -650,8 +649,7 @@ async function dispatchAdvisorAlertAndRobertReport(property, clientName, clientP
     `Hola soy el sistema automatizado, acabo de alertar por WhatsApp al asesor *${advisorName}* que preguntaron por este inmueble:\n` +
     `🔗 ${propertyUrl}\n\n` +
     `👤 *Cliente:* ${clientName || 'Cliente'} (${channel || 'WhatsApp'})\n` +
-    `🕒 *Fecha y hora:* ${nowFormatted}\n` +
-    `👉 Ver Lead: ${clientLeadUrl}`;
+    `🕒 *Fecha y hora:* ${nowFormatted}`;
 
   // Si el asesor es el propio Robert (ej: REF-005), él ya recibió la alerta directa arriba;
   // si el asesor es otro integrante del equipo (Vladimir, Rebeca, etc.), le despachamos a Robert el reporte de supervisión:
