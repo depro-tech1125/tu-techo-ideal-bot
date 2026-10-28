@@ -1624,6 +1624,11 @@ app.get(['/stats', '/report', '/dashboard'], async (req, res) => {
   res.send(generateHtmlDailyReport(stats));
 });
 
+// Endpoint oficial del Informe Forense Descargable (PDF / Imprimible)
+app.get(['/informe', '/informe-forense', '/auditoria'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'report.html'));
+});
+
 app.get('/api/daily-stats', async (req, res) => {
   const stats = await getDailyStats();
   res.send(stats || { error: 'No data' });

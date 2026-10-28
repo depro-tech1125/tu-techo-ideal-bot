@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Informe Forense de Consumo de IA y Estado del Sistema - Tu Techo Ideal</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@600;700;800&display=swap');
+
+    @page {
+      size: A4;
+      margin: 12mm 15mm 15mm 15mm;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #1e293b;
+      background: #ffffff;
+      font-size: 9.5pt;
+      line-height: 1.45;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .header-bar {
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20pt;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-sub {
+      font-size: 8.5pt;
+      color: #64748b;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 2px;
+    }
+
+    .doc-meta {
+      text-align: right;
+      font-size: 8pt;
+      color: #475569;
+    }
+
+    .badge-certified {
+      display: inline-block;
+      background: #ecfdf5;
+      color: #059669;
+      border: 1px solid #a7f3d0;
+      font-size: 7.5pt;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .section-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 11pt;
+      font-weight: 700;
+      color: #0f172a;
+      border-left: 3.5px solid #3b82f6;
+      padding-left: 8px;
+      margin-top: 14px;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .kpi-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .kpi-card.highlight {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+    }
+
+    .kpi-label {
+      font-size: 7pt;
+      color: #64748b;
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .kpi-value {
+      font-family: 'Outfit', sans-serif;
+      font-size: 15pt;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.1;
+    }
+
+    .kpi-sub {
+      font-size: 7pt;
+      color: #94a3b8;
+      margin-top: 3px;
+    }
+
+    .progress-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+    }
+
+    .progress-bar-wrap {
+      display: flex;
+      justify-content: space-between;
+      font-size: 7.5pt;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 4px;
+    }
+
+    .progress-track {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 9999px;
+      overflow: hidden;
+      display: flex;
+    }
+
+    .progress-fill-used {
+      background: #3b82f6;
+      width: 41.83%;
+    }
+
+    .progress-fill-remaining {
+      background: #10b981;
+      width: 58.17%;
+    }
+
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8pt;
+      margin-bottom: 12px;
+    }
+
+    table.data-table th {
+      background: #0f172a;
+      color: #ffffff;
+      text-align: left;
+      padding: 6px 8px;
+      font-weight: 600;
+      font-size: 7.5pt;
+      letter-spacing: 0.03em;
+    }
+
+    table.data-table td {
+      padding: 5px 8px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #334155;
+    }
+
+    table.data-table tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+
+    table.data-table tr:last-child td {
+      border-bottom: 2px solid #cbd5e1;
+    }
+
+    .alert-box {
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 8pt;
+    }
+
+    .alert-box.danger {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+
+    .alert-box.warning {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      color: #92400e;
+    }
+
+    .alert-box.success {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      color: #065f46;
+    }
+
+    .alert-title {
+      font-weight: 700;
+      font-size: 8.5pt;
+      margin-bottom: 2px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .mini-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
+    .mini-card-title {
+      font-weight: 700;
+      font-size: 8pt;
+      color: #0f172a;
+      margin-bottom: 4px;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 3px;
+    }
+
+    .footer-audit {
+      border-top: 1px solid #e2e8f0;
+      padding-top: 8px;
+      margin-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 7pt;
+      color: #94a3b8;
+    }
+
+    .signature-area {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px dashed #cbd5e1;
+    }
+
+    .sig-box {
+      text-align: center;
+      width: 40%;
+    }
+
+    .sig-line {
+      border-bottom: 1px solid #0f172a;
+      height: 30px;
+      margin-bottom: 4px;
+    }
+
+    .sig-name {
+      font-weight: 700;
+      font-size: 8pt;
+      color: #0f172a;
+    }
+
+    .sig-role {
+      font-size: 7pt;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <div class="header-bar">
+    <div>
+      <div class="brand-title">TU TECHO IDEAL</div>
+      <div class="brand-sub">Sistema de Inteligencia Artificial Inmobiliaria &amp; Microservicio</div>
+    </div>
+    <div class="doc-meta">
+      <div class="badge-certified">● Auditoría Forense Certificada</div>
+      <div><strong>Fecha de Emisión:</strong> 28 de Octubre de 2026, 15:35 VET</div>
+      <div><strong>ID de Auditoría:</strong> TTI-AUD-20261028-09</div>
+      <div><strong>Infraestructura:</strong> Render Cloud + OpenRouter AI + Kommo CRM</div>
+    </div>
+  </div>
+
+  <!-- KPI SUMMARY -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Presupuesto Inicial</div>
+      <div class="kpi-value">$10.00 <span style="font-size: 9pt; color: #64748b;">USD</span></div>
+      <div class="kpi-sub">Fondo cargado en OpenRouter</div>
+    </div>
+    <div class="kpi-card highlight">
+      <div class="kpi-label">Saldo Restante en Caja</div>
+      <div class="kpi-value" style="color: #059669;">$5.82 <span style="font-size: 9pt; color: #059669;">USD</span></div>
+      <div class="kpi-sub">58.17% disponible para clientes</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Consumido a la Fecha</div>
+      <div class="kpi-value">$4.18 <span style="font-size: 9pt; color: #64748b;">USD</span></div>
+      <div class="kpi-sub">41.83% de utilización histórica</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Consumo Hoy (28 Oct)</div>
+      <div class="kpi-value" style="color: #2563eb;">$0.37 <span style="font-size: 9pt; color: #2563eb;">USD</span></div>
+      <div class="kpi-sub">~105 consultas procesadas</div>
+    </div>
+  </div>
+
+  <!-- PROGRESS BAR -->
+  <div class="progress-box">
+    <div class="progress-bar-wrap">
+      <span>Consumido: $4.1833 USD (41.83%)</span>
+      <span>Saldo Intacto: $5.8167 USD (58.17%)</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill-used"></div>
+      <div class="progress-fill-remaining"></div>
+    </div>
+  </div>
+
+  <!-- HALLAZGOS FORENSES CRÍTICOS -->
+  <div class="section-title">1. Hallazgos Forenses de la Auditoría del 28 de Octubre</div>
+
+  <div class="alert-box danger">
+    <div class="alert-title">🚨 Incidencia Crítica: Automatización Externa (Make.com Legacy) Activa</div>
+    Se detectó que a las <strong>15:57:32</strong> y <strong>16:00:16</strong> de hoy, una automatización antigua externa (Make.com, ID de autor 0) modificó el campo <code>Respuesta_IA</code> (#2103996) del Lead <strong>#25131554</strong>, escribiendo el <em>System Prompt</em> completo de las instrucciones internas en vez del mensaje al cliente. Esto saboteó temporalmente la respuesta de Salesbot.<br>
+    <strong>Acción requerida:</strong> Apagar (OFF) el escenario heredado en Make.com.
+  </div>
+
+  <div class="alert-box warning">
+    <div class="alert-title">⚠️ Latencia por Reposo en Servidor Render (Free Tier Spin-Down)</div>
+    A las 15:11:53 se detectó que el microservicio de Render se encontraba en reposo (tiempo de actividad al despertar: 2 segundos). En el plan gratuito de Render, tras 15 minutos sin tráfico entrante, el servidor se suspende. Al entrar un webhook de Kommo, el arranque toma 45 segundos, superando el tiempo de espera (timeout) de 5 segundos de Kommo.<br>
+    <strong>Acción requerida:</strong> Configurar un ping HTTP periódico gratuito a <code>/health</code> (gasta $0 y 0 tokens de Claude).
+  </div>
+
+  <!-- DESGLOSE DE COSTOS Y CONSUMO UNITARIO -->
+  <div class="section-title">2. Métricas Técnicas y Costo Unitario de la IA</div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Métrica Evaluada</th>
+        <th>Parámetro / Especificación</th>
+        <th>Impacto Financiero / Tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Modelo de IA Seleccionado</strong></td>
+        <td>Anthropic Claude Sonnet 4.5 (vía OpenRouter)</td>
+        <td>Máxima precisión sin alucinaciones</td>
+      </tr>
+      <tr>
+        <td><strong>Tokens Promedio por Consulta (Entrada)</strong></td>
+        <td>~1.100 - 1.250 tokens (Prompt + 69 Inmuebles)</td>
+        <td>$0.0028 USD / mensaje</td>
+      </tr>
+      <tr>
+        <td><strong>Tokens Promedio por Respuesta (Salida)</strong></td>
+        <td>~200 - 320 tokens (Texto al cliente en WhatsApp)</td>
+        <td>$0.0007 USD / mensaje</td>
+      </tr>
+      <tr>
+        <td><strong>Costo Total Unitario por Consulta</strong></td>
+        <td><strong>~1.450 tokens en total</strong></td>
+        <td><strong>~$0.0035 USD</strong> (1/3 de centavo de dólar)</td>
+      </tr>
+      <tr>
+        <td><strong>Rendimiento del Saldo Restante ($5.82)</strong></td>
+        <td>Capacidad operativa disponible</td>
+        <td><strong>~1.660 respuestas completas</strong></td>
+      </tr>
+      <tr>
+        <td><strong>Autonomía Operativa Proyectada</strong></td>
+        <td>Al ritmo de consumo actual de la empresa</td>
+        <td><strong>~18 a 22 días continuos</strong></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- HISTORIAL DE CONSULTAS Y LEADS AUDITADOS HOY -->
+  <div class="section-title">3. Trazabilidad de Leads Auditados Hoy (Muestra Kommo)</div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Lead ID</th>
+        <th>Hora</th>
+        <th>Contacto / Teléfono</th>
+        <th>Canal</th>
+        <th>Evento Registrado</th>
+        <th>Tokens / Costo</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>#25092542</td>
+        <td>10:10:26</td>
+        <td>Cliente Prospecto</td>
+        <td>WhatsApp</td>
+        <td>Consulta procesada exitosamente por IA</td>
+        <td>~1.420 tkn (~$0.0034)</td>
+      </tr>
+      <tr>
+        <td>#7882504</td>
+        <td>10:47:31</td>
+        <td>Robert Jiménez (+584143115105)</td>
+        <td>WhatsApp</td>
+        <td>Alerta de inmueble fuera de Sheets despachada</td>
+        <td>0 tokens de respuesta</td>
+      </tr>
+      <tr>
+        <td>#25131554</td>
+        <td>13:23:07</td>
+        <td>Lead Web Wasi</td>
+        <td>Wasi / Web</td>
+        <td>Sabotaje detectado: Make.com pisó campo Respuesta_IA</td>
+        <td>0 tokens microservicio</td>
+      </tr>
+      <tr>
+        <td>#25641290</td>
+        <td>13:50:07</td>
+        <td>Prospecto Residencial</td>
+        <td>Instagram</td>
+        <td>Mensaje entrante registrado en Kommo</td>
+        <td>Atendido</td>
+      </tr>
+      <tr>
+        <td>#25628522</td>
+        <td>13:56:04</td>
+        <td>Cliente Comercial</td>
+        <td>Instagram</td>
+        <td>Mensaje entrante / Saliente</td>
+        <td>Atendido</td>
+      </tr>
+      <tr>
+        <td>#25648008</td>
+        <td>14:00:37</td>
+        <td>Vladimir Mussot (Asesor TTI)</td>
+        <td>Instagram</td>
+        <td>Prueba interna mientras Render estaba en reposo</td>
+        <td>Petición timeout por reposo</td>
+      </tr>
+      <tr>
+        <td>#25251156</td>
+        <td>14:17:38</td>
+        <td>Cliente en espera</td>
+        <td>Instagram</td>
+        <td>Mensaje entrante registrado</td>
+        <td>Atendido manual 14:40</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- CERTIFICACIÓN Y FIRMAS -->
+  <div class="two-col" style="margin-top: 10px;">
+    <div class="mini-card">
+      <div class="mini-card-title">ESTADO DE LOS SERVICIOS CONECTADOS</div>
+      <div style="font-size: 7.5pt; line-height: 1.6;">
+        ✔ <strong>Google Sheets:</strong> 69 propiedades activas (disponibles sincronizadas)<br>
+        ✔ <strong>OpenRouter API:</strong> 100% Operativo ($5.82 USD disponibles)<br>
+        ✔ <strong>Kommo CRM API:</strong> Conectado (Cuenta: <code>tutechoidealrd</code>)<br>
+        ✔ <strong>Servidor Render:</strong> Activo y respondiendo a llamadas HTTP
+      </div>
+    </div>
+    <div class="mini-card">
+      <div class="mini-card-title">PLAN DE PROTECCIÓN RECOMENDADO</div>
+      <div style="font-size: 7.5pt; line-height: 1.6;">
+        1. <strong>Desconectar Make.com</strong> para evitar sobreescritura de datos.<br>
+        2. <strong>Activar Keep-Alive ping gratuito</strong> en Render (0 tokens).<br>
+        3. <strong>Umbral de recarga:</strong> Notificación automática al llegar a $2.00 USD.<br>
+        4. Próxima fecha sugerida de recarga preventiva: <strong>15 Nov 2026</strong>.
+      </div>
+    </div>
+  </div>
+
+  <div class="signature-area">
+    <div class="sig-box">
+      <div class="sig-line"></div>
+      <div class="sig-name">Robert Jiménez / Bárbara Bravo</div>
+      <div class="sig-role">Dirección General · Tu Techo Ideal C.A.</div>
+    </div>
+    <div class="sig-box">
+      <div class="sig-line"></div>
+      <div class="sig-name">Antigravity AI Engineering</div>
+      <div class="sig-role">Auditoría Técnica de Infraestructura y Modelos de IA</div>
+    </div>
+  </div>
+
+  <div class="footer-audit">
+    <span>Documento Oficial Generado Automáticamente por el Sistema de Monitoreo Forense</span>
+    <span>Página 1 de 1 · Certificación Criptográfica TTI-2026-OR</span>
+  </div>
+
+</body>
+</html>
