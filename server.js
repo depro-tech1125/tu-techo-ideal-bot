@@ -1624,9 +1624,13 @@ app.get(['/stats', '/report', '/dashboard'], async (req, res) => {
   res.send(generateHtmlDailyReport(stats));
 });
 
-// Endpoint oficial del Informe Forense Descargable (PDF / Imprimible)
+// Endpoint oficial del Informe Forense Descargable (PDF / Imprimible / HTML)
 app.get(['/informe', '/informe-forense', '/auditoria'], (req, res) => {
   res.sendFile(path.join(__dirname, 'report.html'));
+});
+
+app.get(['/report.html', '/descargar-informe', '/descargar-html', '/informe.html'], (req, res) => {
+  res.download(path.join(__dirname, 'report.html'), 'Informe_Forense_Consumo_IA_TuTechoIdeal.html');
 });
 
 app.get('/api/daily-stats', async (req, res) => {
