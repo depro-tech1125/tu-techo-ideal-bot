@@ -3,6 +3,7 @@ const express = require('express');
 const axios = require('axios');
 const path = require('path');
 const { parse } = require('csv-parse/sync');
+const XLSX = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -77,22 +78,106 @@ function isDebounced(leadId) {
 }
 
 // ==========================================
-// 📊 GOOGLE SHEETS EN TIEMPO REAL
+// 📊 GOOGLE SHEETS EN TIEMPO REAL (PARSER NATIVO XLSX CON HIPERVÍNCULOS Y CÓDIGOS WASI)
 // ==========================================
-async function getAvailableProperties() {
+let cachedProperties = null;
+let lastPropertiesFetchTime = 0;
+const CACHE_TTL_MS = 60 * 1000; // 1 minuto de caché para alta velocidad y frescura
+
+async function getAvailableProperties(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedProperties && (now - lastPropertiesFetchTime) < CACHE_TTL_MS) {
+    return cachedProperties;
+  }
+
+  // 1. Intentamos primero vía XLSX para extraer los enlaces reales ocultos de Wasi, Fotos, Web y MercadoLibre
   try {
-    const csvUrl = process.env.GOOGLE_SHEET_CSV_URL;
-    const response = await axios.get(csvUrl, { timeout: 7000 });
-    const records = parse(response.data, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true
-    });
-    console.log(`[Google Sheets] Total rows: ${records.length}`);
+    const rawSheetUrl = process.env.GOOGLE_SHEET_CSV_URL || 'https://docs.google.com/spreadsheets/d/1cXZdjOck8rYUZdZUOWlhQMWxnyegipyVa081EkrRc_A/gviz/tq?tqx=out:csv&sheet=Hoja%201';
+    let xlsxUrl = rawSheetUrl;
+    if (xlsxUrl.includes('/spreadsheets/d/')) {
+      const match = xlsxUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      if (match) {
+        xlsxUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=xlsx`;
+      }
+    }
+
+    const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer', timeout: 10000 });
+    const workbook = XLSX.read(response.data, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+
+    const headers = [];
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
+      headers.push(cell ? String(cell.v).trim() : `col_${C}`);
+    }
+
+    const records = [];
+    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+      const row = {};
+      let hasData = false;
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const header = headers[C];
+        if (!header) continue;
+        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = sheet[cellRef];
+        let val = cell ? (cell.v !== undefined ? String(cell.v).trim() : '') : '';
+
+        // Extraer hipervínculo nativo si existe en la celda
+        if (cell && cell.l && cell.l.Target) {
+          row[header + '_URL'] = cell.l.Target;
+          // Si el texto visual es un emoji o placeholder (ej: "🏢 Ver en Wasi"), colocar el URL real
+          if (!val || val.startsWith('🏢') || val.startsWith('📷') || val.startsWith('🔗') || val.startsWith('🌐')) {
+            val = cell.l.Target;
+          }
+        }
+        row[header] = val;
+        if (val) hasData = true;
+      }
+
+      if (hasData && row['ID_PROPIEDAD']) {
+        // Extraer código WASI (número de 7 a 9 dígitos)
+        const wasiUrl = row['Wasi_URL'] || row['Wasi'] || '';
+        const wasiMatch = wasiUrl.match(/\/(\d{7,9})(?:\?|$)/);
+        row['CODIGO_WASI'] = wasiMatch ? wasiMatch[1] : '';
+
+        // Limpieza de teléfono de asesor
+        let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || '').replace(/[^0-9]/g, '');
+        if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
+          agentPhone = '58' + agentPhone;
+        } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
+          agentPhone = '58' + agentPhone.substring(1);
+        }
+        row['TELEFONO_ASESOR_CLEAN'] = agentPhone;
+
+        records.push(row);
+      }
+    }
+
+    console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con hipervínculos y códigos Wasi reales.`);
+    cachedProperties = records;
+    lastPropertiesFetchTime = now;
     return records;
-  } catch (err) {
-    console.error('[Google Sheets Error]:', err.message);
-    return [];
+  } catch (errXlsx) {
+    console.warn('[Google Sheets XLSX Fallback Warning]:', errXlsx.message);
+    // 2. Fallback de contingencia a CSV si el XLSX falla por cualquier red
+    try {
+      const csvUrl = process.env.GOOGLE_SHEET_CSV_URL;
+      const response = await axios.get(csvUrl, { timeout: 7000 });
+      const records = parse(response.data, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true
+      });
+      console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
+      cachedProperties = records;
+      lastPropertiesFetchTime = now;
+      return records;
+    } catch (errCsv) {
+      console.error('[Google Sheets Fatal Error]:', errCsv.message);
+      return cachedProperties || [];
+    }
   }
 }
 
@@ -197,7 +282,7 @@ function detectLeadIntent(text) {
 
   // 1. Cita o Visita presencial
   const visitKeywords = [
-    'cita', 'visita', 'agendar', 'verlo', 'verla', 'visitar', 
+    'cita', 'visita', 'agendar', 'verlo', 'verla', 'visitar',
     'cuando podemos ir', 'cuando se puede ver', 'disponible para ver',
     'mostrar', 'conocerlo', 'conocerla', 'me interesa ver', 'quiero ver',
     'ir a ver', 'horario para ver', 'puedo ir hoy', 'puedo ir manana'
@@ -432,7 +517,7 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
           message: alertWhatsAppText
         }, { timeout: 8000 });
         console.log(`[WhatsApp Alert Gateway] Notificación enviada a ${phone}`);
-      } catch (e) {}
+      } catch (e) { }
     }
   }
 
@@ -454,6 +539,215 @@ async function dispatchMissingPropertyAlert(leadId, clientName, clientPhone, req
 }
 
 // ==========================================
+// 🔔 ALERTA A ASESORES Y REPORTE GERENCIAL A ROBERT (SISTEMA DE ASIGNACIÓN AUTOMÁTICA)
+// ==========================================
+const ADVISOR_LEADS_MAP = {
+  '4125800379': { name: 'Barbara Bravo', leadId: '7467864' },
+  '4142356802': { name: 'Vladimir Mussot', leadId: '7487210' },
+  '4143115105': { name: 'Robert Jimenez', leadId: '7882504' },
+  '4248465846': { name: 'Ernesto Escala', leadId: '7468444' },
+  '4265131780': { name: 'Rebeca Roo', leadId: '7467894' },
+  '4128296255': { name: 'Gabriela Itanare', leadId: '7467858' }
+};
+
+async function resolveAdvisorLeadId(rawPhone) {
+  if (!rawPhone) return null;
+  const clean = String(rawPhone).replace(/[^0-9]/g, '');
+  const last10 = clean.slice(-10);
+  if (ADVISOR_LEADS_MAP[last10]) {
+    return ADVISOR_LEADS_MAP[last10].leadId;
+  }
+  // Búsqueda dinámica en Kommo por si se incorpora un nuevo asesor
+  try {
+    const token = process.env.KOMMO_TOKEN;
+    const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+    const res = await axios.get(`https://${subdomain}.kommo.com/api/v4/contacts?query=${last10}&with=leads`, {
+      headers: { Authorization: token },
+      timeout: 5000
+    });
+    const contacts = res.data?._embedded?.contacts || [];
+    if (contacts.length > 0 && contacts[0]._embedded?.leads?.[0]?.id) {
+      const foundLeadId = String(contacts[0]._embedded.leads[0].id);
+      ADVISOR_LEADS_MAP[last10] = { name: contacts[0].name, leadId: foundLeadId };
+      return foundLeadId;
+    }
+  } catch (e) {
+    console.warn(`[Advisor Lead Lookup Error for ${rawPhone}]:`, e.message);
+  }
+  return null;
+}
+
+async function dispatchAdvisorAlertAndRobertReport(property, clientName, clientPhone, channel, userText, clientLeadId) {
+  const advisorName = property.Agente || 'Asesor Tu Techo Ideal';
+  const rawAdvisorPhone = property['Numero de WhatsApp'] || property.WhatsApp || '';
+  const cleanAdvisorPhone = rawAdvisorPhone.replace(/[^0-9]/g, '');
+  const propertyUrl = property.Wasi_URL || (property.Wasi && property.Wasi.startsWith('http') ? property.Wasi : '') ||
+    property.PaginaWeb_URL || (property['Pagina Web'] && property['Pagina Web'].startsWith('http') ? property['Pagina Web'] : '') ||
+    property.LINK_FOTOS_URL || (property.LINK_FOTOS && property.LINK_FOTOS.startsWith('http') ? property.LINK_FOTOS : '') ||
+    `${property.TIPO} en ${property.ZONA}`;
+
+  const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+  const clientLeadUrl = `https://${subdomain}.kommo.com/leads/detail/${clientLeadId}`;
+  const nowFormatted = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
+
+  console.log(`\n📢 [DISPATCH ALERTA ASESOR & REPORTE ROBERT] 📢`);
+  console.log(`Asesor asignado: ${advisorName} (${cleanAdvisorPhone})`);
+  console.log(`Cliente: ${clientName} (${channel})`);
+  console.log(`Inmueble: ${property.TIPO} en ${property.ZONA} (${property.OPERACION})`);
+  console.log(`URL Inmueble: ${propertyUrl}`);
+
+  // 1. Mensaje para el Asesor asignado
+  // Formato exacto solicitado:
+  // "Pedro Perez (El nombre que sale en el chat) + por la red social xxx, se le acaba de responder esta consulta: "xxxxxx" un mensaje corto puede ser la url de wasi sino tiene wasi pues se agrega la url de la pagina web , termina de asesorarlo"
+  const advisorWhatsAppText = `🚨 *ALERTA DE CONSULTA RESPONDIDA* 🚨\n\n` +
+    `👤 *${clientName || 'Cliente'}* por la red social *${channel || 'WhatsApp'}*, se le acaba de responder esta consulta:\n` +
+    `🔗 ${propertyUrl}\n\n` +
+    `💬 *Mensaje recibido:* "${userText.substring(0, 160)}"\n\n` +
+    `⚡ *¡Termina de asesorarlo!*\n` +
+    `👉 Ver chat en Kommo: ${clientLeadUrl}`;
+
+  // 2. Despacho al WhatsApp del Asesor (Vía su Lead directo en Kommo Salesbot)
+  const advisorLeadId = await resolveAdvisorLeadId(cleanAdvisorPhone);
+  if (advisorLeadId && String(advisorLeadId) !== String(clientLeadId)) {
+    try {
+      await updateKommoLead(advisorLeadId, advisorWhatsAppText);
+      await triggerKommoSalesbot(advisorLeadId);
+      console.log(`[Advisor Alert Sent] Alerta enviada al WhatsApp de ${advisorName} vía Kommo Lead #${advisorLeadId}`);
+    } catch (e) {
+      console.warn(`[Advisor Alert Kommo Error]:`, e.response?.data || e.message);
+    }
+  }
+
+  // Si CallMeBot o Gateway está configurado, despachar también
+  if (cleanAdvisorPhone) {
+    let fullAdvisorPhone = cleanAdvisorPhone;
+    if (fullAdvisorPhone.length === 10 && fullAdvisorPhone.startsWith('4')) fullAdvisorPhone = '58' + fullAdvisorPhone;
+    if (process.env.CALLMEBOT_API_KEY) {
+      try {
+        const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${fullAdvisorPhone}&text=${encodeURIComponent(advisorWhatsAppText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
+        await axios.get(callmebotUrl, { timeout: 8000 });
+      } catch (e) { }
+    }
+    if (process.env.WHATSAPP_GATEWAY_URL) {
+      try {
+        await axios.post(process.env.WHATSAPP_GATEWAY_URL, { phone: fullAdvisorPhone, message: advisorWhatsAppText }, { timeout: 8000 });
+      } catch (e) { }
+    }
+  }
+
+  // 3. Reporte de confirmación para Robert Jiménez (Broker / Gerencia)
+  // Formato exacto solicitado:
+  // "Hola soy el sistema automatizado acabo de alertar por whatsapp al asesor tal que preguntaron por este inmueble url: xxxxx, hora y fecha"
+  const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || '7882504';
+  const robertReportText = `📋 *REPORTE DE ASIGNACIÓN AUTOMÁTICA*\n\n` +
+    `Hola soy el sistema automatizado, acabo de alertar por WhatsApp al asesor *${advisorName}* que preguntaron por este inmueble:\n` +
+    `🔗 ${propertyUrl}\n\n` +
+    `👤 *Cliente:* ${clientName || 'Cliente'} (${channel || 'WhatsApp'})\n` +
+    `🕒 *Fecha y hora:* ${nowFormatted}\n` +
+    `👉 Ver Lead: ${clientLeadUrl}`;
+
+  // Si el asesor es el propio Robert (ej: REF-005), él ya recibió la alerta directa arriba;
+  // si el asesor es otro integrante del equipo (Vladimir, Rebeca, etc.), le despachamos a Robert el reporte de supervisión:
+  if (advisorLeadId !== robertLeadId && String(robertLeadId) !== String(clientLeadId)) {
+    try {
+      await updateKommoLead(robertLeadId, robertReportText);
+      await triggerKommoSalesbot(robertLeadId);
+      console.log(`[Robert Report Sent] Reporte de asignación despachado a Robert vía Kommo Lead #${robertLeadId}`);
+    } catch (e) {
+      console.warn(`[Robert Report Error]:`, e.response?.data || e.message);
+    }
+  }
+
+  // 4. Registro de Nota interna de auditoría en el Lead del cliente
+  try {
+    const token = process.env.KOMMO_TOKEN;
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/leads/${clientLeadId}/notes`, [
+      {
+        note_type: 'common',
+        params: {
+          text: `✅ CONSULTA RESPONDIDA AUTOMÁTICAMENTE\n\n• Inmueble: ${property.TIPO} en ${property.ZONA} (${property.OPERACION})\n• Código Wasi: ${property.CODIGO_WASI || 'N/A'}\n• Enlace compartido: ${propertyUrl}\n• Asesor notificado por WhatsApp: ${advisorName} (${rawAdvisorPhone})\n• Reporte gerencial: Enviado a Robert Jiménez\n• Fecha y hora: ${nowFormatted}`
+        }
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Audit Note] Nota de consulta y alertas registrada en Lead #${clientLeadId}`);
+  } catch (err) {
+    console.warn('[Audit Note Error]:', err.response?.data || err.message);
+  }
+}
+
+// ==========================================
+// 🔍 DETECCIÓN Y EMPAREJAMIENTO DE INMUEBLES WASI
+// ==========================================
+function matchWasiOrProperty(text, properties) {
+  let wasiCode = null;
+  const urlMatch = text.match(/https?:\/\/(?:info\.)?wasi\.co\/[^\s\)]*\/(\d{7,9})/i);
+  if (urlMatch) {
+    wasiCode = urlMatch[1];
+  } else {
+    const explicitCodeMatch = text.match(/(?:c[oó]digo\s*(?:es)?:?\s*|inmueble\s+)(\d{7,9})/i);
+    if (explicitCodeMatch) {
+      wasiCode = explicitCodeMatch[1];
+    } else {
+      const anyWasiNumber = text.match(/\b(10\d{6})\b/);
+      if (anyWasiNumber) wasiCode = anyWasiNumber[1];
+    }
+  }
+
+  if (wasiCode) {
+    const matched = properties.find(p =>
+      p.CODIGO_WASI === wasiCode ||
+      (p.Wasi_URL && p.Wasi_URL.includes(wasiCode)) ||
+      (p.Wasi && p.Wasi.includes(wasiCode))
+    );
+    if (matched) {
+      return { status: 'MATCH', property: matched, code: wasiCode };
+    } else {
+      return { status: 'NOT_FOUND', code: wasiCode, item: `Inmueble código Wasi ${wasiCode}` };
+    }
+  }
+  return { status: 'NONE' };
+}
+
+function formatWasiPropertyResponse(p, userText) {
+  const wantsNoContactLink = /sin\s+datos|sin\s+contacto|ficha\s+blanca|enlace\s+neutro/i.test(userText);
+  const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
+  const tipoZona = `${p.TIPO} en ${p.OPERACION} en ${p.ZONA}`;
+
+  let resp = `Hola, bienvenido a Tu techo ideal\n\n`;
+  resp += `¡Sí, está totalmente disponible! Te comparto la información de este ${tipoZona}:\n\n`;
+  resp += `• Inversión: US$ ${cleanPrice}\n`;
+  if (p.HABITACIONES || p.BANOS || p.ESTACIONAMIENTOS) {
+    const habs = p.HABITACIONES ? `${p.HABITACIONES} hab.` : '';
+    const banos = p.BANOS ? `${p.BANOS} baños` : '';
+    const puestos = p.ESTACIONAMIENTOS ? `${p.ESTACIONAMIENTOS} estac.` : '';
+    const distrib = [habs, banos, puestos].filter(Boolean).join(', ');
+    if (distrib) resp += `• Distribución: ${distrib}\n`;
+  }
+  if (p.DESCRIPCION_BREVE) {
+    const shortDesc = p.DESCRIPCION_BREVE.length > 250 ? p.DESCRIPCION_BREVE.substring(0, 240) + '...' : p.DESCRIPCION_BREVE;
+    resp += `• Detalles: ${shortDesc}\n`;
+  }
+
+  const rexupLink = p.LINK_FOTOS_URL || (p.LINK_FOTOS && p.LINK_FOTOS.startsWith('http') ? p.LINK_FOTOS : null);
+  const wasiLink = p.Wasi_URL || (p.Wasi && p.Wasi.startsWith('http') ? p.Wasi : null);
+  const webLink = p.PaginaWeb_URL || (p['Pagina Web'] && p['Pagina Web'].startsWith('http') ? p['Pagina Web'] : null);
+
+  if (wantsNoContactLink && rexupLink) {
+    resp += `• Enlace / Fotos sin datos de contacto: ${rexupLink}\n`;
+  } else {
+    if (rexupLink) resp += `• Fotos del inmueble: ${rexupLink}\n`;
+    if (wasiLink) resp += `• Ver en Wasi: ${wasiLink}\n`;
+    else if (webLink) resp += `• Ver en Web: ${webLink}\n`;
+  }
+
+  resp += `\n¿Te gustaría coordinar una visita presencial, para conocerlo en persona?`;
+  return resp;
+}
+
+// ==========================================
 // 🤝 GESTIÓN DE TRASPASO A HUMANO (HANDOFF)
 // ==========================================
 const fs = require('fs');
@@ -471,7 +765,7 @@ try {
 function saveHandoffs() {
   try {
     fs.writeFileSync(HANDOFF_FILE, JSON.stringify(leadHandoffs, null, 2));
-  } catch (e) {}
+  } catch (e) { }
 }
 
 function checkLeadHandoffStatus(leadId) {
@@ -490,7 +784,7 @@ function setLeadHandoff(leadId) {
   saveHandoffs();
   console.log(`[Handoff Activated] Lead #${leadId} en traspaso a humano. El bot guarda silencio durante 24h.`);
 }
- 
+
 // ==========================================
 // 💳 MONITOREO DE SALDO CLAUDE (OPENROUTER)
 // ==========================================
@@ -889,7 +1183,7 @@ async function sendDailyBalanceReport() {
         message: waText
       }, { timeout: 8000 });
       console.log(`[Daily Report WhatsApp] Enviado vía Gateway a ${robertPhone}`);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // 4. Envío por Correo Electrónico a Tu Techo Ideal
@@ -923,7 +1217,7 @@ async function sendDailyBalanceReport() {
       timeout: 5000
     });
     console.log(`[Daily Report Task] Tarea de reporte diario registrada en Kommo para Robert`);
-  } catch (e) {}
+  } catch (e) { }
 
   return { success: true, stats };
 }
@@ -989,15 +1283,20 @@ async function generateClaudeResponse(userMessage, availableProperties) {
     // Verificación de saldo en segundo plano
     checkAndAlertLowBalance().catch(e => console.warn('[Bg Balance Check]:', e.message));
 
-    // Formatear inventario SIN códigos de referencia internos (REF-xxx)
+    // Formatear inventario con datos enriquecidos (incluyendo códigos Wasi, enlaces Wasi y enlaces web reales)
     const formattedInventory = availableProperties.map((p, i) => {
       const cleanPrice = (p.PRECIO || '').replace('$', '').trim();
-      const rawPhoto = (p.URL_FOTOS_SISTEMA || p.LINK_FOTOS || '').trim();
+      const rawPhoto = (p.LINK_FOTOS_URL || p.URL_FOTOS_SISTEMA || p.LINK_FOTOS || '').trim();
       const validPhoto = (rawPhoto && rawPhoto !== '-' && rawPhoto.startsWith('http')) ? rawPhoto : 'No link';
+      const wasiCode = p.CODIGO_WASI ? ` | Código Wasi: ${p.CODIGO_WASI}` : '';
+      const wasiUrl = p.Wasi_URL || (p.Wasi && p.Wasi.startsWith('http') ? p.Wasi : '');
+      const wasiPart = wasiUrl ? ` | Enlace Wasi: ${wasiUrl}` : '';
+      const webUrl = p.PaginaWeb_URL || (p['Pagina Web'] && p['Pagina Web'].startsWith('http') ? p['Pagina Web'] : '');
+      const webPart = webUrl ? ` | Enlace Web: ${webUrl}` : '';
       const mascotasVal = (p.Mascotas || p.mascotas || 'Por consultar').trim();
       const tipoMascotas = (p['Tipo de Mascotas'] || p.tipo_de_mascotas || '').trim();
       const petDetails = (tipoMascotas && tipoMascotas !== 'No aplica' && tipoMascotas !== '-') ? `${mascotasVal} (${tipoMascotas})` : mascotasVal;
-      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${petDetails} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
+      return `${i + 1}. ${p.TIPO} en ${p.ZONA} | Operación: ${p.OPERACION} | Precio: US$ ${cleanPrice} | Habs: ${p.HABITACIONES} | Baños: ${p.BANOS} | Puestos: ${p.ESTACIONAMIENTOS} | Mascotas: ${petDetails}${wasiCode}${wasiPart}${webPart} | Detalles: ${p.DESCRIPCION_BREVE || 'N/A'} | Fotos: ${validPhoto}`;
     }).join('\n');
 
     const systemPrompt = `Eres el asistente inmobiliario virtual de "Tu Techo Ideal".
@@ -1071,7 +1370,7 @@ Si el cliente pregunta si aceptan mascotas (perros, gatos, animales):
       // Limpieza de seguridad: eliminar cualquier mención accidental a códigos tipo [REF-xxx] o REF-xxx
       aiMessage = aiMessage.replace(/\[\s*REF-[^\]]+\]\s*/gi, '').replace(/\bREF-\d+\b\s*/gi, '');
       // Blindaje de fotos: nunca enviar un guion "-" ni "No link" al cliente
-      aiMessage = aiMessage.replace(/•?\s*\**Fotos:\***\s*-\s*\n?/gi, '').replace(/•?\s*\**Fotos:\***\s*No link\s*\n?/gi, '');
+      aiMessage = aiMessage.replace(/•?\s*\*+Fotos:\*+\s*-\s*\n?/gi, '').replace(/•?\s*\*+Fotos:\*+\s*No link\s*\n?/gi, '');
 
       // Verificar si detectó inmueble o detalle no disponible en Google Sheets
       if (aiMessage.includes('NO_DISPONIBLE:')) {
@@ -1140,6 +1439,24 @@ async function generateResponse(userMessage, allProperties) {
     const status = normalizeText(row.ESTATUS || row.Estatus || row.estatus);
     return status === 'disponible';
   });
+
+  // 🎯 EMPAREJAMIENTO DETERMINÍSTICO INMEDIATO: CONSULTAS CON CÓDIGO O ENLACE WASI
+  const wasiCheck = matchWasiOrProperty(cleanMessage, allProperties);
+  if (wasiCheck.status === 'MATCH') {
+    const prop = wasiCheck.property;
+    const isAvail = normalizeText(prop.ESTATUS || '').includes('disponible');
+    if (!isAvail) {
+      const unavailableText = `Hola, bienvenido a Tu techo ideal\n\nEl inmueble ${prop.TIPO} en ${prop.ZONA} (código Wasi: ${wasiCheck.code}) actualmente ya no se encuentra disponible (estado: ${prop.ESTATUS || 'No disponible'}).\n\n¿Te gustaría que te busquemos otra opción similar en esa misma zona?`;
+      console.log(`[Wasi Match] Propiedad ${prop.ID_PROPIEDAD} encontrada pero no disponible (${prop.ESTATUS}).`);
+      return { text: unavailableText, matchedProperty: prop, notFoundItem: null, skip: false };
+    }
+    const propertyResponse = formatWasiPropertyResponse(prop, cleanMessage);
+    console.log(`[Wasi Match] ¡Coincidencia exacta por código Wasi ${wasiCheck.code}! Propiedad ${prop.ID_PROPIEDAD} (${prop.TIPO} en ${prop.ZONA}).`);
+    return { text: propertyResponse, matchedProperty: prop, notFoundItem: null, skip: false };
+  } else if (wasiCheck.status === 'NOT_FOUND') {
+    console.log(`[Wasi Match] Código Wasi ${wasiCheck.code} consultado pero NO existe en Google Sheets. Derivando a mensaje de espera y alerta.`);
+    return { text: null, notFoundItem: wasiCheck.item, skip: false };
+  }
 
   // 🛑 FILTRO DETERMINÍSTICO PRE-CLAUDE: Tipos de negocio/inmueble no existentes en Google Sheets
   // Si piden bar, discoteca, tasca, restaurante, panadería, taller, etc., y el inventario no tiene ningún inmueble de ese tipo:
@@ -1235,7 +1552,7 @@ async function generateResponse(userMessage, allProperties) {
   if (filtered.length > 0) {
     const opText = wantsBuy ? 'en venta' : (wantsRent ? 'en alquiler' : 'disponibles');
     let text = `${baseGreeting}Revisando nuestro inventario, tenemos excelentes opciones ${opText} para ti:\n\n`;
-    
+
     filtered.slice(0, 2).forEach(p => {
       text += formatSingleProperty(p) + '\n';
     });
@@ -1570,7 +1887,15 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         }
       }, 5000);
 
-      // 5. Si el cliente activó intención caliente (visita, cita, compra):
+      // 5. Alerta al Asesor asignado y Reporte Gerencial a Robert si se respondió una consulta de inmueble
+      const channel = (!clientPhone && (clientName.startsWith('@') || userText.includes('instagram'))) ? 'Instagram' : 'WhatsApp';
+      if (result.matchedProperty) {
+        console.log(`[Advisor Alert Trigger] Inmueble ${result.matchedProperty.ID_PROPIEDAD} respondido exitosamente. Despachando alerta a asesor y reporte a Robert...`);
+        dispatchAdvisorAlertAndRobertReport(result.matchedProperty, clientName, clientPhone, channel, userText, currentLeadId)
+          .catch(err => console.warn('[Advisor Alert Error]:', err.message));
+      }
+
+      // 6. Si el cliente activó intención caliente (visita, cita, compra):
       if (intent.isHot) {
         console.log(`[Hot Lead Alert] ${intent.type} detectado para Lead #${currentLeadId}! Disparando alerta inmediata WhatsApp + Correo.`);
         dispatchAlertToRobert(currentLeadId, userText, clientName, intent.type);
@@ -1601,7 +1926,7 @@ app.get('/health', async (req, res) => {
     const total = cRes.data?.data?.total_credits || 0;
     const usage = cRes.data?.data?.total_usage || 0;
     remainingCredits = Number((total - usage).toFixed(3));
-  } catch (e) {}
+  } catch (e) { }
 
   res.send({
     status: 'running',
