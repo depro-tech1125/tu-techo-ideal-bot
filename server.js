@@ -711,9 +711,35 @@ function getLeadPropertyContext(leadId, allProperties) {
   return allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === ctx.propertyRef.toUpperCase()) || null;
 }
 
+const MAX_AI_RESPONSES_PER_LEAD = 4; // Límite estricto de 3 a 4 respuestas máximas de la IA por lead
+
+function getLeadResponseCount(leadId) {
+  if (!leadId) return 0;
+  const ctx = leadContextCache.get(String(leadId));
+  return (ctx && typeof ctx.responseCount === 'number') ? ctx.responseCount : 0;
+}
+
+function incrementLeadResponseCount(leadId) {
+  if (!leadId) return 1;
+  const ctx = leadContextCache.get(String(leadId)) || {};
+  ctx.responseCount = (ctx.responseCount || 0) + 1;
+  ctx.updatedAt = Date.now();
+  leadContextCache.set(String(leadId), ctx);
+  try {
+    const obj = {};
+    for (const [k, v] of leadContextCache.entries()) obj[k] = v;
+    fs.writeFileSync(LEAD_CONTEXT_FILE, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[Lead Context Save Error]:', e.message);
+  }
+  return ctx.responseCount;
+}
+
 function saveLeadPropertyContext(leadId, property) {
   if (!leadId || !property || !property.ID_PROPIEDAD) return;
+  const existing = leadContextCache.get(String(leadId)) || {};
   const ctx = {
+    ...existing,
     propertyRef: property.ID_PROPIEDAD,
     wasiCode: property.CODIGO_WASI || '',
     updatedAt: Date.now()
@@ -901,7 +927,8 @@ function formatAvailabilityResponse(property, userText) {
 async function generateClaudePropertyQA(userMessage, property, clientName = '') {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
   const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
-  const descBreve = property.DESCRIPCION_BREVE || '';
+  // AISLAMIENTO ESTRICTO: Únicamente la columna DESCRIPCION_BREVE. Ninguna otra columna parecida.
+  const descBreve = String(property['DESCRIPCION_BREVE'] || '').trim();
   const mascotas = property.Mascotas || 'No especificado';
   const tipoMascotas = property['Tipo de Mascotas'] || '';
   const estatus = property.ESTATUS || 'Disponible';
@@ -916,7 +943,7 @@ DATOS DEL INMUEBLE CONSULTADO:
 - Estatus: ${estatus}
 - Mascotas permitidas: ${mascotas} ${tipoMascotas ? `(${tipoMascotas})` : ''}
 - Enlace fotos: ${fotos}
-- DESCRIPCION_BREVE:
+- DESCRIPCION_BREVE (Única fuente de información autorizada):
 """
 ${descBreve}
 """
@@ -926,16 +953,17 @@ REGLAS ESTRICTAS DE RESPUESTA:
    Responde exactamente: "Ok, ya consulto con mi jefe para agendar la cita"
    Coloca al final: [ACCION: AGENDAR_CITA]
 
-2. SI EL CLIENTE HACE UNA PREGUNTA CUYA RESPUESTA EXISTE EN DESCRIPCION_BREVE (habitaciones, baños, metros, puesto de estacionamiento, precio/inversión/canon, áreas comunes, servicios, acabados):
+2. SI EL CLIENTE HACE UNA PREGUNTA CUYA RESPUESTA EXISTE 100% EXPLÍCITA EN DESCRIPCION_BREVE (habitaciones, baños, metros, puesto de estacionamiento, precio/inversión/canon, áreas comunes, servicios, acabados):
    Responde de manera concisa, directa y fluida (ejemplo: "Tiene 1 habitación", "Cuenta con 80,45 m²", "Sí, cuenta con puesto de estacionamiento", "La inversión total es de $355.674").
    Coloca al final: [ACCION: RESPONDER_INFO]
 
-3. SI EL CLIENTE PREGUNTA ALGO QUE NO EXISTE O NO ESTÁ 100% CONFIRMADO EN DESCRIPCION_BREVE:
+3. SI EL CLIENTE PREGUNTA ALGO QUE NO EXISTE O NO ESTÁ 100% EXPLÍCITO EN DESCRIPCION_BREVE:
    Responde exactamente: "Deme un momento, voy a consultar"
    Coloca al final: [ACCION: NO_EXISTE_EN_DESCRIPCION]
 
-4. PROHIBICIONES:
-   - NUNCA inventes información que no esté en DESCRIPCION_BREVE. Si no está 100% claro, responde "Deme un momento, voy a consultar".
+4. PROHIBICIONES Y BLINDAJE DE SEGURIDAD:
+   - ATENCIÓN: Se van a crear otras columnas con nombres parecidos en la hoja de cálculo. Está TERMINANTEMENTE PROHIBIDO tomar información de cualquier otra columna. Únicamente debes responder con lo que esté en DESCRIPCION_BREVE.
+   - NUNCA inventes información que no esté en DESCRIPCION_BREVE. Si no está 100% claro, responde siempre "Deme un momento, voy a consultar".
    - NO uses textos largos ni listas de viñetas innecesarias. Sé conversacional y fluido como una persona por WhatsApp.
    - NO menciones códigos internos como REF-xxx al cliente.`;
 
@@ -979,7 +1007,8 @@ REGLAS ESTRICTAS DE RESPUESTA:
 // Fallback determinístico si Claude no estuviera disponible
 function deterministicPropertyQA(userMessage, property) {
   const q = normalizeText(userMessage);
-  const desc = property.DESCRIPCION_BREVE || '';
+  // AISLAMIENTO ESTRICTO: Únicamente la columna DESCRIPCION_BREVE
+  const desc = String(property['DESCRIPCION_BREVE'] || '').trim();
   const descNorm = normalizeText(desc);
 
   if (isVisitSchedulingIntent(userMessage)) {
@@ -1814,6 +1843,19 @@ async function generateResponse(userMessage, allProperties, imageUrl = null, lea
     return { text: null, notFoundItem: null, skip: true };
   }
 
+  // 🛑 FILTRO DE LÍMITE DE RESPUESTAS AUTOMÁTICAS (MÁXIMO 3 A 4 RESPUESTAS POR LEAD)
+  const currentCount = getLeadResponseCount(leadId);
+  if (currentCount >= MAX_AI_RESPONSES_PER_LEAD) {
+    console.log(`[Limit Guard] Lead #${leadId} ya alcanzó el límite de ${currentCount}/${MAX_AI_RESPONSES_PER_LEAD} respuestas automáticas. Derivando a atención humana...`);
+    const activeProp = getLeadPropertyContext(leadId, allProperties);
+    return {
+      text: 'Deme un momento, voy a consultar',
+      action: 'LIMITE_ALCANZADO',
+      matchedProperty: activeProp,
+      skip: false
+    };
+  }
+
   // 1. Verificar si el cliente pide AGENDAR CITA o VER/VISITAR el inmueble
   // "si la persona sigue: Ok estoy interesa quiero agendar para verla, la ia responde 'Ok, ya consulto con mi jefe para agendar la cita'"
   if (isVisitSchedulingIntent(cleanMessage)) {
@@ -2205,6 +2247,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log('[Processing] Triggering Salesbot single delivery...');
       await triggerKommoSalesbot(currentLeadId);
 
+      // Incrementar contador de respuestas automáticas de la IA para este lead
+      const responseNum = incrementLeadResponseCount(currentLeadId);
+      console.log(`[Response Count] Lead #${currentLeadId} - Respuestas automáticas acumuladas: ${responseNum}/${MAX_AI_RESPONSES_PER_LEAD}`);
+
       // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS)
       setTimeout(async () => {
         try {
@@ -2252,6 +2298,30 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
         console.log(`[Missing Info Alert] Despachando alerta a Robert y pausando bot para Lead #${currentLeadId}...`);
         await dispatchDirectWhatsAppToRobert(robertAlertText);
+        setLeadHandoff(currentLeadId);
+      } else if (result.action === 'LIMITE_ALCANZADO') {
+        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
+        const robertAlertText = `🚨 *LÍMITE MÁXIMO DE RESPUESTAS ALCANZADO (${MAX_AI_RESPONSES_PER_LEAD}/${MAX_AI_RESPONSES_PER_LEAD})* 🚨\n\n` +
+          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
+          `🏢 *Inmueble:* ${propTitle}\n` +
+          `💬 *Último mensaje recibido:* "${userText}"\n\n` +
+          `⚠️ *Motivo:* El bot alcanzó el límite de ${MAX_AI_RESPONSES_PER_LEAD} respuestas automáticas configuradas para este cliente.\n` +
+          `⚡ *Acción:* Se respondió al cliente "Deme un momento, voy a consultar." y el bot guardó silencio para que el equipo humano continúe personalmente.`;
+
+        console.log(`[Limit Alert] Despachando alerta de límite a Robert y pausando bot para Lead #${currentLeadId}...`);
+        await dispatchDirectWhatsAppToRobert(robertAlertText);
+        setLeadHandoff(currentLeadId);
+      }
+
+      // Si alcanzó el límite de 4 respuestas en esta misma interacción: pausar para que continúe un humano
+      if (responseNum >= MAX_AI_RESPONSES_PER_LEAD && result.action !== 'AGENDAR_CITA' && result.action !== 'NO_EXISTE_EN_DESCRIPCION' && result.action !== 'LIMITE_ALCANZADO') {
+        console.log(`[Limit Met] Lead #${currentLeadId} completó sus ${MAX_AI_RESPONSES_PER_LEAD} respuestas permitidas. Activando handoff...`);
+        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
+        const limitReport = `📋 *LÍMITE DE ATENCIÓN AUTOMÁTICA COMPLETADO (4/4)* 📋\n\n` +
+          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
+          `🏢 *Inmueble:* ${propTitle}\n\n` +
+          `⚡ *Acción:* La IA completó sus 4 respuestas automáticas con éxito. El bot se ha pausado en este chat para que el equipo humano continúe la atención personalmente.`;
+        dispatchDirectWhatsAppToRobert(limitReport).catch(() => {});
         setLeadHandoff(currentLeadId);
       }
 
