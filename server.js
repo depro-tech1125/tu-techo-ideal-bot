@@ -2887,17 +2887,26 @@ function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
       (rawStr.includes('te menciono') && rawStr.includes('historia')) ||
       (rawStr.includes('menciono') && rawStr.includes('historia')) ||
       (rawStr.includes('mencion') && rawStr.includes('historia')) ||
+      rawStr.includes('mentioned you in their story') ||
+      rawStr.includes('mentioned you in a story') ||
+      (rawStr.includes('mentioned you') && rawStr.includes('story')) ||
       rawStr.includes('story_mention') ||
       rawStr.includes('story_share') ||
       rawStr.includes('story_reply') ||
       rawStr.includes('story_reaction') ||
       rawStr.includes('respondio a tu historia') ||
       rawStr.includes('reacciono a tu historia') ||
+      rawStr.includes('replied to your story') ||
+      rawStr.includes('reacted to your story') ||
       rawStr.includes('compartio una historia') ||
       rawStr.includes('compartio tu historia') ||
       rawStr.includes('compartio un reel') ||
+      rawStr.includes('shared a story') ||
+      rawStr.includes('shared a reel') ||
       rawStr.includes('restricciones de instagram') ||
+      rawStr.includes('instagram restrictions') ||
       rawStr.includes('no podemos mostrar este mensaje') ||
+      rawStr.includes('cannot display this message') ||
       rawStr.includes('abre esta conversacion en tu cuenta de instagram') ||
       rawStr.includes('estas se aplican a reels') ||
       rawStr.includes('galerias de videos') ||
@@ -2931,14 +2940,23 @@ function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
       q.includes('menciono en una historia') ||
       (q.includes('menciono') && q.includes('historia')) ||
       (q.includes('mencion') && q.includes('historia')) ||
+      q.includes('mentioned you in their story') ||
+      q.includes('mentioned you in a story') ||
+      (q.includes('mentioned you') && q.includes('story')) ||
       q.includes('te menciono') ||
       q.includes('respondio a tu historia') ||
       q.includes('reacciono a tu historia') ||
+      q.includes('replied to your story') ||
+      q.includes('reacted to your story') ||
       q.includes('compartio una historia') ||
       q.includes('compartio tu historia') ||
       q.includes('compartio un reel') ||
+      q.includes('shared a story') ||
+      q.includes('shared a reel') ||
       q.includes('restricciones de instagram') ||
+      q.includes('instagram restrictions') ||
       q.includes('no podemos mostrar este mensaje') ||
+      q.includes('cannot display this message') ||
       q.includes('abre esta conversacion en tu cuenta de instagram') ||
       q.includes('estas se aplican a reels') ||
       q.includes('galerias de videos') ||
