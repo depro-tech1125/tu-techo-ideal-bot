@@ -2799,6 +2799,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log(`[Response Count] Lead #${currentLeadId} - Respuestas automáticas acumuladas: ${responseNum}/${MAX_AI_RESPONSES_PER_LEAD}`);
 
       // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS)
+      // Ventana de 60 segundos: Da tiempo total de holgura para que Salesbot lea y despache el mensaje por WhatsApp
       setTimeout(async () => {
         try {
           await updateKommoLead(currentLeadId, ' ');
@@ -2806,7 +2807,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         } catch (e) {
           console.warn('[Anti-Duplicate Clear Error]:', e.message);
         }
-      }, 25000);
+      }, 60000);
 
       // 5. Despacho de Alertas según la acción ejecutada (Omnicanal: WhatsApp, Instagram, Facebook)
       let channel = 'WhatsApp';
