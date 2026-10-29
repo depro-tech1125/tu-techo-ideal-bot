@@ -2927,16 +2927,19 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     const imageUrl = extractImageUrl(body, messageObj);
     let userText = (messageObj.text || messageObj.value || '').trim();
 
+    // 🛑 FILTRO INMEDIATO: Menciones en Historias, Reels y Avisos Restringidos de Instagram
+    // "tampoco le mandes alerta a robert por eso... silencio absoluto (0 mensajes al cliente y 0 alertas a Robert)"
+    if (isInstagramStoryOrRestricted(userText, messageObj)) {
+      console.log(`[Instagram Story/Restricted Ignored] Mención o restricción de Instagram descartada silenciosamente ("${userText.substring(0, 60)}..."). Sin respuesta al cliente y sin alerta a Robert.`);
+      return;
+    }
+
     if (!userText && imageUrl) {
       userText = 'Hola, quisiera información de este inmueble de la publicación';
     }
 
     if (!userText && isVoiceNoteOrAudio(body, messageObj, userText)) {
       userText = '[Nota de voz / Audio recibido]';
-    }
-
-    if (!userText && isInstagramStoryOrRestricted(userText, messageObj)) {
-      userText = '[Mención en historia de Instagram]';
     }
 
     if (!userText && !imageUrl) {
@@ -3102,24 +3105,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       }
 
       // 🛑 INTERCEPCIÓN 2: MENCIÓN EN HISTORIA / REEL / RESTRICCIÓN DE INSTAGRAM
-      // "evita que eso pase, respeta el cuadro de dialogo... No emites ningun tipo de mensaje al cliente, ni que espere ni nada solo manda alerta..."
+      // "tampoco le mandes alerta a robert por eso... silencio absoluto (0 mensajes al cliente y 0 alertas a Robert)"
       if (isInstagramStoryOrRestricted(userText, messageObj)) {
-        console.log(`[Instagram Story/Restricted Intercepted] Lead #${currentLeadId}: "${userText.substring(0, 60)}...". Silencio absoluto al cliente y alerta ejecutiva a Robert.`);
-        const properties = await getAvailableProperties();
-        const activeProp = await getOrRecoverLeadPropertyContext(currentLeadId, properties);
-
-        const robertAlert = buildRobertAlertText({
-          type: 'INSTAGRAM_STORY_OR_RESTRICTED',
-          clientName,
-          clientPhone: clientPhone || '',
-          channel: 'Instagram Direct',
-          matchedProperty: activeProp,
-          userText: userText || '[Mención en historia de Instagram]',
-          leadId: currentLeadId
-        });
-
-        await dispatchDirectWhatsAppToRobert(robertAlert);
-        setLeadHandoff(currentLeadId);
+        console.log(`[Instagram Story/Restricted Ignored] Lead #${currentLeadId}: Descartado silenciosamente. Sin mensaje al cliente y sin alerta a Robert.`);
         return;
       }
 
