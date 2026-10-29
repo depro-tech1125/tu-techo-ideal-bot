@@ -80,11 +80,74 @@ function isDebounced(leadId) {
 }
 
 // ==========================================
-// 📊 GOOGLE SHEETS EN TIEMPO REAL (PARSER NATIVO XLSX CON HIPERVÍNCULOS Y CÓDIGOS WASI)
+// 📊 GOOGLE SHEETS EN TIEMPO REAL & MEMORIA VIRTUAL VOCABULARIO
 // ==========================================
 let cachedProperties = null;
 let lastPropertiesFetchTime = 0;
 const CACHE_TTL_MS = 60 * 1000; // 1 minuto de caché para alta velocidad y frescura
+
+let virtualPropertyVocabulary = new Set();
+let virtualWordToPropertiesMap = new Map();
+
+const VOCABULARY_STOPWORDS = new Set([
+  'de', 'la', 'que', 'el', 'en', 'y', 'a', 'los', 'del', 'se', 'las', 'por', 'un', 'para',
+  'con', 'no', 'una', 'su', 'al', 'lo', 'como', 'mas', 'pero', 'sus', 'le', 'ya', 'o',
+  'este', 'si', 'porque', 'esta', 'son', 'entre', 'cuando', 'muy', 'sin', 'sobre',
+  'ser', 'tiene', 'tambien', 'me', 'hasta', 'hay', 'donde', 'quien', 'desde', 'todo',
+  'nos', 'durante', 'todos', 'uno', 'les', 'ni', 'contra', 'otros', 'ese', 'eso', 'ante',
+  'ellos', 'e', 'esto', 'mi', 'antes', 'algunos', 'unos', 'yo', 'otro', 'otras', 'otra',
+  'tanto', 'esa', 'estos', 'mucho', 'quienes', 'nada', 'muchos', 'cual', 'sea', 'poco',
+  'ella', 'estar', 'haber', 'estas', 'estaba', 'estamos', 'algunas', 'algo', 'nosotros',
+  'gracias', 'hola', 'bienvenido', 'bienvenidos', 'buen', 'buenos', 'buenas', 'dias', 'tardes',
+  'noches', 'saludos', 'saludo', 'atentamente', 'asesor', 'asesora', 'favor', 'porfavor', 'inmobiliaria'
+]);
+
+function normalizeWordToken(w) {
+  return (w || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+function indexPropertiesVocabulary(properties) {
+  const newVocab = new Set();
+  const newMap = new Map();
+
+  for (const prop of properties) {
+    const propVocab = new Set();
+    const textsToIndex = [
+      prop['DESCRIPCION_BREVE'] || '',
+      prop.TIPO || '',
+      prop.OPERACION || '',
+      prop.ESTATUS || '',
+      prop.Mascotas || '',
+      prop['Tipo de Mascotas'] || ''
+    ].join(' ');
+
+    const rawWords = textsToIndex.split(/\s+/);
+    for (const rw of rawWords) {
+      const token = normalizeWordToken(rw);
+      if (token.length > 2 && !VOCABULARY_STOPWORDS.has(token)) {
+        newVocab.add(token);
+        propVocab.add(token);
+
+        if (!newMap.has(token)) {
+          newMap.set(token, []);
+        }
+        if (!newMap.get(token).includes(prop.ID_PROPIEDAD)) {
+          newMap.get(token).push(prop.ID_PROPIEDAD);
+        }
+      }
+    }
+    prop._vocabulary = propVocab;
+  }
+
+  virtualPropertyVocabulary = newVocab;
+  virtualWordToPropertiesMap = newMap;
+  console.log(`[Memoria Virtual] Indexadas ${properties.length} propiedades y ${virtualPropertyVocabulary.size} palabras descriptivas en memoria.`);
+}
 
 async function getAvailableProperties(forceRefresh = false) {
   const now = Date.now();
@@ -158,6 +221,7 @@ async function getAvailableProperties(forceRefresh = false) {
     }
 
     console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con hipervínculos y códigos Wasi reales.`);
+    indexPropertiesVocabulary(records);
     cachedProperties = records;
     lastPropertiesFetchTime = now;
     return records;
@@ -173,6 +237,7 @@ async function getAvailableProperties(forceRefresh = false) {
         trim: true
       });
       console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
+      indexPropertiesVocabulary(records);
       cachedProperties = records;
       lastPropertiesFetchTime = now;
       return records;
@@ -194,21 +259,32 @@ function normalizeText(text) {
 // ==========================================
 // 🛑 FILTRO DETERMINÍSTICO ANTI-CHITCHAT Y CHARLA CASUAL
 // ==========================================
-function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false) {
+function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false, activeProperty = null) {
   if (imageUrl) return false;
+  if (!text || typeof text !== 'string') return true;
   const q = normalizeText(text);
 
-  // Si menciona colega, fotos o publicación inmobiliaria, no es charla casual
+  // 1. Si ya hay un inmueble activo en contexto para este lead, CUALQUIER consulta es válida y NUNCA se descarta
+  if (hasActiveContext) {
+    // Solo si el mensaje es exclusivamente un cierre social aislado ("ok gracias", "chao", "jajaja")
+    const strictClosures = ['jaja', 'jajaja', 'jeje', 'xd', 'ok', 'oka', 'gracias', 'muchas gracias', 'chao', 'adios', 'listo', 'vale', 'ok gracias'];
+    if (strictClosures.includes(q)) {
+      return true;
+    }
+    return false;
+  }
+
+  // 2. Si menciona colega, fotos o publicación inmobiliaria, no es charla casual
   if (q.includes('colega') || q.includes('publicacion') || q.includes('flyer')) {
     return false;
   }
 
-  // Lista de comentarios casuales, exclamaciones, bromas y opiniones puras
+  // 3. Lista estricta de comentarios casuales, exclamaciones, bromas y saludos puros
   const casualPhrases = [
     'si es una locura', 'una locura', 'que locura', 'es una locura', 'locura',
     'jajaja', 'jaja', 'jeje', 'jiji', 'lol', 'xd',
     'ok', 'oka', 'okey', 'okay', 'vale', 'dale', 'dale pues', 'dale fino', 'listo',
-    'gracias', 'muchas gracias', 'mil gracias', 'gracias amigo', 'gracias amiga',
+    'gracias', 'muchas gracias', 'mil gracias', 'gracias amigo', 'gracias amiga', 'ok gracias',
     'perfecto', 'excelente', 'bueno', 'buenisimo', 'fino', 'chevere', 'que fino', 'que chevere',
     'de acuerdo', 'entendido', 'anotado', 'copiado',
     'chao', 'adios', 'hasta luego', 'nos vemos', 'feliz dia', 'feliz tarde', 'feliz noche',
@@ -222,11 +298,30 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false) {
 
   const isStrictCasual = casualPhrases.some(p => q === p || q === `${p}!` || q === `${p}.` || q === `${p}?` || q.startsWith(p + ' ') || q.endsWith(' ' + p));
   if (isStrictCasual) {
-    const hasPropertyQuestion = /\?|¿|cuant|tien|preci|habitac|bano|baño|puest|estacion|metr|pis|agu|pozo|gas/i.test(q);
+    const hasPropertyQuestion = /\?|¿|cuant|tien|preci|habitac|bano|baño|puest|estacion|metr|pis|agu|pozo|gas|color|pared|sala/i.test(q);
     if (!hasPropertyQuestion) return true;
   }
 
-  // Palabras clave exhaustivas de inmuebles y características
+  // 4. Si contiene signos de interrogación o palabras de pregunta / consulta seca
+  if (
+    q.includes('?') || q.includes('¿') ||
+    /^(?:cu[aá]nto|qu[eé]|cu[aá]l|d[oó]nde|c[oó]mo|tiene|cuenta|acepta|hay|precio|costo|inversion|canon|color|de\s+que\s+color)\b/i.test(q)
+  ) {
+    return false;
+  }
+
+  // 5. Si el mensaje contiene CUALQUIER palabra presente en la Memoria Virtual de Google Sheets
+  const queryTokens = q.split(/\s+/).map(normalizeWordToken).filter(w => w.length > 2 && !VOCABULARY_STOPWORDS.has(w));
+  const matchesVirtualMemory = queryTokens.some(token => {
+    if (virtualPropertyVocabulary.has(token)) return true;
+    if (activeProperty && activeProperty._vocabulary && activeProperty._vocabulary.has(token)) return true;
+    return false;
+  });
+  if (matchesVirtualMemory) {
+    return false; // Es una pregunta o mención directa de características de la base de datos
+  }
+
+  // 6. Palabras clave exhaustivas de inmuebles, partes de casas, colores, servicios y características
   const realEstateKeywords = [
     'casa', 'casas', 'apto', 'aptos', 'apartamento', 'apartamentos', 'quinta', 'quintas',
     'local', 'locales', 'oficina', 'oficinas', 'comercial', 'galpon', 'galpones', 'terreno', 'terrenos',
@@ -238,10 +333,12 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false) {
     'estacionamiento', 'estacionamientos', 'puesto', 'puestos', 'parqueo', 'parqueos', 'garage', 'garaje', 'carro', 'carros',
     'metro', 'metros', 'metraje', 'm2', 'superficie', 'tamano', 'tamaño',
     'piso', 'pisos', 'nivel', 'planta', 'pb',
-    'agua', 'pozo', 'tanque', 'luz', 'gas', 'electricidad', 'condominio', 'mantenimiento',
+    'pared', 'paredes', 'color', 'colores', 'amarillo', 'amarilla', 'blanco', 'blanca', 'pintura', 'pintado',
+    'sala', 'comedor', 'cocina', 'cocinas', 'barra', 'recepcion', 'produccion', 'area',
+    'agua', 'pozo', 'tanque', 'tanques', 'luz', 'gas', 'electricidad', 'condominio', 'mantenimiento',
     'financiamiento', 'credito', 'inicial', 'cuotas', 'ref', 'codigo',
     'piscina', 'gimnasio', 'terraza', 'balcon', 'ascensor', 'vista', 'amoblado',
-    'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion', 'marques', 'chacao', 'mercedes', 'palos grandes',
+    'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion', 'marques', 'chacao', 'mercedes', 'palos grandes', 'san ignacio',
     'cita', 'visita', 'visitar', 'agendar', 'verlo', 'verla', 'disponible', 'disponibles',
     'inmueble', 'inmuebles', 'propiedad', 'propiedades',
     'colega', 'publicacion', 'link', 'enlace', 'wasi', 'http', 'sin datos', 'fotos', 'foto',
@@ -249,19 +346,12 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false) {
   ];
 
   const hasRealEstateIntent = realEstateKeywords.some(kw => q.includes(kw));
-
-  // Si ya hay un inmueble activo en contexto para este lead, cualquier consulta es válida y NUNCA se descarta
-  if (hasActiveContext) {
+  if (hasRealEstateIntent) {
     return false;
   }
 
-  // Si contiene signos de interrogación o palabras de pregunta, es consulta válida
-  if (q.includes('?') || q.includes('¿') || /^(?:cu[aá]nto|qu[eé]|cu[aá]l|d[oó]nde|c[oó]mo|tiene|cuenta|acepta|hay)\b/i.test(q)) {
-    return false;
-  }
-
-  // Si no menciona nada del negocio inmobiliario y es un texto corto (< 20 caracteres sin pregunta):
-  if (!hasRealEstateIntent && q.length < 20) {
+  // Si no menciona nada del inventario ni negocio y es un texto corto (< 15 caracteres sin pregunta):
+  if (!hasRealEstateIntent && !matchesVirtualMemory && q.length < 15) {
     return true;
   }
 
@@ -733,6 +823,42 @@ function getLeadPropertyContext(leadId, allProperties) {
   return allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === ctx.propertyRef.toUpperCase()) || null;
 }
 
+// Recuperación de contexto ultra-resiliente: memoria RAM local + consulta directa a Kommo si la RAM se reinició
+async function getOrRecoverLeadPropertyContext(leadId, allProperties) {
+  if (!leadId) return null;
+
+  // 1. Verificar primero en memoria RAM local
+  const localProp = getLeadPropertyContext(leadId, allProperties);
+  if (localProp) return localProp;
+
+  // 2. Recuperar del historial de eventos de Kommo si la memoria local estaba vacía
+  try {
+    const token = process.env.KOMMO_TOKEN;
+    const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+    if (token) {
+      const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+      const res = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=lead&filter[entity_id]=${leadId}`, {
+        headers: { Authorization: authHeader },
+        timeout: 4500
+      });
+      const events = res.data?._embedded?.events || [];
+      for (const ev of events) {
+        const text = JSON.stringify(ev.value_after || ev.params || ev);
+        const wasiCheck = matchWasiOrProperty(text, allProperties);
+        if (wasiCheck && wasiCheck.status === 'MATCH') {
+          saveLeadPropertyContext(leadId, wasiCheck.property);
+          console.log(`[Lead Context Recovery] Inmueble recuperado de eventos de Kommo para Lead #${leadId}: ${wasiCheck.property.ID_PROPIEDAD}`);
+          return wasiCheck.property;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[Lead Context Recovery Warning] Error consultando eventos de Lead #${leadId}:`, err.message);
+  }
+
+  return null;
+}
+
 const MAX_AI_RESPONSES_PER_LEAD = 4; // Límite estricto de 3 a 4 respuestas máximas de la IA por lead
 
 function getLeadResponseCount(leadId) {
@@ -1038,19 +1164,29 @@ ${descBreve}
 """
 
 REGLAS DE ATENCIÓN PROFESIONAL:
-1. SI EL CLIENTE QUIERE AGENDAR UNA CITA O VISITAR EL INMUEBLE (ej: "quiero agendar para verla", "visitarlo", "ir a verlo"):
+1. ATENCIÓN A PREGUNTAS SECAS, DIRECTAS O SIN SIGNOS DE INTERROGACIÓN:
+   El cliente puede escribir de forma totalmente directa, seca o sin signo de interrogación (ejemplos: "de que color es la pared", "de que color es la sala", "color de la sala", "tiene banos", "banos", "cuantos pisos", "gas", "tanque de agua", "puestos de estacionamiento", "precio", "m2", "amoblado").
+   Debes interpretar la consulta con total naturalidad y buscar minuciosamente en "DESCRIPCION_BREVE".
+
+2. SI EL CLIENTE QUIERE AGENDAR UNA CITA O VISITAR EL INMUEBLE (ej: "quiero agendar para verla", "visitarlo", "ir a verlo"):
    Responde cordialmente: "Ok, ya consulto con mi jefe para agendar la cita"
    Coloca al final: [ACCION: AGENDAR_CITA]
 
-2. SI EL CLIENTE PREGUNTA POR DETALLES QUE ESTÁN 100% VALIDADOS EN DESCRIPCION_BREVE (habitaciones, baños, metros cuadrados, puesto de estacionamiento, precio/inversión/canon, servicios, áreas comunes, acabados):
-   Responde como un asesor profesional de atención al cliente: de forma directa, amable, concisa y fluida (ejemplo: "Tiene 1 habitación", "Cuenta con 80,45 m²", "Sí, cuenta con puesto de estacionamiento", "La inversión total es de $355.674").
+3. SI LA INFORMACIÓN ESTÁ EN DESCRIPCION_BREVE (habitaciones, baños, metros, puestos, precio/canon, servicios, tanque, gas, colores, acabados, áreas):
+   Responde como un asesor profesional de atención al cliente: de forma directa, amable, concisa y fluida.
+   Ejemplos de respuesta:
+   - Si la descripción dice "color de paredes amarillas en la sala" y preguntan "de que color es la sala" o "de que color es la pared", responde indicando que las paredes de la sala son de color amarillo.
+   - Si la descripción dice "un baño interno", responde "Tiene 1 baño interno" o "Sí, cuenta con 1 baño interno".
+   - Si la descripción dice "tanque de agua de 600 litros", responde "Sí, cuenta con un tanque de agua de 600 litros".
+   - Si la descripción dice "gas directo industrial", responde "Sí, cuenta con gas directo industrial".
    Coloca al final: [ACCION: RESPONDER_INFO]
 
-3. SI EL CLIENTE PREGUNTA ALGO QUE NO ESTÁ 100% EXPLÍCITO EN DESCRIPCION_BREVE:
-   Responde con profesionalismo: "Deme un momento, voy a consultar"
+4. SI LA INFORMACIÓN NO ESTÁ 100% EXPLÍCITA EN DESCRIPCION_BREVE:
+   Si el cliente pregunta por una característica que NO aparece en "DESCRIPCION_BREVE":
+   Responde con profesionalismo exacto: "Deme un momento, voy a consultar"
    Coloca al final: [ACCION: NO_EXISTE_EN_DESCRIPCION]
 
-4. BLINDAJE DE SEGURIDAD ABSOLUTO:
+5. BLINDAJE DE SEGURIDAD ABSOLUTO:
    - Se van a crear otras columnas con nombres parecidos en la hoja de cálculo: ESTÁ TERMINANTEMENTE PROHIBIDO tomar información de cualquier otra columna. Únicamente debes responder con lo que esté en DESCRIPCION_BREVE.
    - NUNCA inventes información que no esté en DESCRIPCION_BREVE. Si no está 100% claro, responde siempre "Deme un momento, voy a consultar".
    - NO uses textos largos ni listas de viñetas innecesarias. Sé conversacional y fluido como un asesor profesional de WhatsApp.
@@ -1104,6 +1240,15 @@ function deterministicPropertyQA(userMessage, property) {
     return { text: 'Ok, ya consulto con mi jefe para agendar la cita', action: 'AGENDAR_CITA' };
   }
 
+  // 1. Color de paredes o salas
+  if (q.includes('color') || q.includes('pared') || q.includes('paredes')) {
+    const colorMatch = desc.match(/(?:paredes?\s+(?:de\s+color\s+|son\s+)?|color\s+de\s+paredes?\s+)(\w+)/i);
+    if (colorMatch) {
+      return { text: `Las paredes son de color ${colorMatch[1]}.`, action: 'RESPONDER_INFO' };
+    }
+  }
+
+  // 2. Habitaciones
   if (q.includes('habitacion') || q.includes('habitaciones') || q.includes('hab') || q.includes('cuartos') || q.includes('dormitorio')) {
     const habMatch = desc.match(/(\d+|una|dos|tres|cuatro|cinco)\s*(?:habitación|habitaciones|hab\b|cuarto|dormitorio)/i);
     if (habMatch) {
@@ -1111,26 +1256,52 @@ function deterministicPropertyQA(userMessage, property) {
     }
   }
 
+  // 3. Baños
   if (q.includes('baño') || q.includes('banos') || q.includes('bano')) {
-    const banoMatch = desc.match(/(\d+|un|dos|tres)\s*(?:baño|baños|bano|banos)/i);
+    const banoMatch = desc.match(/(\d+|un|dos|tres)\s*(?:baño\s+interno|baño|baños|bano|banos)/i);
     if (banoMatch) {
       return { text: `Tiene ${banoMatch[0]}.`, action: 'RESPONDER_INFO' };
     }
   }
 
+  // 4. Metros / Superficie
   if (q.includes('metro') || q.includes('metraje') || q.includes('m2') || q.includes('tamano') || q.includes('superficie')) {
-    const m2Match = desc.match(/(\d+[\d,\.]*)\s*(?:m²|m2|metros)/i);
+    const m2Match = desc.match(/(\d+[\d,\.]*)\s*(?:m²|m2|metros(?:\s+cuadrados)?)/i);
     if (m2Match) {
       return { text: `Tiene ${m2Match[0]}.`, action: 'RESPONDER_INFO' };
     }
   }
 
+  // 5. Estacionamiento / Puestos
   if (q.includes('estacionamiento') || q.includes('puesto') || q.includes('parqueo') || q.includes('carro')) {
+    const puestosMatch = desc.match(/(\d+|un|dos|tres|cuatro)\s*(?:puesto|puestos)\s*(?:de\s+estacionamiento)?/i);
+    if (puestosMatch) {
+      return { text: `Cuenta con ${puestosMatch[0]}.`, action: 'RESPONDER_INFO' };
+    }
     if (descNorm.includes('estacionamiento') || descNorm.includes('puesto')) {
       return { text: 'Sí, cuenta con puesto de estacionamiento.', action: 'RESPONDER_INFO' };
     }
   }
 
+  // 6. Tanque de agua
+  if (q.includes('tanque') || q.includes('agua')) {
+    const tanqueMatch = desc.match(/tanque\s+de\s+agua\s+(?:de\s+)?(\d+[\d,\.]*\s*(?:litros|lts|l))/i);
+    if (tanqueMatch) {
+      return { text: `Cuenta con tanque de agua de ${tanqueMatch[1]}.`, action: 'RESPONDER_INFO' };
+    }
+    if (descNorm.includes('tanque')) {
+      return { text: 'Sí, dispone de tanque de agua.', action: 'RESPONDER_INFO' };
+    }
+  }
+
+  // 7. Gas directo
+  if (q.includes('gas')) {
+    if (descNorm.includes('gas directo industrial') || descNorm.includes('gas directo')) {
+      return { text: 'Sí, cuenta con gas directo.', action: 'RESPONDER_INFO' };
+    }
+  }
+
+  // 8. Precio / Inversión / Canon
   if (q.includes('precio') || q.includes('costo') || q.includes('cuanto') || q.includes('inversion') || q.includes('canon')) {
     const priceMatch = desc.match(/\$(\d+[\d,\.]*)/);
     if (priceMatch) {
@@ -2355,12 +2526,12 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
-  // Verificar si hay contexto de inmueble activo en la memoria del lead
-  const existingProp = getLeadPropertyContext(leadId, allProperties);
+  // Verificar y recuperar si hay contexto de inmueble activo en la memoria del lead (local o Kommo)
+  const existingProp = await getOrRecoverLeadPropertyContext(leadId, allProperties);
   const hasActiveContext = !!existingProp;
 
   // 🛑 FILTRO 1: Descartar charla casual, reacciones y comentarios sin intención inmobiliaria
-  if (isCasualOrChitChat(cleanMessage, imageUrl, hasActiveContext)) {
+  if (isCasualOrChitChat(cleanMessage, imageUrl, hasActiveContext, existingProp)) {
     console.log(`[Anti-Chitchat Filter] Comentario casual o reacción detectada ("${cleanMessage}"). Silencio para no gastar tokens.`);
     return { text: null, notFoundItem: null, skip: true };
   }
@@ -2369,7 +2540,7 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   const currentCount = getLeadResponseCount(leadId);
   if (currentCount >= MAX_AI_RESPONSES_PER_LEAD) {
     console.log(`[Limit Guard] Lead #${leadId} ya alcanzó el límite de ${currentCount}/${MAX_AI_RESPONSES_PER_LEAD} respuestas automáticas. Derivando a atención humana...`);
-    const activeProp = getLeadPropertyContext(leadId, allProperties);
+    const activeProp = existingProp || getLeadPropertyContext(leadId, allProperties);
     return {
       text: 'Deme un momento, voy a consultar',
       action: 'LIMITE_ALCANZADO',
@@ -2381,7 +2552,7 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   // 1. Verificar si el cliente pide AGENDAR CITA o VER/VISITAR el inmueble
   // "si la persona sigue: Ok estoy interesa quiero agendar para verla, la ia responde 'Ok, ya consulto con mi jefe para agendar la cita'"
   if (isVisitSchedulingIntent(cleanMessage)) {
-    const activeProp = getLeadPropertyContext(leadId, allProperties);
+    const activeProp = existingProp || getLeadPropertyContext(leadId, allProperties);
     console.log(`[Visit Scheduling Intent] El cliente ${clientName} solicita agendar cita para ver inmueble.`);
     return {
       text: 'Ok, ya consulto con mi jefe para agendar la cita',
@@ -2418,9 +2589,9 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
     }
   }
 
-  // Si aún no tenemos propiedad del mensaje, buscar en la memoria activa del lead
+  // Si aún no tenemos propiedad del mensaje, usar el contexto activo recuperado del lead
   if (!matchedProp) {
-    matchedProp = getLeadPropertyContext(leadId, allProperties);
+    matchedProp = existingProp || getLeadPropertyContext(leadId, allProperties);
     if (matchedProp) {
       console.log(`[Lead Context Memory] Inmueble activo recuperado para Lead #${leadId}: ${matchedProp.ID_PROPIEDAD}`);
     }
@@ -3000,8 +3171,16 @@ app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Tu Techo Ideal Bot running on port ${PORT}`);
   initDailyReportScheduler();
   initWeeklyAuditScheduler();
+
+  // Inicializar Memoria Virtual y Vocabulario de Google Sheets al arrancar
+  try {
+    const props = await getAvailableProperties(true);
+    console.log(`[Memoria Virtual Startup] Inicializadas ${props.length} propiedades con ${virtualPropertyVocabulary.size} palabras clave extraídas.`);
+  } catch (err) {
+    console.warn('[Memoria Virtual Startup Warning]:', err.message);
+  }
 });
