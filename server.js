@@ -785,6 +785,66 @@ function isExplicitAvailabilityQuery(text) {
 }
 
 // ==========================================
+// 📋 GENERADOR DE FORMATO GERENCIAL PARA ROBERT
+// ==========================================
+function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedProperty, userText, leadId }) {
+  const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+  const leadUrl = leadId ? `https://${subdomain}.kommo.com/leads/detail/${leadId}` : null;
+  const nowFormatted = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
+
+  let propDescription = 'Búsqueda personalizada / Sin coincidencia en catálogo';
+  if (matchedProperty) {
+    const wasiInfo = matchedProperty.CODIGO_WASI ? ` | Wasi: ${matchedProperty.CODIGO_WASI}` : '';
+    propDescription = `${matchedProperty.TIPO} en ${matchedProperty.ZONA} (${matchedProperty.ID_PROPIEDAD}${wasiInfo})`;
+  }
+
+  const cleanPhone = clientPhone ? ` (${clientPhone})` : '';
+
+  if (type === 'AGENDAR_CITA') {
+    return `📅 *SOLICITUD DE CITA / VISITA* 📅\n\n` +
+      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
+      `📱 *Canal:* ${channel}\n` +
+      `🏢 *Inmueble:* ${propDescription}\n` +
+      `💬 *Mensaje del cliente:*\n"${userText}"\n\n` +
+      `⚡ *Acción realizada:* Se respondió al cliente "Ok, ya consulto con mi jefe para agendar la cita." El bot se pausó para que coordines la visita personalmente.\n\n` +
+      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
+      `🕒 *Fecha y hora:* ${nowFormatted}`;
+  }
+
+  if (type === 'NO_EXISTE_EN_DESCRIPCION') {
+    return `🚨 *CONSULTA SIN INFORMACIÓN EN BASE DE DATOS* 🚨\n\n` +
+      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
+      `📱 *Canal:* ${channel}\n` +
+      `🏢 *Inmueble:* ${propDescription}\n` +
+      `💬 *Pregunta del cliente:*\n"${userText}"\n\n` +
+      `⚠️ *Diagnóstico:* La información solicitada no existe en la columna "DESCRIPCION_BREVE" del inventario.\n` +
+      `⚡ *Acción realizada:* Se respondió al cliente: "Deme un momento, voy a consultar." y el bot se pausó automáticamente para tu atención personal.\n\n` +
+      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
+      `🕒 *Fecha y hora:* ${nowFormatted}`;
+  }
+
+  if (type === 'LIMITE_ALCANZADO') {
+    return `📋 *LÍMITE MÁXIMO DE RESPUESTAS ALCANZADO (${MAX_AI_RESPONSES_PER_LEAD}/${MAX_AI_RESPONSES_PER_LEAD})* 📋\n\n` +
+      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
+      `📱 *Canal:* ${channel}\n` +
+      `🏢 *Inmueble:* ${propDescription}\n` +
+      `💬 *Último mensaje recibido:*\n"${userText}"\n\n` +
+      `⚠️ *Diagnóstico:* El bot completó sus ${MAX_AI_RESPONSES_PER_LEAD} respuestas permitidas para este cliente.\n` +
+      `⚡ *Acción realizada:* La IA se pausó en este chat para que el equipo continúe la atención personalmente.\n\n` +
+      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
+      `🕒 *Fecha y hora:* ${nowFormatted}`;
+  }
+
+  return `🔔 *ALERTA GERENCIAL TU TECHO IDEAL* 🔔\n\n` +
+    `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
+    `📱 *Canal:* ${channel}\n` +
+    `🏢 *Inmueble:* ${propDescription}\n` +
+    `💬 *Mensaje:*\n"${userText}"\n\n` +
+    (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
+    `🕒 *Fecha y hora:* ${nowFormatted}`;
+}
+
+// ==========================================
 // 📲 DISPATCH DIRECTO DE ALERTA WHATSAPP A ROBERT
 // ==========================================
 async function dispatchDirectWhatsAppToRobert(messageText) {
@@ -799,6 +859,13 @@ async function dispatchDirectWhatsAppToRobert(messageText) {
     await updateKommoLead(robertLeadId, messageText);
     await triggerKommoSalesbot(robertLeadId);
     console.log(`[WhatsApp to Robert] Notificación enviada al WhatsApp de Robert vía Kommo Lead #${robertLeadId}`);
+
+    // Limpieza de campo Respuesta_IA en el lead de Robert tras 25 segundos
+    setTimeout(async () => {
+      try {
+        await updateKommoLead(robertLeadId, ' ');
+      } catch (e) { }
+    }, 25000);
   } catch (e) {
     console.warn('[WhatsApp to Robert Kommo Error]:', e.response?.data || e.message);
   }
@@ -2755,38 +2822,45 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       }
 
       if (result.action === 'AGENDAR_CITA') {
-        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
-        const robertAlertText = `📅 *SOLICITUD DE CITA / VISITA* 📅\n\n` +
-          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
-          `🏢 *Inmueble:* ${propTitle}\n` +
-          `💬 *Mensaje del cliente:* "${userText}"\n\n` +
-          `⚡ *Acción:* Se respondió al cliente "Ok, ya consulto con mi jefe para agendar la cita." Por favor coordinar la visita.`;
+        const robertAlertText = buildRobertAlertText({
+          type: 'AGENDAR_CITA',
+          clientName,
+          clientPhone,
+          channel,
+          matchedProperty: result.matchedProperty,
+          userText,
+          leadId: currentLeadId
+        });
 
-        console.log(`[Visit Alert] Despachando alerta de cita a Robert...`);
+        console.log(`[Visit Alert] Despachando alerta ejecutiva de cita a Robert...`);
         await dispatchDirectWhatsAppToRobert(robertAlertText);
         setLeadHandoff(currentLeadId);
       } else if (result.action === 'NO_EXISTE_EN_DESCRIPCION') {
-        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : (result.notFoundItem || 'Inmueble consultado');
-        const robertAlertText = `🚨 *CONSULTA SIN INFORMACIÓN EN BASE DE DATOS* 🚨\n\n` +
-          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
-          `🏢 *Inmueble:* ${propTitle}\n` +
-          `💬 *Pregunta del cliente:* "${userText}"\n\n` +
-          `⚠️ *Motivo:* El cliente está preguntando información que no existe en la columna "DESCRIPCION_BREVE" de la base de datos.\n` +
-          `⚡ *Acción:* Se respondió al cliente "Deme un momento, voy a consultar." y el bot guardó silencio para que lo atiendas tú personalmente.`;
+        const robertAlertText = buildRobertAlertText({
+          type: 'NO_EXISTE_EN_DESCRIPCION',
+          clientName,
+          clientPhone,
+          channel,
+          matchedProperty: result.matchedProperty,
+          userText,
+          leadId: currentLeadId
+        });
 
-        console.log(`[Missing Info Alert] Despachando alerta a Robert y pausando bot para Lead #${currentLeadId}...`);
+        console.log(`[Missing Info Alert] Despachando alerta ejecutiva de información fuera de BD a Robert...`);
         await dispatchDirectWhatsAppToRobert(robertAlertText);
         setLeadHandoff(currentLeadId);
       } else if (result.action === 'LIMITE_ALCANZADO') {
-        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
-        const robertAlertText = `🚨 *LÍMITE MÁXIMO DE RESPUESTAS ALCANZADO (${MAX_AI_RESPONSES_PER_LEAD}/${MAX_AI_RESPONSES_PER_LEAD})* 🚨\n\n` +
-          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
-          `🏢 *Inmueble:* ${propTitle}\n` +
-          `💬 *Último mensaje recibido:* "${userText}"\n\n` +
-          `⚠️ *Motivo:* El bot alcanzó el límite de ${MAX_AI_RESPONSES_PER_LEAD} respuestas automáticas configuradas para este cliente.\n` +
-          `⚡ *Acción:* Se respondió al cliente "Deme un momento, voy a consultar." y el bot guardó silencio para que el equipo humano continúe personalmente.`;
+        const robertAlertText = buildRobertAlertText({
+          type: 'LIMITE_ALCANZADO',
+          clientName,
+          clientPhone,
+          channel,
+          matchedProperty: result.matchedProperty,
+          userText,
+          leadId: currentLeadId
+        });
 
-        console.log(`[Limit Alert] Despachando alerta de límite a Robert y pausando bot para Lead #${currentLeadId}...`);
+        console.log(`[Limit Alert] Despachando alerta ejecutiva de límite a Robert...`);
         await dispatchDirectWhatsAppToRobert(robertAlertText);
         setLeadHandoff(currentLeadId);
       }
@@ -2794,11 +2868,15 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // Si alcanzó el límite de 4 respuestas en esta misma interacción: pausar para que continúe un humano
       if (responseNum >= MAX_AI_RESPONSES_PER_LEAD && result.action !== 'AGENDAR_CITA' && result.action !== 'NO_EXISTE_EN_DESCRIPCION' && result.action !== 'LIMITE_ALCANZADO') {
         console.log(`[Limit Met] Lead #${currentLeadId} completó sus ${MAX_AI_RESPONSES_PER_LEAD} respuestas permitidas. Activando handoff...`);
-        const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
-        const limitReport = `📋 *LÍMITE DE ATENCIÓN AUTOMÁTICA COMPLETADO (4/4)* 📋\n\n` +
-          `👤 *Cliente:* ${clientName} (${clientPhone || channel})\n` +
-          `🏢 *Inmueble:* ${propTitle}\n\n` +
-          `⚡ *Acción:* La IA completó sus 4 respuestas automáticas con éxito. El bot se ha pausado en este chat para que el equipo humano continúe la atención personalmente.`;
+        const limitReport = buildRobertAlertText({
+          type: 'LIMITE_ALCANZADO',
+          clientName,
+          clientPhone,
+          channel,
+          matchedProperty: result.matchedProperty,
+          userText,
+          leadId: currentLeadId
+        });
         dispatchDirectWhatsAppToRobert(limitReport).catch(() => {});
         setLeadHandoff(currentLeadId);
       }
