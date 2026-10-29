@@ -194,16 +194,16 @@ function normalizeText(text) {
 // ==========================================
 // 🛑 FILTRO DETERMINÍSTICO ANTI-CHITCHAT Y CHARLA CASUAL
 // ==========================================
-function isCasualOrChitChat(text, imageUrl = null) {
+function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false) {
   if (imageUrl) return false;
   const q = normalizeText(text);
 
   // Si menciona colega, fotos o publicación inmobiliaria, no es charla casual
-  if (q.includes('colega') || q.includes('publicacion') || q.includes('publicacion') || q.includes('flyer')) {
+  if (q.includes('colega') || q.includes('publicacion') || q.includes('flyer')) {
     return false;
   }
 
-  // Lista de comentarios casuales, exclamaciones, bromas y opiniones
+  // Lista de comentarios casuales, exclamaciones, bromas y opiniones puras
   const casualPhrases = [
     'si es una locura', 'una locura', 'que locura', 'es una locura', 'locura',
     'jajaja', 'jaja', 'jeje', 'jiji', 'lol', 'xd',
@@ -220,17 +220,27 @@ function isCasualOrChitChat(text, imageUrl = null) {
     'donde estas', 'a que hora nos vemos', 'vamos a comer', 'pasame el documento'
   ];
 
-  if (casualPhrases.some(p => q === p || q === `${p}!` || q === `${p}.` || q === `${p}?` || q.startsWith(p + ' ') || q.endsWith(' ' + p))) {
-    return true;
+  const isStrictCasual = casualPhrases.some(p => q === p || q === `${p}!` || q === `${p}.` || q === `${p}?` || q.startsWith(p + ' ') || q.endsWith(' ' + p));
+  if (isStrictCasual) {
+    const hasPropertyQuestion = /\?|¿|cuant|tien|preci|habitac|bano|baño|puest|estacion|metr|pis|agu|pozo|gas/i.test(q);
+    if (!hasPropertyQuestion) return true;
   }
 
-  // Palabras clave de intención inmobiliaria
+  // Palabras clave exhaustivas de inmuebles y características
   const realEstateKeywords = [
     'casa', 'casas', 'apto', 'aptos', 'apartamento', 'apartamentos', 'quinta', 'quintas',
     'local', 'locales', 'oficina', 'oficinas', 'comercial', 'galpon', 'galpones', 'terreno', 'terrenos',
     'anexo', 'anexos', 'penthouse', 'fondo de comercio',
     'venta', 'comprar', 'compra', 'alquiler', 'alquilar', 'renta', 'rentar',
-    'precio', 'precios', 'costo', 'valor', 'cuanto', 'presupuesto', 'menos de', 'mil',
+    'precio', 'precios', 'costo', 'valor', 'inversion', 'canon', 'cuanto', 'cuanta', 'cuantos', 'cuantas', 'presupuesto', 'menos de', 'mil',
+    'habitacion', 'habitaciones', 'hab', 'habs', 'cuarto', 'cuartos', 'dormitorio', 'dormitorios',
+    'baño', 'baños', 'bano', 'banos',
+    'estacionamiento', 'estacionamientos', 'puesto', 'puestos', 'parqueo', 'parqueos', 'garage', 'garaje', 'carro', 'carros',
+    'metro', 'metros', 'metraje', 'm2', 'superficie', 'tamano', 'tamaño',
+    'piso', 'pisos', 'nivel', 'planta', 'pb',
+    'agua', 'pozo', 'tanque', 'luz', 'gas', 'electricidad', 'condominio', 'mantenimiento',
+    'financiamiento', 'credito', 'inicial', 'cuotas', 'ref', 'codigo',
+    'piscina', 'gimnasio', 'terraza', 'balcon', 'ascensor', 'vista', 'amoblado',
     'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion', 'marques', 'chacao', 'mercedes', 'palos grandes',
     'cita', 'visita', 'visitar', 'agendar', 'verlo', 'verla', 'disponible', 'disponibles',
     'inmueble', 'inmuebles', 'propiedad', 'propiedades',
@@ -240,8 +250,18 @@ function isCasualOrChitChat(text, imageUrl = null) {
 
   const hasRealEstateIntent = realEstateKeywords.some(kw => q.includes(kw));
 
-  // Si no menciona nada del negocio inmobiliario y es un mensaje corto (< 40 caracteres):
-  if (!hasRealEstateIntent && q.length < 40) {
+  // Si ya hay un inmueble activo en contexto para este lead, cualquier consulta es válida y NUNCA se descarta
+  if (hasActiveContext) {
+    return false;
+  }
+
+  // Si contiene signos de interrogación o palabras de pregunta, es consulta válida
+  if (q.includes('?') || q.includes('¿') || /^(?:cu[aá]nto|qu[eé]|cu[aá]l|d[oó]nde|c[oó]mo|tiene|cuenta|acepta|hay)\b/i.test(q)) {
+    return false;
+  }
+
+  // Si no menciona nada del negocio inmobiliario y es un texto corto (< 20 caracteres sin pregunta):
+  if (!hasRealEstateIntent && q.length < 20) {
     return true;
   }
 
@@ -2335,8 +2355,12 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
+  // Verificar si hay contexto de inmueble activo en la memoria del lead
+  const existingProp = getLeadPropertyContext(leadId, allProperties);
+  const hasActiveContext = !!existingProp;
+
   // 🛑 FILTRO 1: Descartar charla casual, reacciones y comentarios sin intención inmobiliaria
-  if (isCasualOrChitChat(cleanMessage, imageUrl)) {
+  if (isCasualOrChitChat(cleanMessage, imageUrl, hasActiveContext)) {
     console.log(`[Anti-Chitchat Filter] Comentario casual o reacción detectada ("${cleanMessage}"). Silencio para no gastar tokens.`);
     return { text: null, notFoundItem: null, skip: true };
   }
