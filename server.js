@@ -2813,16 +2813,40 @@ async function triggerKommoSalesbot(leadId) {
 }
 
 function extractImageUrl(body, messageObj) {
-  if (messageObj?.attachment?.link) return messageObj.attachment.link;
-  if (messageObj?.attachment?.url) return messageObj.attachment.url;
-  if (messageObj?.media) return messageObj.media;
-  if (messageObj?.media_url) return messageObj.media_url;
-  if (messageObj?.link && /\.(jpeg|jpg|png|webp)/i.test(messageObj.link)) return messageObj.link;
-  if (body?.['message[add][0][attachment][link]']) return body['message[add][0][attachment][link]'];
-  if (body?.['message[add][0][attachment][url]']) return body['message[add][0][attachment][url]'];
-  if (body?.['message[add][0][media]']) return body['message[add][0][media]'];
-  if (body?.['message[add][0][media_url]']) return body['message[add][0][media_url]'];
-  if (body?.['message[add][0][link]'] && /\.(jpeg|jpg|png|webp)/i.test(body['message[add][0][link]'])) return body['message[add][0][link]'];
+  const attachType = (messageObj?.attachment?.type || body?.['message[add][0][attachment][type]'] || '').toLowerCase();
+  const attachMime = (messageObj?.attachment?.mime_type || body?.['message[add][0][attachment][mime_type]'] || '').toLowerCase();
+
+  // Si el adjunto es video, audio, voz o story, NUNCA es una imagen de inmueble
+  if (attachType.includes('video') || attachType.includes('audio') || attachType.includes('voice') || attachType.includes('story')) {
+    return null;
+  }
+  if (attachMime.includes('video') || attachMime.includes('audio')) {
+    return null;
+  }
+
+  const candidateUrls = [
+    messageObj?.attachment?.link,
+    messageObj?.attachment?.url,
+    messageObj?.media,
+    messageObj?.media_url,
+    body?.['message[add][0][attachment][link]'],
+    body?.['message[add][0][attachment][url]'],
+    body?.['message[add][0][media]'],
+    body?.['message[add][0][media_url]'],
+    messageObj?.link,
+    body?.['message[add][0][link]']
+  ].filter(Boolean);
+
+  for (const u of candidateUrls) {
+    const s = String(u);
+    // Descartar videos y audios
+    if (/\.(mp4|mov|avi|webm|mkv|ogg|opus|mp3|m4a|wav)(?:\?|$)/i.test(s)) continue;
+    // Si tiene extensión explícita de imagen o viene en attachment tipo picture/image
+    if (/\.(jpeg|jpg|png|webp)(?:\?|$)/i.test(s) || attachType.includes('image') || attachType.includes('picture') || attachMime.includes('image')) {
+      return s;
+    }
+  }
+
   const text = messageObj?.text || '';
   const urlMatch = text.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s]+)?)/i);
   if (urlMatch) return urlMatch[1];
@@ -2851,31 +2875,92 @@ function isVoiceNoteOrAudio(body, messageObj, userText = '') {
   return false;
 }
 
-function isInstagramStoryOrRestricted(text, messageObj = null) {
-  const q = normalizeText(text);
-
-  if (q) {
+function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
+  // 1. Inspección profunda del cuerpo crudo del webhook
+  try {
+    const rawStr = normalizeText(typeof body === 'string' ? body : JSON.stringify(body || {}));
     if (
+      rawStr.includes('te menciono en su historia') ||
+      rawStr.includes('te menciono en una historia') ||
+      rawStr.includes('menciono en su historia') ||
+      rawStr.includes('menciono en una historia') ||
+      (rawStr.includes('te menciono') && rawStr.includes('historia')) ||
+      (rawStr.includes('menciono') && rawStr.includes('historia')) ||
+      (rawStr.includes('mencion') && rawStr.includes('historia')) ||
+      rawStr.includes('story_mention') ||
+      rawStr.includes('story_share') ||
+      rawStr.includes('story_reply') ||
+      rawStr.includes('story_reaction') ||
+      rawStr.includes('respondio a tu historia') ||
+      rawStr.includes('reacciono a tu historia') ||
+      rawStr.includes('compartio una historia') ||
+      rawStr.includes('compartio tu historia') ||
+      rawStr.includes('compartio un reel') ||
+      rawStr.includes('restricciones de instagram') ||
+      rawStr.includes('no podemos mostrar este mensaje') ||
+      rawStr.includes('abre esta conversacion en tu cuenta de instagram') ||
+      rawStr.includes('estas se aplican a reels') ||
+      rawStr.includes('galerias de videos') ||
+      rawStr.includes('galerias de fotos')
+    ) {
+      return true;
+    }
+  } catch (e) {}
+
+  // 2. Inspección de campos de texto específicos
+  const candidates = [
+    userText,
+    typeof body === 'string' ? body : null,
+    messageObj?.text,
+    messageObj?.value,
+    messageObj?.attachment?.name,
+    messageObj?.attachment?.title,
+    body?.['message[add][0][text]'],
+    body?.['message[add][0][value]'],
+    body?.['message[add][0][attachment][name]'],
+    body?.['message[add][0][attachment][title]'],
+    body?.['message[add][0][attachment][type]']
+  ];
+
+  for (const c of candidates) {
+    if (!c || typeof c !== 'string') continue;
+    const q = normalizeText(c);
+    if (
+      q.includes('te menciono en su historia') ||
       q.includes('menciono en su historia') ||
       q.includes('menciono en una historia') ||
-      q.includes('te menciono en su historia') ||
+      (q.includes('menciono') && q.includes('historia')) ||
+      (q.includes('mencion') && q.includes('historia')) ||
+      q.includes('te menciono') ||
+      q.includes('respondio a tu historia') ||
+      q.includes('reacciono a tu historia') ||
+      q.includes('compartio una historia') ||
+      q.includes('compartio tu historia') ||
+      q.includes('compartio un reel') ||
       q.includes('restricciones de instagram') ||
       q.includes('no podemos mostrar este mensaje') ||
       q.includes('abre esta conversacion en tu cuenta de instagram') ||
       q.includes('estas se aplican a reels') ||
       q.includes('galerias de videos') ||
       q.includes('galerias de fotos') ||
-      q.includes('respondio a tu historia') ||
-      q.includes('reacciono a tu historia') ||
-      q.includes('compartio una historia') ||
-      q.includes('compartio un reel')
+      q.includes('story') ||
+      q.includes('story_mention')
     ) {
       return true;
     }
   }
 
-  const mType = String(messageObj?.type || '').toLowerCase();
-  if (mType.includes('story') || mType.includes('reel') || mType.includes('mention')) {
+  // 3. Inspección de tipo de evento y tipo de adjunto
+  const mType = String(messageObj?.type || body?.['message[add][0][type]'] || '').toLowerCase();
+  const attachType = String(messageObj?.attachment?.type || body?.['message[add][0][attachment][type]'] || '').toLowerCase();
+  if (
+    mType.includes('story') || 
+    mType.includes('reel') || 
+    mType.includes('mention') ||
+    attachType.includes('story') ||
+    attachType.includes('reel') ||
+    attachType.includes('mention')
+  ) {
     return true;
   }
 
@@ -2891,6 +2976,14 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
   try {
     const body = req.body;
+
+    // 🛑 BLINDAJE INMEDIATO NIVEL 0: Menciones de Instagram, Stories y Restricciones
+    // "todo lo que diga 'Te mencionó en su historia' no se responde... CERO"
+    // "tampoco le mandes alerta a robert por eso... silencio absoluto (0 mensajes al cliente y 0 alertas a Robert)"
+    if (isInstagramStoryOrRestricted(body)) {
+      console.log('[CRITICAL BLINDAJE] Instagram story mention or restricted notice discarded immediately at endpoint entry. Zero client messages, zero Robert alerts.');
+      return;
+    }
 
     // Validación de Cuenta Kommo
     if (body.account && body.account.id) {
@@ -2927,14 +3020,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     const imageUrl = extractImageUrl(body, messageObj);
     let userText = (messageObj.text || messageObj.value || '').trim();
 
-    // 🛑 FILTRO INMEDIATO: Menciones en Historias, Reels y Avisos Restringidos de Instagram
-    // "tampoco le mandes alerta a robert por eso... silencio absoluto (0 mensajes al cliente y 0 alertas a Robert)"
-    if (isInstagramStoryOrRestricted(userText, messageObj)) {
+    // 🛑 BLINDAJE NIVEL 1: Validación con objeto de mensaje resuelto y userText
+    if (isInstagramStoryOrRestricted(body, messageObj, userText)) {
       console.log(`[Instagram Story/Restricted Ignored] Mención o restricción de Instagram descartada silenciosamente ("${userText.substring(0, 60)}..."). Sin respuesta al cliente y sin alerta a Robert.`);
       return;
     }
 
     if (!userText && imageUrl) {
+      if (isInstagramStoryOrRestricted(body, messageObj, '')) {
+        return;
+      }
       userText = 'Hola, quisiera información de este inmueble de la publicación';
     }
 
@@ -3106,7 +3201,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       // 🛑 INTERCEPCIÓN 2: MENCIÓN EN HISTORIA / REEL / RESTRICCIÓN DE INSTAGRAM
       // "tampoco le mandes alerta a robert por eso... silencio absoluto (0 mensajes al cliente y 0 alertas a Robert)"
-      if (isInstagramStoryOrRestricted(userText, messageObj)) {
+      if (isInstagramStoryOrRestricted(body, messageObj, userText)) {
         console.log(`[Instagram Story/Restricted Ignored] Lead #${currentLeadId}: Descartado silenciosamente. Sin mensaje al cliente y sin alerta a Robert.`);
         return;
       }
