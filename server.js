@@ -2692,8 +2692,18 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         }
       }, 5000);
 
-      // 5. Despacho de Alertas según la acción ejecutada
-      const channel = (!clientPhone && (clientName.startsWith('@') || userText.includes('instagram'))) ? 'Instagram' : 'WhatsApp';
+      // 5. Despacho de Alertas según la acción ejecutada (Omnicanal: WhatsApp, Instagram, Facebook)
+      let channel = 'WhatsApp';
+      const userTextLower = userText.toLowerCase();
+      if (clientPhone) {
+        channel = 'WhatsApp';
+      } else if (clientName.startsWith('@') || userTextLower.includes('instagram') || (messageObj.author && String(messageObj.author.name).startsWith('@'))) {
+        channel = 'Instagram';
+      } else if (userTextLower.includes('facebook') || (messageObj.talk_id && String(messageObj.talk_id).toLowerCase().includes('fb'))) {
+        channel = 'Facebook';
+      } else {
+        channel = 'WhatsApp / Redes Sociales';
+      }
 
       if (result.action === 'AGENDAR_CITA') {
         const propTitle = result.matchedProperty ? `${result.matchedProperty.TIPO} en ${result.matchedProperty.ZONA} (${result.matchedProperty.ID_PROPIEDAD})` : 'Inmueble consultado';
