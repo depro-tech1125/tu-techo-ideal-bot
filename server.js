@@ -842,6 +842,22 @@ async function getOrRecoverLeadPropertyContext(leadId, allProperties) {
         timeout: 4500
       });
       const events = res.data?._embedded?.events || [];
+
+      // Contar cuántas respuestas previas dio el bot en este lead
+      const prevBotResponses = events.filter(ev =>
+        ev.type === 'custom_field_2103996_value_changed' &&
+        Array.isArray(ev.value_after) &&
+        ev.value_after.length > 0 &&
+        ev.value_after[0]?.custom_field_value?.text?.trim()
+      ).length;
+
+      if (prevBotResponses > 0) {
+        const existing = leadContextCache.get(String(leadId)) || {};
+        existing.responseCount = Math.max(existing.responseCount || 0, prevBotResponses);
+        leadContextCache.set(String(leadId), existing);
+        console.log(`[Lead Context Recovery] Contador de respuestas restaurado para Lead #${leadId}: ${existing.responseCount}`);
+      }
+
       for (const ev of events) {
         const text = JSON.stringify(ev.value_after || ev.params || ev);
         const wasiCheck = matchWasiOrProperty(text, allProperties);
@@ -2703,6 +2719,12 @@ function finalizeResponse(result, leadId) {
     } else if (/^bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i.test(cleanText)) {
       cleanText = cleanText.replace(/^bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i, '').trim();
       if (cleanText) cleanText = cleanText.charAt(0).toUpperCase() + cleanText.slice(1);
+    }
+    // Si la respuesta es de espera por falta de datos, responder única y secamente la frase oficial
+    if (/^deme\s+un\s+momento/i.test(cleanText)) {
+      cleanText = 'Deme un momento, voy a consultar.';
+    } else if (/^ok,\s*ya\s+consulto/i.test(cleanText)) {
+      cleanText = 'Ok, ya consulto con mi jefe para agendar la cita.';
     }
     if (cleanText) result.text = cleanText;
   }
