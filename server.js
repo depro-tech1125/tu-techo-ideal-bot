@@ -298,14 +298,14 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false, act
 
   const isStrictCasual = casualPhrases.some(p => q === p || q === `${p}!` || q === `${p}.` || q === `${p}?` || q.startsWith(p + ' ') || q.endsWith(' ' + p));
   if (isStrictCasual) {
-    const hasPropertyQuestion = /\?|¿|cuant|tien|preci|habitac|bano|baño|puest|estacion|metr|pis|agu|pozo|gas|color|pared|sala/i.test(q);
+    const hasPropertyQuestion = /\?|¿|cuant|tien|preci|habitac|bano|baño|puest|estacion|metr|mts|m2|mt2|pis|agu|pozo|gas|color|pared|sala/i.test(q);
     if (!hasPropertyQuestion) return true;
   }
 
   // 4. Si contiene signos de interrogación o palabras de pregunta / consulta seca
   if (
     q.includes('?') || q.includes('¿') ||
-    /^(?:cu[aá]nto|qu[eé]|cu[aá]l|d[oó]nde|c[oó]mo|tiene|cuenta|acepta|hay|precio|costo|inversion|canon|color|de\s+que\s+color)\b/i.test(q)
+    /^(?:cu[aá]nto|qu[eé]|cu[aá]l|d[oó]nde|c[oó]mo|tiene|cuenta|acepta|hay|precio|costo|inversion|canon|color|de\s+que\s+color|de\s+cuantos\s+mts|cuantos\s+mts)\b/i.test(q)
   ) {
     return false;
   }
@@ -331,7 +331,7 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false, act
     'habitacion', 'habitaciones', 'hab', 'habs', 'cuarto', 'cuartos', 'dormitorio', 'dormitorios',
     'baño', 'baños', 'bano', 'banos',
     'estacionamiento', 'estacionamientos', 'puesto', 'puestos', 'parqueo', 'parqueos', 'garage', 'garaje', 'carro', 'carros',
-    'metro', 'metros', 'metraje', 'm2', 'superficie', 'tamano', 'tamaño',
+    'metro', 'metros', 'metraje', 'm2', 'mts', 'mt2', 'mts2', 'superficie', 'tamano', 'tamaño',
     'piso', 'pisos', 'nivel', 'planta', 'pb',
     'pared', 'paredes', 'color', 'colores', 'amarillo', 'amarilla', 'blanco', 'blanca', 'pintura', 'pintado',
     'sala', 'comedor', 'cocina', 'cocinas', 'barra', 'recepcion', 'produccion', 'area',
@@ -1165,28 +1165,32 @@ ${descBreve}
 
 REGLAS DE ATENCIÓN PROFESIONAL:
 1. ATENCIÓN A PREGUNTAS SECAS, DIRECTAS O SIN SIGNOS DE INTERROGACIÓN:
-   El cliente puede escribir de forma totalmente directa, seca o sin signo de interrogación (ejemplos: "de que color es la pared", "de que color es la sala", "color de la sala", "tiene banos", "banos", "cuantos pisos", "gas", "tanque de agua", "puestos de estacionamiento", "precio", "m2", "amoblado").
+   El cliente puede escribir de forma totalmente directa, seca o sin signo de interrogación (ejemplos: "de cuantos mts es", "cuantos mts tiene", "mts", "de que color es la pared", "de que color es la sala", "color de la sala", "tiene banos", "banos", "cuantos pisos", "gas", "tanque de agua", "puestos de estacionamiento", "precio", "m2", "amoblado").
    Debes interpretar la consulta con total naturalidad y buscar minuciosamente en "DESCRIPCION_BREVE".
 
-2. SI EL CLIENTE QUIERE AGENDAR UNA CITA O VISITAR EL INMUEBLE (ej: "quiero agendar para verla", "visitarlo", "ir a verlo"):
+2. INTERPRETACIÓN DE METRAJE Y SIGLAS:
+   Las palabras "mts", "mt2", "mts2", "m2", "metros" significan METROS CUADRADOS (área/superficie del inmueble). Si preguntan "de cuantos mts es?" o "cuantos mts?", busca el metraje en la descripción y responde con los metros cuadrados.
+
+3. SI EL CLIENTE QUIERE AGENDAR UNA CITA O VISITAR EL INMUEBLE (ej: "quiero agendar para verla", "visitarlo", "ir a verlo"):
    Responde cordialmente: "Ok, ya consulto con mi jefe para agendar la cita"
    Coloca al final: [ACCION: AGENDAR_CITA]
 
-3. SI LA INFORMACIÓN ESTÁ EN DESCRIPCION_BREVE (habitaciones, baños, metros, puestos, precio/canon, servicios, tanque, gas, colores, acabados, áreas):
+4. SI LA INFORMACIÓN ESTÁ EN DESCRIPCION_BREVE (habitaciones, baños, metros/mts, puestos, precio/canon, servicios, tanque, gas, colores, acabados, áreas):
    Responde como un asesor profesional de atención al cliente: de forma directa, amable, concisa y fluida.
    Ejemplos de respuesta:
+   - Si la descripción dice "67,5 metros cuadrados" y preguntan "de cuantos mts es?", responde "Tiene 67,5 metros cuadrados".
    - Si la descripción dice "color de paredes amarillas en la sala" y preguntan "de que color es la sala" o "de que color es la pared", responde indicando que las paredes de la sala son de color amarillo.
    - Si la descripción dice "un baño interno", responde "Tiene 1 baño interno" o "Sí, cuenta con 1 baño interno".
    - Si la descripción dice "tanque de agua de 600 litros", responde "Sí, cuenta con un tanque de agua de 600 litros".
    - Si la descripción dice "gas directo industrial", responde "Sí, cuenta con gas directo industrial".
    Coloca al final: [ACCION: RESPONDER_INFO]
 
-4. SI LA INFORMACIÓN NO ESTÁ 100% EXPLÍCITA EN DESCRIPCION_BREVE:
+5. SI LA INFORMACIÓN NO ESTÁ 100% EXPLÍCITA EN DESCRIPCION_BREVE:
    Si el cliente pregunta por una característica que NO aparece en "DESCRIPCION_BREVE":
    Responde con profesionalismo exacto: "Deme un momento, voy a consultar"
    Coloca al final: [ACCION: NO_EXISTE_EN_DESCRIPCION]
 
-5. BLINDAJE DE SEGURIDAD ABSOLUTO:
+6. BLINDAJE DE SEGURIDAD ABSOLUTO:
    - Se van a crear otras columnas con nombres parecidos en la hoja de cálculo: ESTÁ TERMINANTEMENTE PROHIBIDO tomar información de cualquier otra columna. Únicamente debes responder con lo que esté en DESCRIPCION_BREVE.
    - NUNCA inventes información que no esté en DESCRIPCION_BREVE. Si no está 100% claro, responde siempre "Deme un momento, voy a consultar".
    - NO uses textos largos ni listas de viñetas innecesarias. Sé conversacional y fluido como un asesor profesional de WhatsApp.
@@ -1264,9 +1268,13 @@ function deterministicPropertyQA(userMessage, property) {
     }
   }
 
-  // 4. Metros / Superficie
-  if (q.includes('metro') || q.includes('metraje') || q.includes('m2') || q.includes('tamano') || q.includes('superficie')) {
-    const m2Match = desc.match(/(\d+[\d,\.]*)\s*(?:m²|m2|metros(?:\s+cuadrados)?)/i);
+  // 4. Metros / Superficie (incluye mts, mt2, mts2, m2, metros, metraje)
+  if (
+    q.includes('metro') || q.includes('metraje') || q.includes('m2') ||
+    q.includes('mts') || q.includes('mt2') || q.includes('mts2') ||
+    /\bmts?\b/i.test(q) || q.includes('tamano') || q.includes('superficie')
+  ) {
+    const m2Match = desc.match(/(\d+[\d,\.]*)\s*(?:m²|m2|metros(?:\s+cuadrados)?|mts(?:\s+cuadrados)?)/i);
     if (m2Match) {
       return { text: `Tiene ${m2Match[0]}.`, action: 'RESPONDER_INFO' };
     }
