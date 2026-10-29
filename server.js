@@ -997,6 +997,28 @@ function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedP
       `🕒 *Fecha y hora:* ${nowFormatted}`;
   }
 
+  if (type === 'NOTA_DE_VOZ') {
+    return `🎙️ *NOTA DE VOZ RECIBIDA - ATENCIÓN PERSONAL* 🎙️\n\n` +
+      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
+      `📱 *Canal:* ${channel}\n` +
+      `🏢 *Inmueble:* ${propDescription}\n` +
+      `💬 *Tipo de mensaje:* Nota de voz / Audio recibido\n\n` +
+      `⚡ *Acción realizada:* El bot no emitió respuesta al cliente (silencio absoluto) y pausó el chat para que escuches el audio y respondas personalmente.\n\n` +
+      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
+      `🕒 *Fecha y hora:* ${nowFormatted}`;
+  }
+
+  if (type === 'INSTAGRAM_STORY_OR_RESTRICTED') {
+    return `📸 *MENCIÓN EN HISTORIA / REEL DE INSTAGRAM* 📸\n\n` +
+      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
+      `📱 *Canal:* Instagram Direct\n` +
+      `🏢 *Inmueble:* ${propDescription}\n` +
+      `💬 *Contenido:* Mención en historia o contenido multimedia con restricciones de Instagram.\n\n` +
+      `⚡ *Acción realizada:* El bot no emitió ningún mensaje automático (silencio absoluto) para respetar el cuadro de diálogo. Chat pausado para atención humana.\n\n` +
+      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
+      `🕒 *Fecha y hora:* ${nowFormatted}`;
+  }
+
   return `🔔 *ALERTA GERENCIAL TU TECHO IDEAL* 🔔\n\n` +
     `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
     `📱 *Canal:* ${channel}\n` +
@@ -2807,6 +2829,59 @@ function extractImageUrl(body, messageObj) {
   return null;
 }
 
+function isVoiceNoteOrAudio(body, messageObj, userText = '') {
+  const mType = (messageObj?.type || body?.['message[add][0][type]'] || '').toLowerCase();
+  if (mType === 'voice' || mType === 'audio') return true;
+
+  const attachType = (messageObj?.attachment?.type || body?.['message[add][0][attachment][type]'] || '').toLowerCase();
+  const attachMime = (messageObj?.attachment?.mime_type || body?.['message[add][0][attachment][mime_type]'] || '').toLowerCase();
+  if (attachType === 'audio' || attachType === 'voice' || attachMime.includes('audio')) return true;
+
+  const mediaUrl = messageObj?.media || messageObj?.media_url || messageObj?.attachment?.link || messageObj?.attachment?.url ||
+    body?.['message[add][0][media]'] || body?.['message[add][0][media_url]'] ||
+    body?.['message[add][0][attachment][link]'] || body?.['message[add][0][attachment][url]'] || '';
+  if (/\.(?:ogg|opus|mp3|m4a|wav|aac|amr|oga)(?:\?|$)/i.test(String(mediaUrl))) return true;
+
+  const clean = (userText || '').trim().toLowerCase();
+  if (!clean) return false;
+  if (/^\[?(?:nota\s+de\s+voz|mensaje\s+de\s+voz|audio|voice\s*note|voice\s*message|ptt)\]?$/i.test(clean)) return true;
+  if (clean === '<audio>' || clean === '<nota de voz>' || clean === '<voice note>') return true;
+  if (/\.(?:ogg|opus|mp3|m4a|wav|aac|amr|oga)(?:\?[^\s]+)?$/i.test(clean)) return true;
+
+  return false;
+}
+
+function isInstagramStoryOrRestricted(text, messageObj = null) {
+  const q = normalizeText(text);
+
+  if (q) {
+    if (
+      q.includes('menciono en su historia') ||
+      q.includes('menciono en una historia') ||
+      q.includes('te menciono en su historia') ||
+      q.includes('restricciones de instagram') ||
+      q.includes('no podemos mostrar este mensaje') ||
+      q.includes('abre esta conversacion en tu cuenta de instagram') ||
+      q.includes('estas se aplican a reels') ||
+      q.includes('galerias de videos') ||
+      q.includes('galerias de fotos') ||
+      q.includes('respondio a tu historia') ||
+      q.includes('reacciono a tu historia') ||
+      q.includes('compartio una historia') ||
+      q.includes('compartio un reel')
+    ) {
+      return true;
+    }
+  }
+
+  const mType = String(messageObj?.type || '').toLowerCase();
+  if (mType.includes('story') || mType.includes('reel') || mType.includes('mention')) {
+    return true;
+  }
+
+  return false;
+}
+
 // ==========================================
 // 📡 ENDPOINT DEL WEBHOOK
 // ==========================================
@@ -2856,8 +2931,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       userText = 'Hola, quisiera información de este inmueble de la publicación';
     }
 
+    if (!userText && isVoiceNoteOrAudio(body, messageObj, userText)) {
+      userText = '[Nota de voz / Audio recibido]';
+    }
+
+    if (!userText && isInstagramStoryOrRestricted(userText, messageObj)) {
+      userText = '[Mención en historia de Instagram]';
+    }
+
     if (!userText && !imageUrl) {
-      console.log('[Webhook] Message has no text nor image content. Skipping.');
+      console.log('[Webhook] Message has no text nor media content. Skipping.');
       return;
     }
 
@@ -2992,6 +3075,51 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       if (handoffStatus.inHandoff) {
         console.log(`[Handoff Silence] Lead #${currentLeadId} está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+        return;
+      }
+
+      // 🛑 INTERCEPCIÓN 1: NOTA DE VOZ / AUDIO RECIBIDO
+      // "si el sistema detecta que llego una nota de voz tampoco la responde, manda alerta a rober para que responda. No emites ningun tipo de mensaje al cliente, ni que espere ni nada solo manda alerta..."
+      if (isVoiceNoteOrAudio(body, messageObj, userText)) {
+        console.log(`[Voice Note Intercepted] Lead #${currentLeadId} envió una nota de voz. El bot se mantiene en silencio absoluto (0 mensajes al cliente) y despacha alerta a Robert.`);
+        const properties = await getAvailableProperties();
+        const activeProp = await getOrRecoverLeadPropertyContext(currentLeadId, properties);
+        let channel = clientPhone ? 'WhatsApp' : (clientName.startsWith('@') ? 'Instagram' : 'WhatsApp / Redes Sociales');
+
+        const robertAlert = buildRobertAlertText({
+          type: 'NOTA_DE_VOZ',
+          clientName,
+          clientPhone,
+          channel,
+          matchedProperty: activeProp,
+          userText: userText || '[Nota de voz / Audio recibido]',
+          leadId: currentLeadId
+        });
+
+        await dispatchDirectWhatsAppToRobert(robertAlert);
+        setLeadHandoff(currentLeadId);
+        return;
+      }
+
+      // 🛑 INTERCEPCIÓN 2: MENCIÓN EN HISTORIA / REEL / RESTRICCIÓN DE INSTAGRAM
+      // "evita que eso pase, respeta el cuadro de dialogo... No emites ningun tipo de mensaje al cliente, ni que espere ni nada solo manda alerta..."
+      if (isInstagramStoryOrRestricted(userText, messageObj)) {
+        console.log(`[Instagram Story/Restricted Intercepted] Lead #${currentLeadId}: "${userText.substring(0, 60)}...". Silencio absoluto al cliente y alerta ejecutiva a Robert.`);
+        const properties = await getAvailableProperties();
+        const activeProp = await getOrRecoverLeadPropertyContext(currentLeadId, properties);
+
+        const robertAlert = buildRobertAlertText({
+          type: 'INSTAGRAM_STORY_OR_RESTRICTED',
+          clientName,
+          clientPhone: clientPhone || '',
+          channel: 'Instagram Direct',
+          matchedProperty: activeProp,
+          userText: userText || '[Mención en historia de Instagram]',
+          leadId: currentLeadId
+        });
+
+        await dispatchDirectWhatsAppToRobert(robertAlert);
+        setLeadHandoff(currentLeadId);
         return;
       }
 
