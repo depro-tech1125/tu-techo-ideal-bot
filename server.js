@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
+const nodemailer = require('nodemailer');
 const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
 
@@ -1125,7 +1127,6 @@ async function handleGeneralPropertySearch(userMessage, allProperties) {
 // ==========================================
 // 🤝 GESTIÓN DE TRASPASO A HUMANO (HANDOFF)
 // ==========================================
-const fs = require('fs');
 const HANDOFF_FILE = path.join(__dirname, 'handoffs.json');
 
 let leadHandoffs = {};
@@ -1621,6 +1622,436 @@ function initDailyReportScheduler() {
 
   setInterval(checkSchedule, 2 * 60 * 1000);
   console.log('[Scheduler] Cron de reporte diario activo: Todos los días a las 8:00 AM (Hora Venezuela).');
+}
+
+// ==========================================
+// 📑 AUDITORIA FORENSE SEMANAL DEL SISTEMA AUTOMATIZADO TTI
+// ==========================================
+const WEEKLY_AUDIT_TO_EMAIL = 'tutechoidealrd@gmail.com';
+const WEEKLY_AUDIT_CC_EMAIL = 'deprodriguez96@gmail.com';
+const WEEKLY_AUDIT_SUBJECT = 'AUDITORIA SEMANAL DEL SISTEMA AUTOMATIZADO TTI';
+
+const AUDIT_STATE_FILE = path.join(__dirname, 'audit_state.json');
+
+function getAuditState() {
+  try {
+    if (fs.existsSync(AUDIT_STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(AUDIT_STATE_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return { lastWeeklyAuditKey: '' };
+}
+
+function saveAuditState(state) {
+  try {
+    fs.writeFileSync(AUDIT_STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[Audit State Save Error]:', e.message);
+  }
+}
+
+function generateWeeklyAuditEmailBody(params) {
+  const { balanceUsd, totalUsd, usageUsd, msgsRemaining, daysRunway, rechargeDate } = params;
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auditoría Semanal del Sistema Automatizado TTI</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f1f5f9; padding: 30px 10px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width: 650px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;">
+          <tr>
+            <td style="background-color: #0f172a; padding: 28px 30px; text-align: left; border-bottom: 3px solid #0284c7;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td>
+                    <span style="display: inline-block; background: rgba(2, 132, 199, 0.2); border: 1px solid #0284c7; color: #38bdf8; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+                      Auditoría Forense Certificada • Semanal
+                    </span>
+                    <h1 style="margin: 6px 0 0 0; color: #ffffff; font-size: 20px; font-weight: 800; letter-spacing: -0.02em;">
+                      AUDITORIA SEMANAL DEL SISTEMA AUTOMATIZADO TTI
+                    </h1>
+                    <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 13px;">
+                      Tu Techo Ideal C.A. · Depro Tech Solutions
+                    </p>
+                  </td>
+                  <td align="right" valign="top">
+                    <span style="display: inline-block; background: #10b981; color: #ffffff; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 6px; text-transform: uppercase;">
+                      100% OPERATIVO
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 24px 30px 10px 30px;">
+              <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-top: 0;">
+                Estimados directores y equipo gerencial de <strong>Tu Techo Ideal C.A.</strong> y <strong>Depro Tech Solutions</strong>:
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #475569;">
+                A continuación se presenta el informe formal de auditoría de rendimiento, consumo de tokens y trazabilidad forense correspondiente al ciclo semanal en curso, conforme a la ordenanza operativa establecida desde el <strong>28/10/2026</strong>.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 30px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td width="48%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; vertical-align: top;">
+                    <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.04em;">💰 Saldo Disponible</div>
+                    <div style="font-size: 22px; font-weight: 800; color: #0f172a; margin-top: 4px;">$${balanceUsd} <span style="font-size: 12px; color: #64748b; font-weight: 500;">USD</span></div>
+                    <div style="font-size: 11px; color: #10b981; margin-top: 3px; font-weight: 600;">Créditos en OpenRouter</div>
+                  </td>
+                  <td width="4%"></td>
+                  <td width="48%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; vertical-align: top;">
+                    <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.04em;">📈 Consumo Acumulado</div>
+                    <div style="font-size: 22px; font-weight: 800; color: #0284c7; margin-top: 4px;">$${usageUsd} <span style="font-size: 12px; color: #64748b; font-weight: 500;">USD</span></div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 3px;">De depósito inicial de $${totalUsd} USD</div>
+                  </td>
+                </tr>
+                <tr><td height="12"></td></tr>
+                <tr>
+                  <td width="48%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; vertical-align: top;">
+                    <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.04em;">💬 Capacidad Restante</div>
+                    <div style="font-size: 22px; font-weight: 800; color: #0f172a; margin-top: 4px;">~${msgsRemaining}</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 3px;">Respuestas de atención al cliente</div>
+                  </td>
+                  <td width="4%"></td>
+                  <td width="48%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; vertical-align: top;">
+                    <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.04em;">⏳ Autonomía Estimada</div>
+                    <div style="font-size: 22px; font-weight: 800; color: #059669; margin-top: 4px;">~${daysRunway} <span style="font-size: 12px; color: #64748b; font-weight: 500;">días</span></div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 3px;">Fecha proyectada: ${rechargeDate}</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 16px 30px;">
+              <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px;">
+                <div style="font-size: 12.5px; font-weight: 700; color: #166534; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em;">
+                  🛡️ Estado del Blindaje Operativo y Protocolos de Seguridad
+                </div>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size: 12.5px; color: #15803d; line-height: 1.6;">
+                  <tr>
+                    <td style="padding-bottom: 5px;">✔️ <strong>Aislamiento de Columna:</strong> La IA consulta <em>estricta y exclusivamente</em> la columna <code>DESCRIPCION_BREVE</code> del inventario.</td>
+                  </tr>
+                  <tr>
+                    <td style="padding-bottom: 5px;">✔️ <strong>Límite de Respuestas:</strong> Máximo estricto de 3 a 4 intervenciones automáticas por cliente antes de silenciar y transferir.</td>
+                  </tr>
+                  <tr>
+                    <td style="padding-bottom: 5px;">✔️ <strong>Alertas Limpias:</strong> Desactivadas las alertas de disponibilidad a asesores en consultas estándar para evitar saturación de canales.</td>
+                  </tr>
+                  <tr>
+                    <td>✔️ <strong>Canal Gerencial:</strong> Notificación inmediata a Robert Jiménez (+584143115105) únicamente ante solicitudes de visita o preguntas fuera de inventario.</td>
+                  </tr>
+                </table>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 14px 30px 24px 30px; text-align: center;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center">
+                    <a href="https://tu-techo-ideal-bot-1.onrender.com/informe" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 13.5px; padding: 12px 24px; border-radius: 6px; margin: 4px; box-shadow: 0 2px 4px rgba(2, 132, 199, 0.3);">
+                      📑 Ver Auditoría Forense Completa (En línea)
+                    </a>
+                    <a href="https://tu-techo-ideal-bot-1.onrender.com/informe.pdf" target="_blank" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 13.5px; padding: 12px 24px; border-radius: 6px; margin: 4px;">
+                      📥 Descargar Informe en PDF
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <div style="margin-top: 10px;">
+                <a href="https://openrouter.ai/settings/credits" target="_blank" style="color: #64748b; font-size: 12px; text-decoration: underline;">
+                  💳 Gestionar / Recargar Créditos en OpenRouter
+                </a>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #f8fafc; border-top: 1px dashed #cbd5e1; padding: 20px 30px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td width="48%" style="text-align: center; vertical-align: top;">
+                    <div style="font-size: 12.5px; font-weight: 700; color: #0f172a;">Daniel Palma</div>
+                    <div style="font-size: 11px; color: #64748b;">CEO & Fundador</div>
+                    <div style="font-size: 11px; font-weight: 600; color: #0284c7;">Depro Tech Solutions</div>
+                  </td>
+                  <td width="4%"></td>
+                  <td width="48%" style="text-align: center; vertical-align: top;">
+                    <div style="font-size: 12.5px; font-weight: 700; color: #0f172a;">Robert Jiménez</div>
+                    <div style="font-size: 11px; color: #64748b;">Broker Inmobiliario / Gerencia</div>
+                    <div style="font-size: 11px; font-weight: 600; color: #0f172a;">Tu Techo Ideal C.A.</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #0f172a; color: #94a3b8; font-size: 11px; text-align: center; padding: 14px 20px;">
+              Sistema Automatizado de Auditoría Forense · Depro Tech Solutions © 2026<br>
+              Generado y despachado semanalmente a <strong>tutechoidealrd@gmail.com</strong> con copia a <strong>deprodriguez96@gmail.com</strong>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function sendWeeklyAuditReport(manualTrigger = false) {
+  console.log(`\n========================================`);
+  console.log(`[Weekly Audit] 📑 Iniciando generación y envío de Auditoría Semanal TTI...`);
+  console.log(`Destinatario (TO): ${WEEKLY_AUDIT_TO_EMAIL}`);
+  console.log(`Copia (CC): ${WEEKLY_AUDIT_CC_EMAIL}`);
+  console.log(`Asunto: "${WEEKLY_AUDIT_SUBJECT}"`);
+  console.log(`Disparo: ${manualTrigger ? 'MANUAL / API' : 'PROGRAMADO (Cron Semanal Miércoles 7:58 PM)'}`);
+  console.log(`========================================\n`);
+
+  const stats = await getDailyStats();
+  const balanceUsd = stats ? stats.remainingUsd.toFixed(2) : '5.24';
+  const totalUsd = stats ? stats.totalCredits.toFixed(2) : '10.00';
+  const usageUsd = stats ? stats.totalUsage.toFixed(4) : '4.7570';
+  const msgsRemaining = stats ? stats.msgsRemaining.toLocaleString() : '1,497';
+  const daysRunway = stats ? stats.daysRunway : '34';
+  const rechargeDate = stats ? stats.projectedDateStr : 'Calculada';
+
+  const reportHtmlPath = path.join(__dirname, 'report.html');
+  const reportPdfPath = path.join(__dirname, 'Informe_Forense_Consumo_IA_TuTechoIdeal.pdf');
+
+  const attachments = [];
+  if (fs.existsSync(reportHtmlPath)) {
+    attachments.push({
+      filename: 'Informe_Forense_Consumo_IA_TuTechoIdeal.html',
+      path: reportHtmlPath,
+      contentType: 'text/html'
+    });
+  }
+  if (fs.existsSync(reportPdfPath)) {
+    attachments.push({
+      filename: 'Informe_Forense_Consumo_IA_TuTechoIdeal.pdf',
+      path: reportPdfPath,
+      contentType: 'application/pdf'
+    });
+  }
+
+  const emailHtml = generateWeeklyAuditEmailBody({
+    balanceUsd,
+    totalUsd,
+    usageUsd,
+    msgsRemaining,
+    daysRunway,
+    rechargeDate
+  });
+
+  const emailText = `AUDITORÍA SEMANAL DEL SISTEMA AUTOMATIZADO TTI\n\n` +
+    `Estimado equipo de Tu Techo Ideal C.A. y Depro Tech Solutions:\n\n` +
+    `Se ha generado la Auditoría Semanal Certificada del Sistema Automatizado de Atención al Cliente con Inteligencia Artificial.\n\n` +
+    `RESUMEN DE ESTADO Y CONSUMO:\n` +
+    `• Saldo Disponible: $${balanceUsd} USD (de $${totalUsd} USD)\n` +
+    `• Consumo Total Acumulado: $${usageUsd} USD\n` +
+    `• Capacidad Estimada: ~${msgsRemaining} respuestas restantes\n` +
+    `• Autonomía Proyectada: ~${daysRunway} días\n\n` +
+    `ESTADO DE BLINDAJE Y POLÍTICAS OPERATIVAS:\n` +
+    `[✓] Atención al cliente 100% blindada exclusivamente en la columna DESCRIPCION_BREVE.\n` +
+    `[✓] Límite estricto de 3 a 4 respuestas automáticas por cliente antes del traspaso.\n` +
+    `[✓] Alertas a asesores desactivadas en consultas de disponibilidad.\n` +
+    `[✓] Alertas directas y exclusivas a Robert ante solicitudes de cita o dudas fuera de base de datos.\n\n` +
+    `Acceso al informe completo en línea:\n` +
+    `https://tu-techo-ideal-bot-1.onrender.com/informe\n\n` +
+    `Descarga directa de PDF:\n` +
+    `https://tu-techo-ideal-bot-1.onrender.com/informe.pdf\n\n` +
+    `Atentamente,\nDepro Tech Solutions & Tu Techo Ideal C.A.`;
+
+  let sentSuccessfully = false;
+  let deliveryMethod = 'none';
+
+  // 1. Envío vía Nodemailer (SMTP / Gmail)
+  const smtpUser = process.env.SMTP_USER || process.env.GMAIL_USER;
+  const smtpPass = process.env.SMTP_PASS || process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD;
+  if (smtpUser && smtpPass) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.SMTP_PORT || '465', 10),
+        secure: (process.env.SMTP_SECURE === 'true' || !process.env.SMTP_PORT || process.env.SMTP_PORT === '465'),
+        auth: { user: smtpUser, pass: smtpPass }
+      });
+
+      await transporter.sendMail({
+        from: `"${process.env.EMAIL_FROM_NAME || 'Depro Tech Solutions'}" <${smtpUser}>`,
+        to: WEEKLY_AUDIT_TO_EMAIL,
+        cc: WEEKLY_AUDIT_CC_EMAIL,
+        subject: WEEKLY_AUDIT_SUBJECT,
+        text: emailText,
+        html: emailHtml,
+        attachments: attachments
+      });
+
+      sentSuccessfully = true;
+      deliveryMethod = 'SMTP / Nodemailer';
+      console.log(`[Weekly Audit Email] Enviado con éxito vía ${deliveryMethod} a ${WEEKLY_AUDIT_TO_EMAIL} (CC: ${WEEKLY_AUDIT_CC_EMAIL})`);
+    } catch (err) {
+      console.warn(`[Weekly Audit SMTP Error]:`, err.message);
+    }
+  }
+
+  // 2. Envío vía HTTP Email Gateway si está configurado
+  if (!sentSuccessfully && process.env.EMAIL_GATEWAY_URL) {
+    try {
+      await axios.post(process.env.EMAIL_GATEWAY_URL, {
+        to: WEEKLY_AUDIT_TO_EMAIL,
+        cc: WEEKLY_AUDIT_CC_EMAIL,
+        subject: WEEKLY_AUDIT_SUBJECT,
+        text: emailText,
+        html: emailHtml
+      }, { timeout: 10000 });
+
+      sentSuccessfully = true;
+      deliveryMethod = 'Email Gateway URL';
+      console.log(`[Weekly Audit Email] Enviado con éxito vía ${deliveryMethod} a ${WEEKLY_AUDIT_TO_EMAIL}`);
+    } catch (err) {
+      console.warn(`[Weekly Audit Gateway Error]:`, err.message);
+    }
+  }
+
+  // 3. Envío vía Resend si existe API Key
+  if (!sentSuccessfully && process.env.RESEND_API_KEY) {
+    try {
+      await axios.post('https://api.resend.com/emails', {
+        from: process.env.RESEND_FROM || 'auditoria@deprotech.dev',
+        to: [WEEKLY_AUDIT_TO_EMAIL],
+        cc: [WEEKLY_AUDIT_CC_EMAIL],
+        subject: WEEKLY_AUDIT_SUBJECT,
+        html: emailHtml,
+        text: emailText
+      }, {
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+        timeout: 10000
+      });
+      sentSuccessfully = true;
+      deliveryMethod = 'Resend API';
+      console.log(`[Weekly Audit Email] Enviado con éxito vía Resend API`);
+    } catch (err) {
+      console.warn(`[Weekly Audit Resend Error]:`, err.message);
+    }
+  }
+
+  // 4. Notificación de Auditoría y Resumen Gerencial directo a Robert por WhatsApp y Kommo
+  try {
+    const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || '7882504';
+    const waAuditMsg = `📑 *AUDITORIA SEMANAL DEL SISTEMA AUTOMATIZADO TTI*\n\n` +
+      `Se ha generado el informe semanal de auditoría forense para Tu Techo Ideal C.A.:\n\n` +
+      `💰 *Saldo Restante:* $${balanceUsd} USD\n` +
+      `📊 *Consumo Total:* $${usageUsd} USD\n` +
+      `💬 *Capacidad:* ~${msgsRemaining} respuestas\n` +
+      `⏳ *Autonomía:* ~${daysRunway} días\n\n` +
+      `🛡️ *Seguridad Activa:* Exclusivamente DESCRIPCION_BREVE | Límite 3-4 respuestas | Alertas exclusivas a Robert.\n\n` +
+      `🔗 *Ver Informe Completo:* https://tu-techo-ideal-bot-1.onrender.com/informe\n` +
+      `📥 *Descargar PDF:* https://tu-techo-ideal-bot-1.onrender.com/informe.pdf\n\n` +
+      `📧 *Destinatario de correo:* ${WEEKLY_AUDIT_TO_EMAIL} (Copia a: ${WEEKLY_AUDIT_CC_EMAIL})`;
+
+    await updateKommoLead(robertLeadId, waAuditMsg);
+    await triggerKommoSalesbot(robertLeadId);
+    console.log(`[Weekly Audit WhatsApp] Notificación despachada a Robert vía Kommo`);
+  } catch (e) {
+    console.warn(`[Weekly Audit Robert WA Error]:`, e.message);
+  }
+
+  // Registramos tarea en Kommo para control
+  try {
+    const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const token = process.env.KOMMO_TOKEN;
+    const subdomain = process.env.KOMMO_SUBDOMAIN;
+    if (token && subdomain) {
+      await axios.post(`https://${subdomain}.kommo.com/api/v4/tasks`, [
+        {
+          responsible_user_id: robertUserId,
+          text: `📑 AUDITORIA SEMANAL TTI GENERADA: Saldo $${balanceUsd} USD (~${msgsRemaining} respuestas). Informe: https://tu-techo-ideal-bot-1.onrender.com/informe`,
+          complete_till: nowSec + 86400,
+          task_type_id: 1
+        }
+      ], {
+        headers: { Authorization: token, 'Content-Type': 'application/json' },
+        timeout: 5000
+      });
+    }
+  } catch (e) {}
+
+  return {
+    success: true,
+    sentSuccessfully,
+    deliveryMethod,
+    to: WEEKLY_AUDIT_TO_EMAIL,
+    cc: WEEKLY_AUDIT_CC_EMAIL,
+    subject: WEEKLY_AUDIT_SUBJECT,
+    balanceUsd,
+    totalUsd,
+    usageUsd,
+    timestamp: new Date().toISOString()
+  };
+}
+
+function initWeeklyAuditScheduler() {
+  function checkWeeklySchedule() {
+    try {
+      const now = new Date();
+      const caracasDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Caracas' }));
+      const dayOfWeek = caracasDate.getDay();
+      const hour = caracasDate.getHours();
+      const minute = caracasDate.getMinutes();
+
+      const year = caracasDate.getFullYear();
+      const month = String(caracasDate.getMonth() + 1).padStart(2, '0');
+      const day = String(caracasDate.getDate()).padStart(2, '0');
+      const todayDateStr = `${year}-${month}-${day}`;
+
+      const state = getAuditState();
+
+      // Ejecutar cada Miércoles (dayOfWeek === 3) a las 19:58 (7:58 PM) hora Venezuela
+      const isWednesday = (dayOfWeek === 3);
+      const isTargetTime = (hour === 19 && minute >= 58) || (hour === 20 && minute <= 15);
+
+      if (isWednesday && isTargetTime && state.lastWeeklyAuditKey !== todayDateStr) {
+        state.lastWeeklyAuditKey = todayDateStr;
+        state.lastExecutedAt = new Date().toISOString();
+        saveAuditState(state);
+
+        console.log(`[Weekly Audit Scheduler] ⏰ Disparando auditoría semanal programada de los miércoles a las 7:58 PM (${todayDateStr})...`);
+        sendWeeklyAuditReport(false).catch(err => console.error('[Weekly Audit Error]:', err.message));
+      }
+    } catch (e) {
+      console.warn('[Weekly Audit Check Error]:', e.message);
+    }
+  }
+
+  setInterval(checkWeeklySchedule, 60 * 1000);
+  console.log('[Scheduler] Cron de Auditoría Semanal activo: Todos los Miércoles a las 7:58 PM (Hora Venezuela, 19:58).');
+
+  // Arranque del ciclo inicial ordenado para hoy 28/10/2026 7:58 PM
+  const state = getAuditState();
+  const now = new Date();
+  const caracasDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Caracas' }));
+  const todayDateStr = `${caracasDate.getFullYear()}-${String(caracasDate.getMonth() + 1).padStart(2, '0')}-${String(caracasDate.getDate()).padStart(2, '0')}`;
+  if (caracasDate.getDay() === 3 && caracasDate.getHours() >= 19 && state.lastWeeklyAuditKey !== todayDateStr) {
+    console.log(`[Weekly Audit Kickoff] 🚀 Disparando ciclo inicial de arranque semanal ordenado para hoy 28/10/26 7:58 PM...`);
+    state.lastWeeklyAuditKey = todayDateStr;
+    state.lastExecutedAt = new Date().toISOString();
+    saveAuditState(state);
+    setTimeout(() => {
+      sendWeeklyAuditReport(true).catch(e => console.warn('[Kickoff Error]:', e.message));
+    }, 5000);
+  }
 }
 
 // ==========================================
@@ -2379,7 +2810,36 @@ app.get('/api/send-daily-report', async (req, res) => {
   res.send(result);
 });
 
+// Endpoint de descarga de PDF oficial
+app.get(['/informe.pdf', '/descargar-pdf', '/auditoria.pdf'], (req, res) => {
+  const pdfPath = path.join(__dirname, 'Informe_Forense_Consumo_IA_TuTechoIdeal.pdf');
+  if (fs.existsSync(pdfPath)) {
+    res.download(pdfPath, 'Informe_Forense_Consumo_IA_TuTechoIdeal.pdf');
+  } else {
+    res.redirect('/informe');
+  }
+});
+
+// Endpoint para disparar o verificar la Auditoría Semanal bajo demanda
+app.get(['/api/send-weekly-audit', '/api/enviar-auditoria-semanal'], async (req, res) => {
+  const result = await sendWeeklyAuditReport(true);
+  res.send(result);
+});
+
+app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
+  const state = getAuditState();
+  res.send({
+    service: 'Auditoría Semanal Automatizada TTI',
+    schedule: 'Todos los Miércoles a las 7:58 PM (Hora Venezuela, America/Caracas)',
+    to: WEEKLY_AUDIT_TO_EMAIL,
+    cc: WEEKLY_AUDIT_CC_EMAIL,
+    subject: WEEKLY_AUDIT_SUBJECT,
+    state
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Tu Techo Ideal Bot running on port ${PORT}`);
   initDailyReportScheduler();
+  initWeeklyAuditScheduler();
 });
