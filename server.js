@@ -910,7 +910,7 @@ function formatAvailabilityResponse(property, userText) {
   const wantsPhotos = /fotos?|im[aá]genes|link|enlace/i.test(userText);
   const photoUrl = property.LINK_FOTOS_URL || (property.LINK_FOTOS && property.LINK_FOTOS.startsWith('http') ? property.LINK_FOTOS : null);
 
-  let resp = `Bienvenido a Tu Techo Ideal, ${greeting}, sí disponible.`;
+  let resp = `Hola, bienvenido a Tu techo ideal, ${greeting}, sí disponible.`;
 
   if ((wantsNoContactLink || wantsPhotos) && photoUrl) {
     if (wantsNoContactLink) {
@@ -1079,7 +1079,7 @@ async function handleGeneralPropertySearch(userMessage, allProperties) {
     if (matches.length > 0) {
       const best = matches[0];
       return {
-        text: `Bienvenido a Tu Techo Ideal, ${greeting}. Tenemos disponible en ese rango en ${best.ZONA || 'Caracas'}: ${best.TIPO} por $${best.PRECIO || ''}.`,
+        text: `Hola, bienvenido a Tu techo ideal, ${greeting}. Tenemos disponible en ese rango en ${best.ZONA || 'Caracas'}: ${best.TIPO} por $${best.PRECIO || ''}.`,
         action: 'DISPONIBILIDAD',
         matchedProperty: best,
         skip: false
@@ -1088,7 +1088,7 @@ async function handleGeneralPropertySearch(userMessage, allProperties) {
       const closest = available.find(p => normalizeText(p.OPERACION || '').includes('venta')) || available[0];
       if (closest) {
         return {
-          text: `Bienvenido a Tu Techo Ideal, ${greeting}. No tenemos disponible en menos de $${maxBudget.toLocaleString('es-VE')}, pero lo más cercano es este ${closest.TIPO} en ${closest.ZONA || 'la zona'}.`,
+          text: `Hola, bienvenido a Tu techo ideal, ${greeting}. No tenemos disponible en menos de $${maxBudget.toLocaleString('es-VE')}, pero lo más cercano es este ${closest.TIPO} en ${closest.ZONA || 'la zona'}.`,
           action: 'DISPONIBILIDAD',
           matchedProperty: closest,
           skip: false
@@ -1105,7 +1105,7 @@ async function handleGeneralPropertySearch(userMessage, allProperties) {
     const inZone = available.find(p => normalizeText(p.ZONA || p.DESCRIPCION_BREVE || '').includes(mentionedZone));
     if (inZone) {
       return {
-        text: `Bienvenido a Tu Techo Ideal, ${greeting}, sí disponible en ${inZone.ZONA || mentionedZone}.`,
+        text: `Hola, bienvenido a Tu techo ideal, ${greeting}, sí disponible en ${inZone.ZONA || mentionedZone}.`,
         action: 'DISPONIBILIDAD',
         matchedProperty: inZone,
         skip: false
@@ -1113,7 +1113,7 @@ async function handleGeneralPropertySearch(userMessage, allProperties) {
     } else {
       const closest = available[0];
       return {
-        text: `Bienvenido a Tu Techo Ideal, ${greeting}. No tenemos disponible en esa zona, pero lo más cercano es este ${closest.TIPO} en ${closest.ZONA || 'Caracas'}.`,
+        text: `Hola, bienvenido a Tu techo ideal, ${greeting}. No tenemos disponible en esa zona, pero lo más cercano es este ${closest.TIPO} en ${closest.ZONA || 'Caracas'}.`,
         action: 'DISPONIBILIDAD',
         matchedProperty: closest,
         skip: false
@@ -2264,7 +2264,7 @@ async function matchPropertyByImage(imageUrl, properties) {
   return null;
 }
 
-async function generateResponse(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente') {
+async function generateResponseRaw(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente') {
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
@@ -2343,7 +2343,7 @@ async function generateResponse(userMessage, allProperties, imageUrl = null, lea
     const greeting = getVenezuelaGreeting();
     if (!isAvail) {
       return {
-        text: `Bienvenido a Tu Techo Ideal, ${greeting}, actualmente este inmueble ya no se encuentra disponible.`,
+        text: `Hola, bienvenido a Tu techo ideal, ${greeting}, actualmente este inmueble ya no se encuentra disponible.`,
         action: 'NO_DISPONIBLE',
         matchedProperty: matchedProp,
         skip: false
@@ -2397,6 +2397,55 @@ async function generateResponse(userMessage, allProperties, imageUrl = null, lea
 }
 
 // ==========================================
+// 🌟 PROTOCOLO OFICIAL DE SALUDO Y BLINDAJE DE ATENCIÓN AL CLIENTE
+// ==========================================
+function finalizeResponse(result, leadId) {
+  if (!result || result.skip || !result.text) return result;
+
+  const currentCount = getLeadResponseCount(leadId);
+  const greeting = getVenezuelaGreeting();
+  const officialGreetingPrefix = `Hola, bienvenido a Tu techo ideal, ${greeting}`;
+
+  if (currentCount === 0) {
+    let cleanText = result.text.trim();
+
+    // Si ya empieza con "Bienvenido a Tu Techo Ideal", normalizar al saludo oficial exacto
+    if (/^bienvenido\s+a\s+tu\s+techo\s+ideal/i.test(cleanText)) {
+      cleanText = cleanText.replace(/^bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i, `${officialGreetingPrefix}. `);
+      cleanText = cleanText.replace(/^(Hola,\s*bienvenido\s+a\s+Tu\s+techo\s+ideal,\s*(?:buen d[ií]a|buenas tardes|buenas noches))\.\s*(s[ií]\s*disponible)/i, '$1, $2');
+    } else if (!/^hola,\s*bienvenido\s+a\s+tu\s+techo\s+ideal/i.test(cleanText)) {
+      // Si la respuesta no contiene el saludo oficial de bienvenida, anteponerlo con cordialidad profesional
+      if (/^deme\s+un\s+momento/i.test(cleanText)) {
+        cleanText = `${officialGreetingPrefix}. Deme un momento, voy a consultar.`;
+      } else if (/^ok,\s*ya\s+consulto/i.test(cleanText)) {
+        cleanText = `${officialGreetingPrefix}. Ok, ya consulto con mi jefe para agendar la cita.`;
+      } else {
+        cleanText = `${officialGreetingPrefix}. ${cleanText}`;
+      }
+    }
+    result.text = cleanText;
+  } else {
+    // Si ya es la 2da, 3ra o 4ta respuesta, evitar saludos repetitivos en cada mensaje
+    let cleanText = result.text.trim();
+    if (/^hola,\s*bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i.test(cleanText)) {
+      cleanText = cleanText.replace(/^hola,\s*bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i, '').trim();
+      if (cleanText) cleanText = cleanText.charAt(0).toUpperCase() + cleanText.slice(1);
+    } else if (/^bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i.test(cleanText)) {
+      cleanText = cleanText.replace(/^bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i, '').trim();
+      if (cleanText) cleanText = cleanText.charAt(0).toUpperCase() + cleanText.slice(1);
+    }
+    if (cleanText) result.text = cleanText;
+  }
+
+  return result;
+}
+
+async function generateResponse(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente') {
+  const result = await generateResponseRaw(userMessage, allProperties, imageUrl, leadId, clientName);
+  return finalizeResponse(result, leadId);
+}
+
+// ==========================================
 // ⚡ COMUNICACIÓN CON KOMMO CRM
 // ==========================================
 async function updateKommoLead(leadId, aiText) {
@@ -2439,7 +2488,7 @@ async function triggerKommoSalesbot(leadId) {
 
   const response = await axios.post(url, payload, {
     headers: {
-      'Authorization': token,
+      'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
       'Content-Type': 'application/json'
     },
     timeout: 10000
@@ -2690,7 +2739,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         } catch (e) {
           console.warn('[Anti-Duplicate Clear Error]:', e.message);
         }
-      }, 15000);
+      }, 25000);
 
       // 5. Despacho de Alertas según la acción ejecutada (Omnicanal: WhatsApp, Instagram, Facebook)
       let channel = 'WhatsApp';
