@@ -3167,20 +3167,15 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
-    if (!userText && imageUrl) {
-      if (isInstagramStoryOrRestricted(body, messageObj, '')) {
-        return;
-      }
-      userText = 'Hola, quisiera información de este inmueble de la publicación';
+    // 🛑 FILTRO DE SILENCIO TOTAL: Si el cliente NO escribió texto (y no es nota de voz), NUNCA responder
+    // Previene que historias, reels, fotos aisladas, stickers o galerías disparen respuestas no solicitadas
+    if (!userText && !isVoiceNoteOrAudio(body, messageObj, userText)) {
+      console.log('[Webhook] Mensaje sin texto escrito por el cliente (media/story/reel/adjunto sin consulta). Silencio absoluto respetando el cuadro de diálogo.');
+      return;
     }
 
     if (!userText && isVoiceNoteOrAudio(body, messageObj, userText)) {
       userText = '[Nota de voz / Audio recibido]';
-    }
-
-    if (!userText && !imageUrl) {
-      console.log('[Webhook] Message has no text nor media content. Skipping.');
-      return;
     }
 
     // 🛑 FILTRO 1: Anti-Autorespuesta (Si el mensaje contiene el nombre de la empresa, es del bot)
