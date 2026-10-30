@@ -269,18 +269,18 @@ function isStandaloneLinkWithoutQuestion(text) {
 
   // Si al quitar las URLs no queda nada o solo puntuación/emojis (< 4 caracteres)
   if (textWithoutUrls.length < 4) {
-    return true; // Es solo un link cualquiera enviado en seco
+    return true; // Es solo un link en seco sin texto alguno (ej: reel de Instagram suelto)
   }
 
-  // Si lo que queda no contiene ninguna pregunta ni palabra clave de consulta inmobiliaria
+  // Si el texto incluye palabras claras de consulta inmobiliaria o red Wasi
   const q = normalizeText(textWithoutUrls);
-  const hasQuestionWord = /\?|¿|cuant|preci|costo|inversion|canon|disponib|habitac|bano|baño|metro|mts|m2|alquiler|venta|compr|informacion|info|ubicacion/i.test(q);
+  const isRealEstateInquiry = /\b(?:wasi|inmueble|inmuebles|propiedad|propiedades|inmobiliari[ao]|realtor|interesad[oa]|oportunidad(?:es)?|negocio|apartamento|apto|casa|oficina|local|galpon|terreno|alquiler|alquilar|venta|comprar?|precio|costo|canon|disponib|habitac|bano|baño|metro|mts|m2|ubicacion|informacion|info|link|enlace|fotos?)\b/i.test(q);
 
-  if (!hasQuestionWord) {
-    return true; // Envió un link con texto vago o sin pregunta concreta
+  if (isRealEstateInquiry || /\?|¿/.test(textWithoutUrls)) {
+    return false; // Es una consulta inmobiliaria válida con texto
   }
 
-  return false;
+  return true; // Envió un link sin relación inmobiliaria ni pregunta
 }
 
 // ==========================================
@@ -845,62 +845,98 @@ try {
   console.warn('[Lead Context Init Warning]:', e.message);
 }
 
-function getLeadPropertyContext(leadId, allProperties) {
-  if (!leadId) return null;
-  const ctx = leadContextCache.get(String(leadId));
+function getLeadPropertyContext(leadId, allProperties, talkId = null, contactId = null) {
+  let ctx = null;
+  if (leadId && leadContextCache.has(String(leadId))) {
+    ctx = leadContextCache.get(String(leadId));
+  } else if (talkId && leadContextCache.has(`talk_${talkId}`)) {
+    ctx = leadContextCache.get(`talk_${talkId}`);
+  } else if (contactId && leadContextCache.has(`contact_${contactId}`)) {
+    ctx = leadContextCache.get(`contact_${contactId}`);
+  }
   if (!ctx || !ctx.propertyRef) return null;
   const isFresh = (Date.now() - ctx.updatedAt) < (7 * 24 * 60 * 60 * 1000);
   if (!isFresh) return null;
   return allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === ctx.propertyRef.toUpperCase()) || null;
 }
 
-// Recuperación de contexto ultra-resiliente: memoria RAM local + consulta directa a Kommo si la RAM se reinició
-async function getOrRecoverLeadPropertyContext(leadId, allProperties) {
-  if (!leadId) return null;
+// Recuperación de contexto ultra-resiliente: memoria RAM local + notas de Kommo + eventos de Kommo
+async function getOrRecoverLeadPropertyContext(leadId, allProperties, talkId = null, contactId = null) {
+  if (!leadId && !talkId && !contactId) return null;
 
   // 1. Verificar primero en memoria RAM local
-  const localProp = getLeadPropertyContext(leadId, allProperties);
+  const localProp = getLeadPropertyContext(leadId, allProperties, talkId, contactId);
   if (localProp) return localProp;
 
-  // 2. Recuperar del historial de eventos de Kommo si la memoria local estaba vacía
-  try {
-    const token = process.env.KOMMO_TOKEN;
-    const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
-    if (token) {
-      const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
-      const res = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=lead&filter[entity_id]=${leadId}`, {
-        headers: { Authorization: authHeader },
-        timeout: 4500
-      });
-      const events = res.data?._embedded?.events || [];
-
-      // Contar cuántas respuestas previas dio el bot en este lead
-      const prevBotResponses = events.filter(ev =>
-        ev.type === 'custom_field_2103996_value_changed' &&
-        Array.isArray(ev.value_after) &&
-        ev.value_after.length > 0 &&
-        ev.value_after[0]?.custom_field_value?.text?.trim()
-      ).length;
-
-      if (prevBotResponses > 0) {
-        const existing = leadContextCache.get(String(leadId)) || {};
-        existing.responseCount = Math.max(existing.responseCount || 0, prevBotResponses);
-        leadContextCache.set(String(leadId), existing);
-        console.log(`[Lead Context Recovery] Contador de respuestas restaurado para Lead #${leadId}: ${existing.responseCount}`);
-      }
-
-      for (const ev of events) {
-        const text = JSON.stringify(ev.value_after || ev.params || ev);
-        const wasiCheck = matchWasiOrProperty(text, allProperties);
-        if (wasiCheck && wasiCheck.status === 'MATCH') {
-          saveLeadPropertyContext(leadId, wasiCheck.property);
-          console.log(`[Lead Context Recovery] Inmueble recuperado de eventos de Kommo para Lead #${leadId}: ${wasiCheck.property.ID_PROPIEDAD}`);
-          return wasiCheck.property;
+  // 2. Recuperar de notas internas del Lead en Kommo
+  if (leadId) {
+    try {
+      const token = process.env.KOMMO_TOKEN;
+      const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+      if (token) {
+        const headers = { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` };
+        const resNotes = await axios.get(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}/notes?limit=10`, { headers, timeout: 3500 });
+        const notes = resNotes.data?._embedded?.notes || [];
+        for (const n of notes) {
+          const text = n.params?.text || '';
+          const matchNote = text.match(/\[INMUEBLE_IDENTIFICADO:\s*(REF-\d{3})/i);
+          if (matchNote) {
+            const refCode = matchNote[1].toUpperCase();
+            const found = allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === refCode);
+            if (found) {
+              console.log(`[Lead Context Recovery] Inmueble ${refCode} recuperado de nota interna de Kommo para Lead #${leadId}`);
+              saveLeadPropertyContext(leadId, found, talkId, contactId);
+              return found;
+            }
+          }
         }
       }
+    } catch (e) {
+      console.warn('[Lead Notes Recovery Warning]:', e.message);
     }
-  } catch (err) {
-    console.warn(`[Lead Context Recovery Warning] Error consultando eventos de Lead #${leadId}:`, err.message);
+  }
+
+  // 3. Recuperar del historial de eventos de Kommo si la memoria local estaba vacía
+  if (leadId) {
+    try {
+      const token = process.env.KOMMO_TOKEN;
+      const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+      if (token) {
+        const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+        const res = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=lead&filter[entity_id]=${leadId}`, {
+          headers: { Authorization: authHeader },
+          timeout: 4500
+        });
+        const events = res.data?._embedded?.events || [];
+
+        // Contar cuántas respuestas previas dio el bot en este lead
+        const prevBotResponses = events.filter(ev =>
+          ev.type === 'custom_field_2103996_value_changed' &&
+          Array.isArray(ev.value_after) &&
+          ev.value_after.length > 0 &&
+          ev.value_after[0]?.custom_field_value?.text?.trim()
+        ).length;
+
+        if (prevBotResponses > 0) {
+          const existing = leadContextCache.get(String(leadId)) || {};
+          existing.responseCount = Math.max(existing.responseCount || 0, prevBotResponses);
+          leadContextCache.set(String(leadId), existing);
+          console.log(`[Lead Context Recovery] Contador de respuestas restaurado para Lead #${leadId}: ${existing.responseCount}`);
+        }
+
+        for (const ev of events) {
+          const text = JSON.stringify(ev.value_after || ev.params || ev);
+          const wasiCheck = matchWasiOrProperty(text, allProperties);
+          if (wasiCheck && wasiCheck.status === 'MATCH') {
+            saveLeadPropertyContext(leadId, wasiCheck.property, talkId, contactId);
+            console.log(`[Lead Context Recovery] Inmueble recuperado de eventos de Kommo para Lead #${leadId}: ${wasiCheck.property.ID_PROPIEDAD}`);
+            return wasiCheck.property;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[Lead Context Recovery Warning] Error consultando eventos de Lead #${leadId}:`, err.message);
+    }
   }
 
   return null;
@@ -930,22 +966,47 @@ function incrementLeadResponseCount(leadId) {
   return ctx.responseCount;
 }
 
-function saveLeadPropertyContext(leadId, property) {
-  if (!leadId || !property || !property.ID_PROPIEDAD) return;
-  const existing = leadContextCache.get(String(leadId)) || {};
+function saveLeadPropertyContext(leadId, property, talkId = null, contactId = null) {
+  if (!property || !property.ID_PROPIEDAD) return;
+  const existing = (leadId ? leadContextCache.get(String(leadId)) : null) || {};
   const ctx = {
     ...existing,
     propertyRef: property.ID_PROPIEDAD,
     wasiCode: property.CODIGO_WASI || '',
+    wasiUrl: property.Wasi_URL || (property.Wasi && property.Wasi.startsWith('http') ? property.Wasi : ''),
+    photoUrl: property.LINK_FOTOS_URL || (property.LINK_FOTOS && property.LINK_FOTOS.startsWith('http') ? property.LINK_FOTOS : ''),
     updatedAt: Date.now()
   };
-  leadContextCache.set(String(leadId), ctx);
+  if (leadId) leadContextCache.set(String(leadId), ctx);
+  if (talkId) leadContextCache.set(`talk_${talkId}`, ctx);
+  if (contactId) leadContextCache.set(`contact_${contactId}`, ctx);
+
   try {
     const obj = {};
     for (const [k, v] of leadContextCache.entries()) obj[k] = v;
     fs.writeFileSync(LEAD_CONTEXT_FILE, JSON.stringify(obj, null, 2), 'utf8');
   } catch (e) {
     console.warn('[Lead Context Save Error]:', e.message);
+  }
+
+  // Guardar nota interna en Kommo para persistencia indestructible
+  if (leadId) {
+    try {
+      const token = process.env.KOMMO_TOKEN;
+      const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+      if (token) {
+        const headers = { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` };
+        const payload = [{
+          note_type: 'common',
+          params: {
+            text: `🤖 [INMUEBLE_IDENTIFICADO: ${property.ID_PROPIEDAD} | WASI: ${property.CODIGO_WASI || 'N/A'}]\nInmueble: ${property.TIPO || 'Inmueble'} en ${property.ZONA || ''}\nWasi: ${ctx.wasiUrl}\nFotos: ${ctx.photoUrl}`
+          }
+        }];
+        axios.post(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}/notes`, payload, { headers, timeout: 4000 }).catch(e => {
+          console.warn('[Kommo Note Save Warning]:', e.message);
+        });
+      }
+    } catch (e) {}
   }
 }
 
@@ -975,6 +1036,30 @@ function isVisitSchedulingIntent(text) {
 function isExplicitAvailabilityQuery(text) {
   const t = normalizeText(text);
   return /(?:est[aá]\s*disponible|saber\s*si\s*est[aá]\s*disponible|tienes\s*(?:un|el|este)|estoy\s*interesad[oa]|quisiera\s*saber\s*del|informaci[oó]n\s*del\s*inmueble|compartiste\s*en\s*(?:la\s*red\s*)?wasi)/i.test(t);
+}
+
+function isPropertyLinkRequest(text) {
+  if (!text) return false;
+  const t = normalizeText(text);
+
+  // Solicitud directa de compartir/enviar
+  if (/me\s+lo\s+(?:puede[sn]?\s+)?compartir/i.test(t)) return true;
+  if (/me\s+lo\s+comparte[sn]?/i.test(t)) return true;
+  if (/me\s+lo\s+pasa[sn]?/i.test(t)) return true;
+  if (/me\s+lo\s+env[ií]a[sn]?/i.test(t)) return true;
+  if (/me\s+lo\s+manda[sn]?/i.test(t)) return true;
+
+  // Si incluye link, enlace, wasi, fotos, ficha, publicacion junto a verbos de entrega
+  const hasLinkKeyword = /\b(?:links?|enlaces?|wasi|publicaci[oó]n|ficha|fotos?|im[aá]genes)\b/i.test(t);
+  const hasActionKeyword = /\b(?:enviar|envia|envie|env[ií]ame|pasa|pasame|pásame|pasas|pásas|mandar|manda|mandame|mándame|compartir|comparte|compartes|facilit(?:ar|a|ame)|tienes?|ver|muestra|mostrar)\b/i.test(t);
+
+  if (hasLinkKeyword && hasActionKeyword) return true;
+
+  // Preguntas cortas
+  if (/\b(?:el\s+)?(?:link|enlace|wasi)\b.*\b(?:por\s+favor|\?|$)/i.test(t)) return true;
+  if (/^(?:link|enlace|el\s+link|el\s+enlace)\??$/i.test(t.trim())) return true;
+
+  return false;
 }
 
 // ==========================================
@@ -1108,16 +1193,29 @@ async function dispatchDirectWhatsAppToRobert(messageText) {
 // ==========================================
 function matchWasiOrProperty(text, properties) {
   let wasiCode = null;
-  const urlMatch = text.match(/https?:\/\/(?:info\.)?wasi\.co\/[^\s\)]*\/(\d{7,9})/i);
-  if (urlMatch) {
-    wasiCode = urlMatch[1];
+
+  // 1. URL con código numérico de 7 a 9 dígitos (wasi.co o cualquier portal/dominio afiliado a la red Wasi)
+  const anyUrlMatch = text.match(/https?:\/\/[^\s\/$.?#].[^\s]*\/(\d{7,9})(?:[\/?#]|$)/i);
+  if (anyUrlMatch) {
+    wasiCode = anyUrlMatch[1];
   } else {
-    const explicitCodeMatch = text.match(/(?:c[oó]digo\s*(?:es)?:?\s*|inmueble\s+)(\d{7,9})/i);
+    const explicitCodeMatch = text.match(/(?:c[oó]digo\s*(?:es)?:?\s*|inmueble\s*(?:es)?:?\s*|wasi\s*(?:es)?:?\s*)(\d{7,9})/i);
     if (explicitCodeMatch) {
       wasiCode = explicitCodeMatch[1];
     } else {
-      const anyWasiNumber = text.match(/\b(10\d{6})\b/);
-      if (anyWasiNumber) wasiCode = anyWasiNumber[1];
+      const numMatches = text.match(/\b(\d{7,9})\b/g);
+      if (numMatches) {
+        for (const nm of numMatches) {
+          const exists = properties.find(p => p.CODIGO_WASI === nm || (p.Wasi_URL && p.Wasi_URL.includes(nm)) || (p.Wasi && p.Wasi.includes(nm)));
+          if (exists) {
+            wasiCode = nm;
+            break;
+          }
+        }
+        if (!wasiCode && numMatches.length > 0 && /wasi|inmueble|propiedad|codigo|código/i.test(text)) {
+          wasiCode = numMatches[0];
+        }
+      }
     }
   }
 
@@ -1158,6 +1256,18 @@ function matchWasiOrProperty(text, properties) {
 
   // Emparejamiento por zona y tipo si se especifica claramente en el texto
   const qNorm = normalizeText(text);
+  if (qNorm.includes('california') && (qNorm.includes('apartamento') || qNorm.includes('alquiler') || qNorm.includes('apto'))) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-013');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-013' };
+  }
+  if (qNorm.includes('encantado') || qNorm.includes('haciendas')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-014' || p.ID_PROPIEDAD === 'REF-015');
+    if (matched) return { status: 'MATCH', property: matched, code: matched.ID_PROPIEDAD };
+  }
+  if (qNorm.includes('urbina')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-016');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-016' };
+  }
   if (qNorm.includes('mercedes') && qNorm.includes('apartamento')) {
     const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-005');
     if (matched) return { status: 'MATCH', property: matched, code: 'REF-005' };
@@ -1189,17 +1299,22 @@ function matchWasiOrProperty(text, properties) {
 function formatAvailabilityResponse(property, userText) {
   const greeting = getVenezuelaGreeting();
   const wantsNoContactLink = /sin\s+datos|sin\s+contacto|ficha\s+blanca|enlace\s+neutro/i.test(userText);
-  const wantsPhotos = /fotos?|im[aá]genes|link|enlace/i.test(userText);
+  const wantsPhotos = /fotos?|im[aá]genes/i.test(userText);
+  const wantsLink = isPropertyLinkRequest(userText);
   const photoUrl = property.LINK_FOTOS_URL || (property.LINK_FOTOS && property.LINK_FOTOS.startsWith('http') ? property.LINK_FOTOS : null);
+  const wasiUrl = property.Wasi_URL || (property.Wasi && property.Wasi.startsWith('http') ? property.Wasi : null);
 
   let resp = `Hola, bienvenido a Tu techo ideal, ${greeting}, sí disponible.`;
 
-  if ((wantsNoContactLink || wantsPhotos) && photoUrl) {
-    if (wantsNoContactLink) {
-      resp += ` Aquí tienes el enlace sin datos de contacto: ${photoUrl}`;
-    } else {
-      resp += ` Aquí puedes ver las fotos del inmueble: ${photoUrl}`;
+  if (wantsNoContactLink && photoUrl) {
+    resp += ` Aquí tienes el enlace sin datos de contacto: ${photoUrl}`;
+  } else if (wantsLink && wasiUrl) {
+    resp += ` Con gusto, aquí tienes el enlace en Wasi: ${wasiUrl}`;
+    if (wantsPhotos && photoUrl) {
+      resp += ` y aquí puedes ver las fotos: ${photoUrl}`;
     }
+  } else if (wantsPhotos && photoUrl) {
+    resp += ` Aquí puedes ver las fotos del inmueble: ${photoUrl}`;
   }
 
   return resp;
@@ -1216,7 +1331,8 @@ async function generateClaudePropertyQA(userMessage, property, clientName = '') 
   const mascotas = property.Mascotas || 'No especificado';
   const tipoMascotas = property['Tipo de Mascotas'] || '';
   const estatus = property.ESTATUS || 'Disponible';
-  const fotos = property.LINK_FOTOS_URL || property.LINK_FOTOS || '';
+  const fotos = property.LINK_FOTOS_URL || (property.LINK_FOTOS && property.LINK_FOTOS.startsWith('http') ? property.LINK_FOTOS : '');
+  const wasi = property.Wasi_URL || (property.Wasi && property.Wasi.startsWith('http') ? property.Wasi : '');
 
   const systemPrompt = `Eres el asesor profesional de atención al cliente inmobiliario de "Tu Techo Ideal", una prestigiosa empresa inmobiliaria en Caracas, Venezuela.
 Tu rol es brindar una atención al cliente impecable, cordial, fluida, humana y profesional por WhatsApp, respondiendo dudas de los clientes basándote ÚNICA Y EXCLUSIVAMENTE en la columna "DESCRIPCION_BREVE" de nuestra base de datos.
@@ -1226,6 +1342,7 @@ DATOS DEL INMUEBLE CONSULTADO:
 - Operación: ${property.OPERACION || 'Venta'}
 - Estatus: ${estatus}
 - Mascotas permitidas: ${mascotas} ${tipoMascotas ? `(${tipoMascotas})` : ''}
+- Enlace Wasi oficial: ${wasi}
 - Enlace fotos: ${fotos}
 - DESCRIPCION_BREVE (Tu ÚNICA fuente de información autorizada):
 """
@@ -1254,12 +1371,15 @@ REGLAS DE ATENCIÓN PROFESIONAL:
    - Si la descripción dice "gas directo industrial", responde "Sí, cuenta con gas directo industrial".
    Coloca al final: [ACCION: RESPONDER_INFO]
 
-5. SI LA INFORMACIÓN NO ESTÁ 100% EXPLÍCITA EN DESCRIPCION_BREVE:
+5. SI EL CLIENTE PIDE EL LINK, ENLACE, FICHA O PUBLICACIÓN DE WASI:
+   Facilítale cordialmente el Enlace Wasi oficial (${wasi}). Si pide ver las fotos, facilítale el Enlace fotos (${fotos}). Coloca al final: [ACCION: RESPONDER_INFO]
+
+6. SI LA INFORMACIÓN NO ESTÁ 100% EXPLÍCITA EN DESCRIPCION_BREVE:
    Si el cliente pregunta por una característica que NO aparece en "DESCRIPCION_BREVE":
    Responde con profesionalismo exacto: "Deme un momento, voy a consultar"
    Coloca al final: [ACCION: NO_EXISTE_EN_DESCRIPCION]
 
-6. BLINDAJE DE SEGURIDAD ABSOLUTO:
+7. BLINDAJE DE SEGURIDAD ABSOLUTO:
    - Se van a crear otras columnas con nombres parecidos en la hoja de cálculo: ESTÁ TERMINANTEMENTE PROHIBIDO tomar información de cualquier otra columna. Únicamente debes responder con lo que esté en DESCRIPCION_BREVE.
    - NUNCA inventes información que no esté en DESCRIPCION_BREVE. Si no está 100% claro, responde siempre "Deme un momento, voy a consultar".
    - NO uses textos largos ni listas de viñetas innecesarias. Sé conversacional y fluido como un asesor profesional de WhatsApp.
@@ -1305,6 +1425,17 @@ REGLAS DE ATENCIÓN PROFESIONAL:
 // Fallback determinístico si Claude no estuviera disponible
 function deterministicPropertyQA(userMessage, property) {
   const q = normalizeText(userMessage);
+
+  if (isPropertyLinkRequest(userMessage)) {
+    const wasiUrl = property.Wasi_URL || (property.Wasi && property.Wasi.startsWith('http') ? property.Wasi : '');
+    const photoUrl = property.LINK_FOTOS_URL || (property.LINK_FOTOS && property.LINK_FOTOS.startsWith('http') ? property.LINK_FOTOS : '');
+    if (wasiUrl) {
+      return { text: `Con gusto, aquí tienes el enlace en Wasi del inmueble: ${wasiUrl}`, action: 'ENLACE_ENTREGADO' };
+    } else if (photoUrl) {
+      return { text: `Con gusto, aquí tienes el enlace del inmueble: ${photoUrl}`, action: 'ENLACE_ENTREGADO' };
+    }
+  }
+
   // AISLAMIENTO ESTRICTO: Únicamente la columna DESCRIPCION_BREVE
   const desc = String(property['DESCRIPCION_BREVE'] || '').trim();
   const descNorm = normalizeText(desc);
@@ -2722,12 +2853,12 @@ async function matchPropertyByImage(imageUrl, properties) {
   return null;
 }
 
-async function generateResponseRaw(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente') {
+async function generateResponseRaw(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente', talkId = null, contactId = null) {
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
   // Verificar y recuperar si hay contexto de inmueble activo en la memoria del lead (local o Kommo)
-  const existingProp = await getOrRecoverLeadPropertyContext(leadId, allProperties);
+  const existingProp = await getOrRecoverLeadPropertyContext(leadId, allProperties, talkId, contactId);
   const hasActiveContext = !!existingProp;
 
   // 🛑 FILTRO 1: Descartar charla casual, reacciones y comentarios sin intención inmobiliaria
@@ -2740,7 +2871,7 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   const currentCount = getLeadResponseCount(leadId);
   if (currentCount >= MAX_AI_RESPONSES_PER_LEAD) {
     console.log(`[Limit Guard] Lead #${leadId} ya alcanzó el límite de ${currentCount}/${MAX_AI_RESPONSES_PER_LEAD} respuestas automáticas. Derivando a atención humana...`);
-    const activeProp = existingProp || getLeadPropertyContext(leadId, allProperties);
+    const activeProp = existingProp || getLeadPropertyContext(leadId, allProperties, talkId, contactId);
     return {
       text: 'Deme un momento, voy a consultar',
       action: 'LIMITE_ALCANZADO',
@@ -2752,7 +2883,7 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   // 1. Verificar si el cliente pide AGENDAR CITA o VER/VISITAR el inmueble
   // "si la persona sigue: Ok estoy interesa quiero agendar para verla, la ia responde 'Ok, ya consulto con mi jefe para agendar la cita'"
   if (isVisitSchedulingIntent(cleanMessage)) {
-    const activeProp = existingProp || getLeadPropertyContext(leadId, allProperties);
+    const activeProp = existingProp || getLeadPropertyContext(leadId, allProperties, talkId, contactId);
     console.log(`[Visit Scheduling Intent] El cliente ${clientName} solicita agendar cita para ver inmueble.`);
     return {
       text: 'Ok, ya consulto con mi jefe para agendar la cita',
@@ -2768,7 +2899,7 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
 
   if (wasiCheck.status === 'MATCH') {
     matchedProp = wasiCheck.property;
-    saveLeadPropertyContext(leadId, matchedProp);
+    saveLeadPropertyContext(leadId, matchedProp, talkId, contactId);
     console.log(`[Property Match] Coincidencia encontrada: ${matchedProp.ID_PROPIEDAD} (${matchedProp.TIPO} en ${matchedProp.ZONA})`);
   } else if (wasiCheck.status === 'NOT_FOUND') {
     console.log(`[Wasi Match] Código ${wasiCheck.code} no existe en inventario. Derivando a espera y alerta.`);
@@ -2784,17 +2915,58 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   if (!matchedProp && imageUrl) {
     matchedProp = await matchPropertyByImage(imageUrl, allProperties);
     if (matchedProp) {
-      saveLeadPropertyContext(leadId, matchedProp);
+      saveLeadPropertyContext(leadId, matchedProp, talkId, contactId);
       console.log(`[Vision Match] Propiedad identificada por imagen: ${matchedProp.ID_PROPIEDAD}`);
     }
   }
 
   // Si aún no tenemos propiedad del mensaje, usar el contexto activo recuperado del lead
   if (!matchedProp) {
-    matchedProp = existingProp || getLeadPropertyContext(leadId, allProperties);
+    matchedProp = existingProp || getLeadPropertyContext(leadId, allProperties, talkId, contactId);
     if (matchedProp) {
       console.log(`[Lead Context Memory] Inmueble activo recuperado para Lead #${leadId}: ${matchedProp.ID_PROPIEDAD}`);
     }
+  }
+
+  // 🛑 2.5: SI EL CLIENTE O COLEGA PIDE EL LINK / ENLACE / WASI / COMPARTIR
+  // "Si algun cliente pide un link dentro de la conversacion, entonces vamos a buscar el inmueble en la base de datos que corresponda a ese mismo que nos esta pidiendo... y apenas encontremos el inmuble y nos estan pidiendo el enlace entonces vamos a enviar el link de wasi que tenemos en la base de datos de dicho inmuble, se me entendio?"
+  if (isPropertyLinkRequest(cleanMessage)) {
+    if (matchedProp) {
+      const wasiUrl = matchedProp.Wasi_URL || (matchedProp.Wasi && matchedProp.Wasi.startsWith('http') ? matchedProp.Wasi : '');
+      const photoUrl = matchedProp.LINK_FOTOS_URL || (matchedProp.LINK_FOTOS && matchedProp.LINK_FOTOS.startsWith('http') ? matchedProp.LINK_FOTOS : '');
+      const wantsOnlyPhotos = /fotos?|im[aá]genes/i.test(cleanMessage) && !/wasi|link|enlace/i.test(cleanMessage);
+
+      let linkReply = '';
+      if (wantsOnlyPhotos && photoUrl) {
+        linkReply = `Con gusto, aquí puedes ver las fotos del inmueble: ${photoUrl}`;
+      } else if (wasiUrl && photoUrl && /fotos?/i.test(cleanMessage)) {
+        linkReply = `Con gusto, aquí tienes el enlace en Wasi: ${wasiUrl}\n\nY aquí puedes ver las fotos: ${photoUrl}`;
+      } else if (wasiUrl) {
+        linkReply = `Con gusto, aquí tienes el enlace en Wasi del inmueble: ${wasiUrl}`;
+      } else if (photoUrl) {
+        linkReply = `Con gusto, aquí tienes el enlace del inmueble: ${photoUrl}`;
+      } else {
+        linkReply = 'Deme un momento, voy a consultar';
+      }
+
+      if (linkReply !== 'Deme un momento, voy a consultar') {
+        console.log(`[Link Request Fulfilled] Enlace Wasi entregado para Lead #${leadId} (${matchedProp.ID_PROPIEDAD}): ${wasiUrl || photoUrl}`);
+        return {
+          text: linkReply,
+          action: 'ENLACE_ENTREGADO',
+          matchedProperty: matchedProp,
+          skip: false
+        };
+      }
+    }
+
+    console.log(`[Link Request Not Found] Solicitud de link para Lead #${leadId} sin inmueble validado en base de datos. Derivando a espera y alerta.`);
+    return {
+      text: 'Deme un momento, voy a consultar',
+      action: 'NO_EXISTE_EN_DESCRIPCION',
+      notFoundItem: `Solicitud de enlace de inmueble no encontrado: "${cleanMessage}"`,
+      skip: false
+    };
   }
 
   // 3. Determinar si es una consulta de DISPONIBILIDAD o contacto inicial del inmueble
@@ -2908,8 +3080,8 @@ function finalizeResponse(result, leadId) {
   return result;
 }
 
-async function generateResponse(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente') {
-  const result = await generateResponseRaw(userMessage, allProperties, imageUrl, leadId, clientName);
+async function generateResponse(userMessage, allProperties, imageUrl = null, leadId = null, clientName = 'Cliente', talkId = null, contactId = null) {
+  const result = await generateResponseRaw(userMessage, allProperties, imageUrl, leadId, clientName, talkId, contactId);
   return finalizeResponse(result, leadId);
 }
 
@@ -3439,7 +3611,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       // 2. Generar respuesta personalizada
       console.log('[Processing] Generating response based on DESCRIPCION_BREVE & inventory...');
-      const result = await generateResponse(userText, properties, imageUrl, currentLeadId, clientName);
+      const result = await generateResponse(userText, properties, imageUrl, currentLeadId, clientName, currentTalkId, messageObj.contact_id);
 
       // Si el filtro determinístico o Claude clasificaron como charla casual, comentario o ignorar
       if (!result || result.skip || !result.text) {
@@ -3641,16 +3813,32 @@ app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
   });
 });
 
-app.listen(PORT, async () => {
-  console.log(`Tu Techo Ideal Bot running on port ${PORT}`);
-  initDailyReportScheduler();
-  initWeeklyAuditScheduler();
+if (require.main === module) {
+  app.listen(PORT, async () => {
+    console.log(`Tu Techo Ideal Bot running on port ${PORT}`);
+    initDailyReportScheduler();
+    initWeeklyAuditScheduler();
 
-  // Inicializar Memoria Virtual y Vocabulario de Google Sheets al arrancar
-  try {
-    const props = await getAvailableProperties(true);
-    console.log(`[Memoria Virtual Startup] Inicializadas ${props.length} propiedades con ${virtualPropertyVocabulary.size} palabras clave extraídas.`);
-  } catch (err) {
-    console.warn('[Memoria Virtual Startup Warning]:', err.message);
-  }
-});
+    // Inicializar Memoria Virtual y Vocabulario de Google Sheets al arrancar
+    try {
+      const props = await getAvailableProperties(true);
+      console.log(`[Memoria Virtual Startup] Inicializadas ${props.length} propiedades con ${virtualPropertyVocabulary.size} palabras clave extraídas.`);
+    } catch (err) {
+      console.warn('[Memoria Virtual Startup Warning]:', err.message);
+    }
+  });
+}
+
+module.exports = {
+  app,
+  getAvailableProperties,
+  matchWasiOrProperty,
+  isStandaloneLinkWithoutQuestion,
+  isPropertyLinkRequest,
+  saveLeadPropertyContext,
+  getLeadPropertyContext,
+  getOrRecoverLeadPropertyContext,
+  generateResponseRaw,
+  generateResponse,
+  formatAvailabilityResponse
+};
