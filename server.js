@@ -1074,7 +1074,14 @@ function isExplicitAvailabilityQuery(text) {
 
 function isPropertyLinkRequest(text) {
   if (!text) return false;
-  const t = normalizeText(text);
+  const clean = text.trim();
+
+  // Si el mensaje YA CONTIENE una URL/enlace, el cliente NO está pidiendo el link (ya lo tiene y nos lo está enviando)
+  if (/https?:\/\/[^\s]+/i.test(clean) || /www\.[^\s]+/i.test(clean)) {
+    return false;
+  }
+
+  const t = normalizeText(clean);
 
   // Solicitud directa de compartir/enviar
   if (/me\s+lo\s+(?:puede[sn]?\s+)?compartir/i.test(t)) return true;
@@ -1083,15 +1090,15 @@ function isPropertyLinkRequest(text) {
   if (/me\s+lo\s+env[ií]a[sn]?/i.test(t)) return true;
   if (/me\s+lo\s+manda[sn]?/i.test(t)) return true;
 
-  // Si incluye link, enlace, wasi, fotos, ficha, publicacion junto a verbos de entrega
-  const hasLinkKeyword = /\b(?:links?|enlaces?|wasi|publicaci[oó]n|ficha|fotos?|im[aá]genes)\b/i.test(t);
-  const hasActionKeyword = /\b(?:enviar|envia|envie|env[ií]ame|pasa|pasame|pásame|pasas|pásas|mandar|manda|mandame|mándame|compartir|comparte|compartes|facilit(?:ar|a|ame)|tienes?|ver|muestra|mostrar)\b/i.test(t);
+  // Si incluye link, enlace, wasi, fotos, ficha, publicacion junto a verbos de entrega/solicitud
+  const hasLinkKeyword = /\b(?:links?|enlaces?|ficha|fotos?|im[aá]genes)\b/i.test(t);
+  const hasActionKeyword = /\b(?:enviar|envia|envie|env[ií]ame|pasa|pasame|pásame|pasas|pásas|mandar|manda|mandame|mándame|compartir|comparte|compartes|facilit(?:ar|a|ame)|puedes\s+enviar|me\s+pasas)\b/i.test(t);
 
   if (hasLinkKeyword && hasActionKeyword) return true;
 
-  // Preguntas cortas
-  if (/\b(?:el\s+)?(?:link|enlace|wasi)\b.*\b(?:por\s+favor|\?|$)/i.test(t)) return true;
-  if (/^(?:link|enlace|el\s+link|el\s+enlace)\??$/i.test(t.trim())) return true;
+  // Preguntas cortas de solicitud (ej: "el link por favor", "me pasas el link?")
+  if (/\b(?:el\s+)?(?:link|enlace)\b.*\b(?:por\s+favor|\?|$)/i.test(t) && !/compartiste/i.test(t)) return true;
+  if (/^(?:link|enlace|el\s+link|el\s+enlace)\??$/i.test(clean)) return true;
 
   return false;
 }
@@ -3141,7 +3148,7 @@ function finalizeResponse(result, leadId) {
     } else if (!/^hola,\s*bienvenido\s+a\s+tu\s+techo\s+ideal/i.test(cleanText)) {
       // Si la respuesta no contiene el saludo oficial de bienvenida, anteponerlo con cordialidad profesional
       if (/^deme\s+un\s+momento/i.test(cleanText)) {
-        cleanText = `${officialGreetingPrefix}. Con mucho gusto te asesoramos. ¿Nos podrías indicar el enlace, código del inmueble o en qué zona buscas para darte los detalles de inmediato?`;
+        cleanText = `${officialGreetingPrefix}. Con mucho gusto te asesoramos.`;
         if (result.action === 'NO_EXISTE_EN_DESCRIPCION') {
           result.action = 'CONSULTA_INMUEBLE_PENDIENTE';
         }
