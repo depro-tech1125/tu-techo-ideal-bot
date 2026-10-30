@@ -1062,6 +1062,41 @@ function isPropertyLinkRequest(text) {
   return false;
 }
 
+function isPureGreeting(text) {
+  if (!text) return false;
+  const t = normalizeText(text).replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!¿¡]/g, '').trim();
+
+  // Si contiene palabras o preguntas de inmuebles o datos concretos, NO es saludo puro
+  if (/cuant|preci|inmueble|propiedad|apto|apartamento|casa|oficina|local|alquiler|venta|compr|disponib|costo|canon|donde|ubicacion|fotos?|link|enlace|wasi/i.test(t)) {
+    return false;
+  }
+
+  const greetings = [
+    'hola', 'buenas', 'buen dia', 'buenos dias', 'buenas dias',
+    'buenas tardes', 'buenas noches', 'hola buenas', 'hola buenos dias',
+    'hola buenas dias', 'hola buenas tardes', 'hola buenas noches',
+    'hola buen dia', 'saludos', 'hola saludos', 'hola que tal',
+    'que tal', 'epale', 'hola epale', 'como esta', 'como estas', 'hola como estas',
+    'hola buenas como esta', 'hola buenas como estas', 'buen dia como esta', 'buenos dias como esta'
+  ];
+
+  return greetings.includes(t);
+}
+
+function isAvailabilityWithoutProperty(text, hasProperty) {
+  if (hasProperty) return false;
+  if (!text) return false;
+  const t = normalizeText(text).replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!¿¡]/g, '').trim();
+
+  // Si menciona tipo de inmueble o zona, ya no es pregunta seca sin inmueble
+  if (/apto|apartamento|casa|local|oficina|galpon|terreno|california|marques|mercedes|palos grandes|haciendas|encantado|florida|boyera|urbina/i.test(t)) {
+    return false;
+  }
+
+  return /^(?:hola\s+)?(?:buenas?\s+(?:tardes|dias|noches)\s+)?(?:esta|sigue|aun\s+esta)?\s*dispon[io]ble\??$/i.test(t) ||
+         /^(?:esta|sigue|aun\s+esta)\s+dispon[io]ble$/i.test(t);
+}
+
 // ==========================================
 // 📋 GENERADOR DE FORMATO GERENCIAL PARA ROBERT
 // ==========================================
@@ -2880,6 +2915,28 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
     };
   }
 
+  // 🛑 FILTRO DE SALUDO PURO (Desiree en Chat #1287: "Hola buenas dias")
+  if (isPureGreeting(cleanMessage) && !hasActiveContext) {
+    const greeting = getVenezuelaGreeting();
+    console.log(`[Pure Greeting Detected] Cliente ${clientName} envió un saludo plano ("${cleanMessage}").`);
+    return {
+      text: `Hola, bienvenido a Tu techo ideal, ${greeting}. ¿En qué inmueble o zona estás interesado para brindarte información?`,
+      action: 'SALUDO_CORDIAL',
+      skip: false
+    };
+  }
+
+  // 🛑 FILTRO DE CONSULTA DE DISPONIBILIDAD SIN INMUEBLE (SimonTuripe en Chat #1281: "Esta disponoble")
+  if (isAvailabilityWithoutProperty(cleanMessage, hasActiveContext)) {
+    const greeting = getVenezuelaGreeting();
+    console.log(`[Availability Without Property] Cliente ${clientName} consultó disponibilidad sin especificar inmueble ("${cleanMessage}").`);
+    return {
+      text: `Hola, bienvenido a Tu techo ideal, ${greeting}. Con gusto, ¿cuál es el inmueble o enlace por el que consultas para confirmarte la disponibilidad?`,
+      action: 'CONSULTA_INMUEBLE_PENDIENTE',
+      skip: false
+    };
+  }
+
   // 1. Verificar si el cliente pide AGENDAR CITA o VER/VISITAR el inmueble
   // "si la persona sigue: Ok estoy interesa quiero agendar para verla, la ia responde 'Ok, ya consulto con mi jefe para agendar la cita'"
   if (isVisitSchedulingIntent(cleanMessage)) {
@@ -3233,10 +3290,17 @@ function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
       rawStr.includes('instagram restrictions') ||
       rawStr.includes('no podemos mostrar este mensaje') ||
       rawStr.includes('cannot display this message') ||
+      rawStr.includes('could not be displayed') ||
+      rawStr.includes('api restrictions') ||
+      rawStr.includes('due to api restrictions') ||
+      rawStr.includes('the message could not be displayed') ||
       rawStr.includes('abre esta conversacion en tu cuenta de instagram') ||
       rawStr.includes('estas se aplican a reels') ||
       rawStr.includes('galerias de videos') ||
-      rawStr.includes('galerias de fotos')
+      rawStr.includes('galerias de fotos') ||
+      rawStr.includes('avatares y pedidos') ||
+      rawStr.includes('lo sentimos, pero no podemos mostrar este mensaje') ||
+      rawStr.includes('lo sentimos pero no podemos mostrar este mensaje')
     ) {
       return true;
     }
@@ -3283,10 +3347,17 @@ function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
       q.includes('instagram restrictions') ||
       q.includes('no podemos mostrar este mensaje') ||
       q.includes('cannot display this message') ||
+      q.includes('could not be displayed') ||
+      q.includes('api restrictions') ||
+      q.includes('due to api restrictions') ||
+      q.includes('the message could not be displayed') ||
       q.includes('abre esta conversacion en tu cuenta de instagram') ||
       q.includes('estas se aplican a reels') ||
       q.includes('galerias de videos') ||
       q.includes('galerias de fotos') ||
+      q.includes('avatares y pedidos') ||
+      q.includes('lo sentimos, pero no podemos mostrar este mensaje') ||
+      q.includes('lo sentimos pero no podemos mostrar este mensaje') ||
       q.includes('story') ||
       q.includes('story_mention')
     ) {
@@ -3686,7 +3757,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
         console.log(`[Missing Info Alert] Despachando alerta ejecutiva de información fuera de BD a Robert...`);
         await dispatchDirectWhatsAppToRobert(robertAlertText);
-        setLeadHandoff(currentLeadId);
+        // NOTA: No llamamos setLeadHandoff aquí ("si un humano no ha respondido sigue la conversacion").
+        // La alerta queda despachada a Robert, pero si el cliente escribe un nuevo mensaje o enlace, el bot continúa activo.
       } else if (result.action === 'LIMITE_ALCANZADO') {
         const robertAlertText = buildRobertAlertText({
           type: 'LIMITE_ALCANZADO',
@@ -3835,6 +3907,9 @@ module.exports = {
   matchWasiOrProperty,
   isStandaloneLinkWithoutQuestion,
   isPropertyLinkRequest,
+  isInstagramStoryOrRestricted,
+  isPureGreeting,
+  isAvailabilityWithoutProperty,
   saveLeadPropertyContext,
   getLeadPropertyContext,
   getOrRecoverLeadPropertyContext,
