@@ -99,7 +99,8 @@ const VOCABULARY_STOPWORDS = new Set([
   'tanto', 'esa', 'estos', 'mucho', 'quienes', 'nada', 'muchos', 'cual', 'sea', 'poco',
   'ella', 'estar', 'haber', 'estas', 'estaba', 'estamos', 'algunas', 'algo', 'nosotros',
   'gracias', 'hola', 'bienvenido', 'bienvenidos', 'buen', 'buenos', 'buenas', 'dias', 'tardes',
-  'noches', 'saludos', 'saludo', 'atentamente', 'asesor', 'asesora', 'favor', 'porfavor', 'inmobiliaria'
+  'noches', 'saludos', 'saludo', 'atentamente', 'asesor', 'asesora', 'favor', 'porfavor', 'inmobiliaria',
+  'ideal', 'techo'
 ]);
 
 function normalizeWordToken(w) {
@@ -256,7 +257,7 @@ function normalizeText(text) {
     .trim();
 }
 
-function isStandaloneLinkWithoutQuestion(text) {
+function isStandaloneLinkWithoutQuestion(text, properties = null) {
   if (!text || typeof text !== 'string') return false;
   const clean = text.trim();
 
@@ -264,12 +265,20 @@ function isStandaloneLinkWithoutQuestion(text) {
   const hasUrl = /https?:\/\/[^\s]+/i.test(clean) || /www\.[^\s]+/i.test(clean);
   if (!hasUrl) return false;
 
+  // Si tenemos el catálogo de propiedades y el link coincide con una propiedad real de la BD, NO es un link descartable
+  if (properties && Array.isArray(properties) && properties.length > 0) {
+    const match = matchWasiOrProperty(clean, properties);
+    if (match && match.property) {
+      return false; // ¡Es una consulta legítima de un inmueble de nuestro inventario!
+    }
+  }
+
   // Remover todas las URLs para ver qué texto queda
   const textWithoutUrls = clean.replace(/https?:\/\/[^\s]+/gi, '').replace(/www\.[^\s]+/gi, '').trim();
 
   // Si al quitar las URLs no queda nada o solo puntuación/emojis (< 4 caracteres)
   if (textWithoutUrls.length < 4) {
-    return true; // Es solo un link en seco sin texto alguno (ej: reel de Instagram suelto)
+    return true; // Es solo un link en seco sin texto alguno (ej: reel de Instagram suelto o link ajeno)
   }
 
   // Si el texto incluye palabras claras de consulta inmobiliaria o red Wasi
@@ -422,6 +431,31 @@ function hasExplicitRealEstateIntent(text, imageUrl = null) {
   ];
 
   return intentKeywords.some(kw => q.includes(kw));
+}
+
+// ==========================================
+// 📢 DETECCIÓN DE MENSAJES Y PALABRAS CLAVE DE CAMPAÑA META (ADS)
+// ==========================================
+function isMetaCampaignKeyword(text) {
+  if (!text || typeof text !== 'string') return false;
+  const q = normalizeText(text);
+  // Campaña de Meta (Facebook / Instagram Ads) con mensaje predeterminado o palabra clave CTA:
+  // "Ideal", "Tu Techo Ideal", "Tutechoideal"
+  if (
+    q === 'ideal' ||
+    q === 'ideal!' ||
+    q === 'ideal.' ||
+    q === 'tu techo ideal' ||
+    q === 'tu techo ideal!' ||
+    q === 'tutechoideal' ||
+    q === 'hola vi este anuncio' ||
+    q === 'vi este anuncio en instagram' ||
+    q === 'vi este anuncio en facebook' ||
+    q.startsWith('vi este anuncio')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 // ==========================================
@@ -3107,7 +3141,10 @@ function finalizeResponse(result, leadId) {
     } else if (!/^hola,\s*bienvenido\s+a\s+tu\s+techo\s+ideal/i.test(cleanText)) {
       // Si la respuesta no contiene el saludo oficial de bienvenida, anteponerlo con cordialidad profesional
       if (/^deme\s+un\s+momento/i.test(cleanText)) {
-        cleanText = `${officialGreetingPrefix}. Deme un momento, voy a consultar.`;
+        cleanText = `${officialGreetingPrefix}. Con mucho gusto te asesoramos. ¿Nos podrías indicar el enlace, código del inmueble o en qué zona buscas para darte los detalles de inmediato?`;
+        if (result.action === 'NO_EXISTE_EN_DESCRIPCION') {
+          result.action = 'CONSULTA_INMUEBLE_PENDIENTE';
+        }
       } else if (/^ok,\s*ya\s+consulto/i.test(cleanText)) {
         cleanText = `${officialGreetingPrefix}. Ok, ya consulto con mi jefe para agendar la cita.`;
       } else {
@@ -3300,7 +3337,10 @@ function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
       rawStr.includes('galerias de fotos') ||
       rawStr.includes('avatares y pedidos') ||
       rawStr.includes('lo sentimos, pero no podemos mostrar este mensaje') ||
-      rawStr.includes('lo sentimos pero no podemos mostrar este mensaje')
+      rawStr.includes('lo sentimos pero no podemos mostrar este mensaje') ||
+      rawStr.includes('recibiste un mensaje multimedia') ||
+      rawStr.includes('espera a que se cargue o se visualice') ||
+      rawStr.includes('id del mensaje:')
     ) {
       return true;
     }
@@ -3358,6 +3398,9 @@ function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
       q.includes('avatares y pedidos') ||
       q.includes('lo sentimos, pero no podemos mostrar este mensaje') ||
       q.includes('lo sentimos pero no podemos mostrar este mensaje') ||
+      q.includes('recibiste un mensaje multimedia') ||
+      q.includes('espera a que se cargue o se visualice') ||
+      q.includes('id del mensaje:') ||
       q.includes('story') ||
       q.includes('story_mention')
     ) {
@@ -3441,6 +3484,14 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
+    // 🛑 BLINDAJE DE PALABRA CLAVE DE CAMPAÑA META ("Ideal"):
+    // Si el cliente envía la palabra clave configurada en la pauta de Meta ("Ideal"),
+    // Meta o el Salesbot ya tienen programado su flujo. El bot guarda silencio total para no generar mensajes dobles ni alertar falsamente a Robert.
+    if (isMetaCampaignKeyword(userText)) {
+      console.log(`[Meta Campaign Keyword Ignored] Detectada palabra clave de campaña ("${userText}"). Respetando automatización de Meta/Salesbot. Silencio total (0 mensajes al cliente y 0 alertas a Robert).`);
+      return;
+    }
+
     // 🛑 FILTRO DE SILENCIO TOTAL: Si el cliente NO escribió texto (y no es nota de voz), NUNCA responder
     // Previene que historias, reels, fotos aisladas, stickers o galerías disparen respuestas no solicitadas
     if (!userText && !isVoiceNoteOrAudio(body, messageObj, userText)) {
@@ -3452,10 +3503,13 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       userText = '[Nota de voz / Audio recibido]';
     }
 
-    // 🛑 FILTRO DE LINKS AISLADOS SIN PREGUNTA:
+    const properties = await getAvailableProperties();
+
+    // 🛑 FILTRO DE LINKS AISLADOS SIN PREGUNTA (Excluye links de nuestro propio inventario de Google Sheets):
     // "No puso hola ni nada solo mando un link cualquiera y le responde? No eso no puede pasar cancelado..."
-    if (isStandaloneLinkWithoutQuestion(userText)) {
-      console.log(`[Standalone Link Ignored] Mensaje contiene solo un link sin consulta concreta ("${userText.substring(0, 80)}..."). Cancelado. Silencio absoluto respetando el cuadro de diálogo.`);
+    // "Revisa esta conversacion y dime si esta ese enlace en la base de datos y si es si, porque no respondio"
+    if (isStandaloneLinkWithoutQuestion(userText, properties)) {
+      console.log(`[Standalone Link Ignored] Mensaje contiene solo un link ajeno sin consulta concreta ("${userText.substring(0, 80)}..."). Cancelado. Silencio absoluto respetando el cuadro de diálogo.`);
       return;
     }
 
@@ -3908,6 +3962,7 @@ module.exports = {
   isStandaloneLinkWithoutQuestion,
   isPropertyLinkRequest,
   isInstagramStoryOrRestricted,
+  isMetaCampaignKeyword,
   isPureGreeting,
   isAvailabilityWithoutProperty,
   saveLeadPropertyContext,
