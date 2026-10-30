@@ -1429,40 +1429,163 @@ async function handleGeneralPropertySearch(userMessage, allProperties) {
 }
 
 // ==========================================
-// 🤝 GESTIÓN DE TRASPASO A HUMANO (HANDOFF)
+// 🤝 GESTIÓN DE TRASPASO A HUMANO (HANDOFF) Y DETECCIÓN HUMANA
 // ==========================================
 const HANDOFF_FILE = path.join(__dirname, 'handoffs.json');
 
-let leadHandoffs = {};
+let handoffsData = { leads: {}, talks: {}, contacts: {} };
 try {
   if (fs.existsSync(HANDOFF_FILE)) {
-    leadHandoffs = JSON.parse(fs.readFileSync(HANDOFF_FILE, 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(HANDOFF_FILE, 'utf8'));
+    if (raw && (raw.leads || raw.talks || raw.contacts)) {
+      handoffsData = { leads: raw.leads || {}, talks: raw.talks || {}, contacts: raw.contacts || {} };
+    } else if (raw && typeof raw === 'object') {
+      handoffsData = { leads: raw, talks: {}, contacts: {} };
+    }
   }
 } catch (e) {
-  leadHandoffs = {};
+  handoffsData = { leads: {}, talks: {}, contacts: {} };
 }
 
 function saveHandoffs() {
   try {
-    fs.writeFileSync(HANDOFF_FILE, JSON.stringify(leadHandoffs, null, 2));
+    fs.writeFileSync(HANDOFF_FILE, JSON.stringify(handoffsData, null, 2));
   } catch (e) { }
 }
 
-function checkLeadHandoffStatus(leadId) {
-  const h = leadHandoffs[String(leadId)];
-  if (!h || !h.timestamp) return { inHandoff: false, hoursElapsed: 999 };
-  const hoursElapsed = (Date.now() - h.timestamp) / (1000 * 60 * 60);
-  // Si pasaron menos de 24 horas, el equipo de Tu Techo Ideal está atendiendo ese mismo día
-  if (hoursElapsed < 24) {
-    return { inHandoff: true, hoursElapsed };
+const recentBotDispatchedMessages = new Map();
+const lastBotDispatchTimes = new Map();
+
+function recordBotDispatchedMessage(leadId, text) {
+  if (!text) return;
+  const norm = normalizeText(text).substring(0, 80);
+  const now = Date.now();
+  if (leadId) {
+    recentBotDispatchedMessages.set(`${leadId}_${norm}`, now);
+    lastBotDispatchTimes.set(String(leadId), now);
   }
-  return { inHandoff: false, hoursElapsed }; // Ya pasó 1 día
+  recentBotDispatchedMessages.set(`global_${norm}`, now);
+
+  if (recentBotDispatchedMessages.size > 300) {
+    for (const [k, ts] of recentBotDispatchedMessages.entries()) {
+      if (now - ts > 15 * 60 * 1000) recentBotDispatchedMessages.delete(k);
+    }
+  }
+}
+
+function isRecentBotDispatchedMessage(text, leadId = null) {
+  if (!text) return false;
+  const norm = normalizeText(text);
+
+  if (
+    norm.includes('deme un momento, voy a consultar') ||
+    norm.includes('deme un momento voy a consultar') ||
+    norm.includes('hola, bienvenido a tu techo ideal') ||
+    norm.includes('hola! gracias por comunicarte con, tu techo ideal') ||
+    norm.includes('somos barbara bravo y robert jimenez') ||
+    norm.includes('tu techo ideal')
+  ) {
+    return true;
+  }
+
+  const normShort = norm.substring(0, 80);
+  if (leadId && recentBotDispatchedMessages.has(`${leadId}_${normShort}`)) {
+    return true;
+  }
+  if (recentBotDispatchedMessages.has(`global_${normShort}`)) {
+    return true;
+  }
+
+  const now = Date.now();
+  for (const [k, ts] of recentBotDispatchedMessages.entries()) {
+    if (k.endsWith(normShort) && now - ts < 15 * 60 * 1000) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function setHandoffEntity(entityType, id) {
+  if (!id) return;
+  const now = Date.now();
+  if (!handoffsData.leads) handoffsData.leads = {};
+  if (!handoffsData.talks) handoffsData.talks = {};
+  if (!handoffsData.contacts) handoffsData.contacts = {};
+
+  if (entityType === 'lead') handoffsData.leads[String(id)] = { timestamp: now };
+  if (entityType === 'talk') handoffsData.talks[String(id)] = { timestamp: now };
+  if (entityType === 'contact') handoffsData.contacts[String(id)] = { timestamp: now };
+  saveHandoffs();
 }
 
 function setLeadHandoff(leadId) {
-  leadHandoffs[String(leadId)] = { timestamp: Date.now() };
-  saveHandoffs();
+  setHandoffEntity('lead', leadId);
   console.log(`[Handoff Activated] Lead #${leadId} en traspaso a humano. El bot guarda silencio durante 24h.`);
+}
+
+function setTalkHandoff(talkId) {
+  setHandoffEntity('talk', talkId);
+  console.log(`[Handoff Activated] Talk #${talkId} en traspaso a humano. El bot guarda silencio durante 24h.`);
+}
+
+function setContactHandoff(contactId) {
+  setHandoffEntity('contact', contactId);
+  console.log(`[Handoff Activated] Contact #${contactId} en traspaso a humano. El bot guarda silencio durante 24h.`);
+}
+
+function checkLeadHandoffStatus(leadId, talkId = null, contactId = null) {
+  const now = Date.now();
+  const checks = [
+    leadId && handoffsData.leads ? handoffsData.leads[String(leadId)] : null,
+    talkId && handoffsData.talks ? handoffsData.talks[String(talkId)] : null,
+    contactId && handoffsData.contacts ? handoffsData.contacts[String(contactId)] : null
+  ].filter(Boolean);
+
+  for (const h of checks) {
+    if (h && h.timestamp) {
+      const hoursElapsed = (now - h.timestamp) / (1000 * 60 * 60);
+      if (hoursElapsed < 24) {
+        return { inHandoff: true, hoursElapsed };
+      }
+    }
+  }
+  return { inHandoff: false, hoursElapsed: 999 };
+}
+
+// 🛑 VERIFICACIÓN EN VIVO EN KOMMO SI UN HUMANO ATENDIÓ
+async function checkRecentHumanActivity(contactId, leadId, talkId) {
+  if (!contactId && !leadId) return false;
+  const token = process.env.KOMMO_TOKEN;
+  const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+  if (!token) return false;
+
+  const headers = { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` };
+  const entityParam = contactId ? `entity]=contact&filter[entity_id]=${contactId}` : `entity]=lead&filter[entity_id]=${leadId}`;
+
+  try {
+    const url = `https://${subdomain}.kommo.com/api/v4/events?filter[${entityParam}&filter[type]=outgoing_chat_message&limit=5`;
+    const res = await axios.get(url, { headers, timeout: 3500 });
+    const events = (res.data._embedded && res.data._embedded.events) || [];
+
+    const now = Date.now();
+    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+    const lastBotTime = lastBotDispatchTimes.get(String(leadId)) || 0;
+
+    for (const ev of events) {
+      const evTime = ev.created_at * 1000;
+      if (evTime > twentyFourHoursAgo) {
+        // Si el evento no ocurrió dentro de los 15s de una respuesta de nuestro bot, fue un asesor humano
+        const isBotTimestamp = lastBotTime > 0 && Math.abs(evTime - lastBotTime) < 15000;
+        if (!isBotTimestamp) {
+          console.log(`[Human Activity Confirmed] Evento de mensaje saliente ${ev.id} en Kommo a las ${new Date(evTime).toISOString()}. Intervención humana confirmada.`);
+          return true;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Check Human Activity Warning]:', err.message);
+  }
+  return false;
 }
 
 // ==========================================
@@ -3066,6 +3189,49 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
+    // 🛑 DETECCIÓN INMEDIATA DE INTERVENCIÓN HUMANA EN CHAT (OUTGOING)
+    // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
+    // Si un asesor humano (o WhatsApp Lite / App / Web) envía un mensaje en el chat, el bot se retira de inmediato.
+    if (messageObj.type === 'outgoing') {
+      const outText = (messageObj.text || messageObj.value || '').trim();
+      const isFromBot = isRecentBotDispatchedMessage(outText, messageObj.entity_id);
+
+      if (!isFromBot) {
+        let outLeadId = messageObj.entity_id || messageObj.element_id;
+        const outTalkId = messageObj.talk_id;
+        const outContactId = messageObj.contact_id;
+
+        if (!outLeadId && outTalkId) {
+          try {
+            const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${outTalkId}`, {
+              headers: { Authorization: process.env.KOMMO_TOKEN },
+              timeout: 4000
+            });
+            outLeadId = talkRes.data?.entity_id;
+          } catch (e) {}
+        }
+
+        console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] El asesor humano escribió en el chat (Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas.`);
+
+        if (outLeadId) setLeadHandoff(outLeadId);
+        if (outTalkId) setTalkHandoff(outTalkId);
+        if (outContactId) setContactHandoff(outContactId);
+
+        // Cancelar inmediatamente cualquier Respuesta_IA residual para evitar colisiones
+        if (outLeadId) {
+          try {
+            await updateKommoLead(outLeadId, ' ');
+            console.log(`[Anti-Collision] Respuesta_IA vaciada preventivamente para Lead #${outLeadId}`);
+          } catch (e) {}
+        }
+
+        return;
+      } else {
+        console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado ("${outText.substring(0, 40)}..."). Skipping echo.`);
+        return;
+      }
+    }
+
     // 🛑 FILTRO 2: Solo mensajes entrantes del cliente
     if (messageObj.type && messageObj.type !== 'incoming') {
       console.log(`[Webhook] Skipping non-incoming message (type: ${messageObj.type})`);
@@ -3186,11 +3352,22 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log(`========================================`);
 
       // 🛑 CONTROL DE TRASPASO A HUMANO (HANDOFF)
-      const handoffStatus = checkLeadHandoffStatus(currentLeadId);
+      const handoffStatus = checkLeadHandoffStatus(currentLeadId, currentTalkId, messageObj.contact_id);
       const intent = detectLeadIntent(userText);
 
       if (handoffStatus.inHandoff) {
-        console.log(`[Handoff Silence] Lead #${currentLeadId} está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+        console.log(`[Handoff Silence] Lead #${currentLeadId} (Talk #${currentTalkId}) está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+        return;
+      }
+
+      // 🛑 DOBLE VERIFICACIÓN EN VIVO EN KOMMO (FAILSAFE CONTRA INTERVENCIÓN HUMANA)
+      // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
+      const humanAttended = await checkRecentHumanActivity(messageObj.contact_id, currentLeadId, currentTalkId);
+      if (humanAttended) {
+        console.log(`[Handoff Silence - Live Check] Se detectó intervención humana previa en Kommo para el Lead #${currentLeadId} (Contact #${messageObj.contact_id}). El bot cede el control total al equipo humano y se silencia.`);
+        setLeadHandoff(currentLeadId);
+        if (currentTalkId) setTalkHandoff(currentTalkId);
+        if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
         return;
       }
 
@@ -3243,6 +3420,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 3. Guardar respuesta en Kommo
       console.log('[Processing] Saving response to Kommo lead field...');
       await updateKommoLead(currentLeadId, responseText);
+      recordBotDispatchedMessage(currentLeadId, responseText);
 
       // 4. Disparar Salesbot ÚNICA VEZ
       console.log('[Processing] Triggering Salesbot single delivery...');
