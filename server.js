@@ -256,10 +256,40 @@ function normalizeText(text) {
     .trim();
 }
 
+function isStandaloneLinkWithoutQuestion(text) {
+  if (!text || typeof text !== 'string') return false;
+  const clean = text.trim();
+
+  // Detectar si el mensaje contiene links o URLs
+  const hasUrl = /https?:\/\/[^\s]+/i.test(clean) || /www\.[^\s]+/i.test(clean);
+  if (!hasUrl) return false;
+
+  // Remover todas las URLs para ver qué texto queda
+  const textWithoutUrls = clean.replace(/https?:\/\/[^\s]+/gi, '').replace(/www\.[^\s]+/gi, '').trim();
+
+  // Si al quitar las URLs no queda nada o solo puntuación/emojis (< 4 caracteres)
+  if (textWithoutUrls.length < 4) {
+    return true; // Es solo un link cualquiera enviado en seco
+  }
+
+  // Si lo que queda no contiene ninguna pregunta ni palabra clave de consulta inmobiliaria
+  const q = normalizeText(textWithoutUrls);
+  const hasQuestionWord = /\?|¿|cuant|preci|costo|inversion|canon|disponib|habitac|bano|baño|metro|mts|m2|alquiler|venta|compr|informacion|info|ubicacion/i.test(q);
+
+  if (!hasQuestionWord) {
+    return true; // Envió un link con texto vago o sin pregunta concreta
+  }
+
+  return false;
+}
+
 // ==========================================
 // 🛑 FILTRO DETERMINÍSTICO ANTI-CHITCHAT Y CHARLA CASUAL
 // ==========================================
 function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false, activeProperty = null) {
+  if (isStandaloneLinkWithoutQuestion(text)) {
+    return true;
+  }
   if (imageUrl) return false;
   if (!text || typeof text !== 'string') return true;
   const q = normalizeText(text);
@@ -341,7 +371,7 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false, act
     'macaracuay', 'florida', 'boyera', 'hatillo', 'caracas', 'zona', 'ubicacion', 'marques', 'chacao', 'mercedes', 'palos grandes', 'san ignacio',
     'cita', 'visita', 'visitar', 'agendar', 'verlo', 'verla', 'disponible', 'disponibles',
     'inmueble', 'inmuebles', 'propiedad', 'propiedades',
-    'colega', 'publicacion', 'link', 'enlace', 'wasi', 'http', 'sin datos', 'fotos', 'foto',
+    'colega', 'publicacion', 'wasi', 'fotos', 'foto', 'flyer',
     'mascota', 'mascotas', 'perro', 'perros', 'gato', 'gatos', 'animal', 'animales', 'pet friendly'
   ];
 
@@ -362,6 +392,7 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false, act
 // 🎯 COMPROBACIÓN ESTRICTA DE INTENCIÓN INMOBILIARIA
 // ==========================================
 function hasExplicitRealEstateIntent(text, imageUrl = null) {
+  if (isStandaloneLinkWithoutQuestion(text)) return false;
   if (imageUrl) return true;
   const q = normalizeText(text);
 
@@ -386,7 +417,7 @@ function hasExplicitRealEstateIntent(text, imageUrl = null) {
     'comercial', 'galpon', 'terreno', 'anexo', 'anexos', 'inmueble', 'inmuebles', 'propiedad', 'propiedades',
     'precio', 'precios', 'costo', 'presupuesto', 'menos de', 'mil',
     'macaracuay', 'alta florida', 'florida', 'boyera', 'hatillo', 'marques', 'chacao', 'mercedes', 'palos grandes',
-    'wasi', 'http', 'colega', 'link', 'enlace', 'sin datos', 'fotos', 'foto', 'publicacion',
+    'wasi', 'colega', 'fotos', 'foto', 'publicacion', 'flyer',
     'mascota', 'mascotas', 'perro', 'perros', 'gato', 'gatos', 'animal', 'animales', 'pet friendly'
   ];
 
@@ -3176,6 +3207,13 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
     if (!userText && isVoiceNoteOrAudio(body, messageObj, userText)) {
       userText = '[Nota de voz / Audio recibido]';
+    }
+
+    // 🛑 FILTRO DE LINKS AISLADOS SIN PREGUNTA:
+    // "No puso hola ni nada solo mando un link cualquiera y le responde? No eso no puede pasar cancelado..."
+    if (isStandaloneLinkWithoutQuestion(userText)) {
+      console.log(`[Standalone Link Ignored] Mensaje contiene solo un link sin consulta concreta ("${userText.substring(0, 80)}..."). Cancelado. Silencio absoluto respetando el cuadro de diálogo.`);
+      return;
     }
 
     // 🛑 FILTRO 1: Anti-Autorespuesta (Si el mensaje contiene el nombre de la empresa, es del bot)
