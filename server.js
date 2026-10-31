@@ -3189,10 +3189,43 @@ async function generateResponse(userMessage, allProperties, imageUrl = null, lea
 // ==========================================
 // ⚡ COMUNICACIÓN CON KOMMO CRM
 // ==========================================
+async function ensureLeadInActivePipeline(leadId) {
+  if (!leadId) return;
+  try {
+    const token = process.env.KOMMO_TOKEN;
+    const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+    const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+
+    const leadRes = await axios.get(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}`, {
+      headers: { Authorization: authHeader },
+      timeout: 5000
+    });
+
+    const lead = leadRes.data;
+    // Status 108871567 es "Leads Entrantes" (Buzón Unsorted), responsible_user_id 0 es sin asignar
+    if (lead && (lead.status_id === 108871567 || lead.responsible_user_id === 0 || lead.is_unsorted)) {
+      console.log(`[Auto-Accept Lead] Lead #${leadId} es contacto nuevo o no clasificado (status ${lead.status_id}, resp ${lead.responsible_user_id}). Auto-aceptando a "Contacto inicial" (108871571) con Robert Jiménez (15568119)...`);
+
+      await axios.patch(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}`, {
+        status_id: 108871571, // "Contacto inicial"
+        responsible_user_id: 15568119 // Robert Jiménez
+      }, {
+        headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
+        timeout: 5000
+      });
+
+      console.log(`[Auto-Accept Lead] Lead #${leadId} movido con éxito a "Contacto inicial" (108871571). Salesbot habilitado.`);
+    }
+  } catch (err) {
+    console.warn(`[Auto-Accept Lead Error] No se pudo auto-aceptar Lead #${leadId}:`, err.message);
+  }
+}
+
 async function updateKommoLead(leadId, aiText) {
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN;
   const fieldId = parseInt(process.env.KOMMO_FIELD_ID, 10);
+  const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
 
   const url = `https://${subdomain}.kommo.com/api/v4/leads/${leadId}`;
   const payload = {
@@ -3206,7 +3239,7 @@ async function updateKommoLead(leadId, aiText) {
 
   const response = await axios.patch(url, payload, {
     headers: {
-      'Authorization': token,
+      'Authorization': authHeader,
       'Content-Type': 'application/json'
     },
     timeout: 10000
@@ -3605,33 +3638,68 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     let leadId = messageObj.entity_id || messageObj.element_id;
 
     if (!leadId && messageObj.talk_id) {
-      try {
-        const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${messageObj.talk_id}`, {
-          headers: { Authorization: process.env.KOMMO_TOKEN },
-          timeout: 5000
-        });
-        leadId = talkRes.data.entity_id;
-      } catch (err) {
-        console.warn('[Webhook] Could not resolve lead from talk_id:', err.message);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${messageObj.talk_id}`, {
+            headers: { Authorization: process.env.KOMMO_TOKEN },
+            timeout: 5000
+          });
+          if (talkRes.data?.entity_id) {
+            leadId = talkRes.data.entity_id;
+            break;
+          }
+        } catch (err) {
+          if (attempt === 3) console.warn('[Webhook] Could not resolve lead from talk_id:', err.message);
+        }
+        if (!leadId && attempt < 3) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
       }
     }
 
     let clientPhone = '';
     if (messageObj.contact_id) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const contactRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/contacts/${messageObj.contact_id}?with=leads`, {
+            headers: { Authorization: process.env.KOMMO_TOKEN },
+            timeout: 5000
+          });
+          if (!leadId) {
+            leadId = contactRes.data._embedded?.leads?.[0]?.id;
+          }
+          const phoneField = contactRes.data.custom_fields_values?.find(f => f.field_code === 'PHONE' || f.field_name === 'Phone' || f.field_name === 'Teléfono');
+          if (phoneField?.values?.[0]?.value) {
+            clientPhone = phoneField.values[0].value;
+          }
+          if (leadId) break;
+        } catch (err) {
+          if (attempt === 3) console.warn('[Webhook] Could not resolve lead/phone from contact_id:', err.message);
+        }
+        if (!leadId && attempt < 3) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+    }
+
+    // Respaldo antibloqueo para contactos nuevos: buscar en el buzón de no clasificados (unsorted)
+    if (!leadId && (messageObj.contact_id || messageObj.talk_id)) {
       try {
-        const contactRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/contacts/${messageObj.contact_id}?with=leads`, {
+        const unsortedRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/leads/unsorted?limit=50`, {
           headers: { Authorization: process.env.KOMMO_TOKEN },
           timeout: 5000
         });
-        if (!leadId) {
-          leadId = contactRes.data._embedded?.leads?.[0]?.id;
-        }
-        const phoneField = contactRes.data.custom_fields_values?.find(f => f.field_code === 'PHONE' || f.field_name === 'Phone' || f.field_name === 'Teléfono');
-        if (phoneField?.values?.[0]?.value) {
-          clientPhone = phoneField.values[0].value;
+        const unsortedList = unsortedRes.data?._embedded?.unsorted || [];
+        const match = unsortedList.find(u =>
+          (messageObj.contact_id && u._embedded?.contacts?.some(c => String(c.id) === String(messageObj.contact_id))) ||
+          (messageObj.talk_id && u.source_uid && u.source_uid.includes(String(messageObj.talk_id)))
+        );
+        if (match && match._embedded?.leads?.[0]?.id) {
+          leadId = match._embedded.leads[0].id;
+          console.log(`[Webhook] Lead #${leadId} resuelto con éxito desde el buzón de no clasificados (Unsorted UID: ${match.uid})`);
         }
       } catch (err) {
-        console.warn('[Webhook] Could not resolve lead/phone from contact_id:', err.message);
+        console.warn('[Webhook] Error buscando en unsorted:', err.message);
       }
     }
 
@@ -3712,6 +3780,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // "si el sistema detecta que llego una nota de voz tampoco la responde, manda alerta a rober para que responda. No emites ningun tipo de mensaje al cliente, ni que espere ni nada solo manda alerta..."
       if (isVoiceNoteOrAudio(body, messageObj, userText)) {
         console.log(`[Voice Note Intercepted] Lead #${currentLeadId} envió una nota de voz. El bot se mantiene en silencio absoluto (0 mensajes al cliente) y despacha alerta a Robert.`);
+        await ensureLeadInActivePipeline(currentLeadId);
         const properties = await getAvailableProperties();
         const activeProp = await getOrRecoverLeadPropertyContext(currentLeadId, properties);
         let channel = clientPhone ? 'WhatsApp' : (clientName.startsWith('@') ? 'Instagram' : 'WhatsApp / Redes Sociales');
@@ -3753,6 +3822,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       const responseText = result.text;
       console.log('[Processing] Response text:\n', responseText);
+
+      // 🛑 GARANTIZAR QUE EL LEAD ESTÁ EN ETAPA ACTIVA ("Contacto inicial") ANTES DE DISPARAR SALESBOT
+      await ensureLeadInActivePipeline(currentLeadId);
 
       // 3. Guardar respuesta en Kommo
       console.log('[Processing] Saving response to Kommo lead field...');
