@@ -459,6 +459,29 @@ function isMetaCampaignKeyword(text) {
 }
 
 // ==========================================
+// 🏢 DETECCIÓN DE FRASE AISLADA DE MARCA: "Inmobiliaria tu techo ideal."
+// ==========================================
+function isStandaloneInmobiliariaTuTechoIdeal(text) {
+  if (!text || typeof text !== 'string') return false;
+  // Limpiar puntuación exterior, comillas, exclamaciones, puntos
+  let clean = normalizeText(text)
+    .replace(/^[\s"'¿?¡!\.,;\-_#@()]+/, '')
+    .replace(/[\s"'¿?¡!\.,;\-_#@()]+$/, '')
+    .trim();
+
+  // Reducir espacios múltiples
+  clean = clean.replace(/\s+/g, ' ');
+
+  // Variaciones exactas y con errores ortográficos comunes (b/v, letras transpuestas, omisión de tu)
+  const exactPatterns = [
+    /^(la\s+)?inmo[bv]ili?[ae]?r?i?a?s?\s+(tu\s+)?techo\s*id[ea]+l+(\s*rd|\s*c\.?a\.?)?$/i,
+    /^(la\s+)?inmo[bv]ili?[ae]?r?i?a?s?\s+tutecho\s*id[ea]+l+(\s*rd|\s*c\.?a\.?)?$/i
+  ];
+
+  return exactPatterns.some(p => p.test(clean));
+}
+
+// ==========================================
 // 🚨 DETECCIÓN Y ALERTAS DE LEADS CALIENTES
 // ==========================================
 function detectLeadIntent(text) {
@@ -2933,6 +2956,19 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   const cleanMessage = userMessage.substring(0, 800);
   const q = normalizeText(cleanMessage);
 
+  // 🛑 REGLA ESPECIAL STANDALONE: "Inmobiliaria tu techo ideal."
+  // OJO ALERTA: Solo si la frase viene sola (con o sin errores ortográficos).
+  // Si en una conversación dicen: "Ustedes son Inmobiliaria tu techo ideal.", NO responder esto.
+  if (isStandaloneInmobiliariaTuTechoIdeal(cleanMessage)) {
+    console.log(`[Special Standalone Match] Cliente ${clientName} envió la frase aislada de marca ("${cleanMessage}"). Respondiendo con frase oficial requerida.`);
+    return {
+      text: 'Hola, tienes alguna otra duda o te gustaría agendar una llamada?',
+      action: 'INMOBILIARIA_STANDALONE',
+      exactText: true,
+      skip: false
+    };
+  }
+
   // Verificar y recuperar si hay contexto de inmueble activo en la memoria del lead (local o Kommo)
   const existingProp = await getOrRecoverLeadPropertyContext(leadId, allProperties, talkId, contactId);
   const hasActiveContext = !!existingProp;
@@ -3133,6 +3169,11 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
 // ==========================================
 function finalizeResponse(result, leadId) {
   if (!result || result.skip || !result.text) return result;
+
+  // 🛑 SI ES LA RESPUESTA EXACTA STANDALONE ("Inmobiliaria tu techo ideal."), NO ALTERAR NI DUPLICAR SALUDO
+  if (result.action === 'INMOBILIARIA_STANDALONE' || result.exactText) {
+    return result;
+  }
 
   const currentCount = getLeadResponseCount(leadId);
   const greeting = getVenezuelaGreeting();
@@ -3554,7 +3595,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     }
 
     // 🛑 FILTRO 1: Anti-Autorespuesta (Si el mensaje contiene el nombre de la empresa, es del bot)
-    if (userText.includes('Tu Techo Ideal') || userText.includes('Robert Jiménez')) {
+    // Se exceptúa si el cliente envió la frase aislada de marca solicitada ("Inmobiliaria tu techo ideal.")
+    if (!isStandaloneInmobiliariaTuTechoIdeal(userText) && (userText.includes('Tu Techo Ideal, ') || userText.includes('Robert Jiménez') || (messageObj.author?.type !== 'external' && userText.includes('Tu Techo Ideal')))) {
       console.log('[Webhook] Bot self-message detected. Skipping.');
       return;
     }
@@ -4042,6 +4084,7 @@ module.exports = {
   isPropertyLinkRequest,
   isInstagramStoryOrRestricted,
   isMetaCampaignKeyword,
+  isStandaloneInmobiliariaTuTechoIdeal,
   isPureGreeting,
   isAvailabilityWithoutProperty,
   saveLeadPropertyContext,
