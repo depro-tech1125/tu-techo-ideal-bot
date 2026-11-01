@@ -85,6 +85,7 @@ function isDebounced(leadId) {
 let cachedProperties = null;
 let lastPropertiesFetchTime = 0;
 const CACHE_TTL_MS = 60 * 1000; // 1 minuto de caché para alta velocidad y frescura
+const PROPERTIES_CACHE_FILE = path.join(__dirname, 'properties_cache.json');
 
 let virtualPropertyVocabulary = new Set();
 let virtualWordToPropertiesMap = new Map();
@@ -222,13 +223,38 @@ async function getAvailableProperties(forceRefresh = false) {
     }
 
     console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con hipervínculos y códigos Wasi reales.`);
+    try {
+      const cleanProps = records.map(p => {
+        const copy = { ...p };
+        delete copy._vocabulary;
+        return copy;
+      });
+      fs.writeFileSync(PROPERTIES_CACHE_FILE, JSON.stringify(cleanProps, null, 2), 'utf8');
+    } catch (e) {}
+
     indexPropertiesVocabulary(records);
     cachedProperties = records;
     lastPropertiesFetchTime = now;
     return records;
   } catch (errXlsx) {
     console.warn('[Google Sheets XLSX Fallback Warning]:', errXlsx.message);
-    // 2. Fallback de contingencia a CSV si el XLSX falla por cualquier red
+    // 2. Si XLSX falla o da timeout, recurrir de inmediato al respaldo local permanente donde los 69 códigos Wasi y URLs reales están 100% preservados
+    if (fs.existsSync(PROPERTIES_CACHE_FILE)) {
+      try {
+        const localData = JSON.parse(fs.readFileSync(PROPERTIES_CACHE_FILE, 'utf8'));
+        if (Array.isArray(localData) && localData.length > 0) {
+          console.log(`[Google Sheets Local Backup] Cargadas ${localData.length} propiedades con códigos Wasi desde ${PROPERTIES_CACHE_FILE}`);
+          indexPropertiesVocabulary(localData);
+          cachedProperties = localData;
+          lastPropertiesFetchTime = now;
+          return localData;
+        }
+      } catch (e) {
+        console.warn('[Local Properties Cache Read Error]:', e.message);
+      }
+    }
+
+    // 3. Fallback de contingencia a CSV si todo lo anterior falla
     try {
       const csvUrl = process.env.GOOGLE_SHEET_CSV_URL;
       const response = await axios.get(csvUrl, { timeout: 7000 });
@@ -954,45 +980,89 @@ async function getOrRecoverLeadPropertyContext(leadId, allProperties, talkId = n
   }
 
   // 3. Recuperar del historial de eventos de Kommo si la memoria local estaba vacía
-  if (leadId) {
+  if (leadId || contactId) {
     try {
       const token = process.env.KOMMO_TOKEN;
       const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
       if (token) {
         const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
-        const res = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=lead&filter[entity_id]=${leadId}`, {
-          headers: { Authorization: authHeader },
-          timeout: 4500
-        });
-        const events = res.data?._embedded?.events || [];
 
-        // Contar cuántas respuestas previas dio el bot en este lead
-        const prevBotResponses = events.filter(ev =>
-          ev.type === 'custom_field_2103996_value_changed' &&
-          Array.isArray(ev.value_after) &&
-          ev.value_after.length > 0 &&
-          ev.value_after[0]?.custom_field_value?.text?.trim()
-        ).length;
+        // 3a. Consultar eventos del Lead
+        if (leadId) {
+          const res = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=lead&filter[entity_id]=${leadId}`, {
+            headers: { Authorization: authHeader },
+            timeout: 4500
+          });
+          const events = res.data?._embedded?.events || [];
 
-        if (prevBotResponses > 0) {
-          const existing = leadContextCache.get(String(leadId)) || {};
-          existing.responseCount = Math.max(existing.responseCount || 0, prevBotResponses);
-          leadContextCache.set(String(leadId), existing);
-          console.log(`[Lead Context Recovery] Contador de respuestas restaurado para Lead #${leadId}: ${existing.responseCount}`);
+          // Contar cuántas respuestas previas dio el bot en este lead
+          const prevBotResponses = events.filter(ev =>
+            ev.type === 'custom_field_2103996_value_changed' &&
+            Array.isArray(ev.value_after) &&
+            ev.value_after.length > 0 &&
+            ev.value_after[0]?.custom_field_value?.text?.trim()
+          ).length;
+
+          if (prevBotResponses > 0) {
+            const existing = leadContextCache.get(String(leadId)) || {};
+            existing.responseCount = Math.max(existing.responseCount || 0, prevBotResponses);
+            leadContextCache.set(String(leadId), existing);
+            console.log(`[Lead Context Recovery] Contador de respuestas restaurado para Lead #${leadId}: ${existing.responseCount}`);
+          }
+
+          for (const ev of events) {
+            const text = JSON.stringify(ev.value_after || ev.params || ev);
+            const wasiCheck = matchWasiOrProperty(text, allProperties);
+            if (wasiCheck && wasiCheck.status === 'MATCH') {
+              saveLeadPropertyContext(leadId, wasiCheck.property, talkId, contactId);
+              console.log(`[Lead Context Recovery] Inmueble recuperado de eventos de Lead #${leadId}: ${wasiCheck.property.ID_PROPIEDAD}`);
+              return wasiCheck.property;
+            }
+          }
         }
 
-        for (const ev of events) {
-          const text = JSON.stringify(ev.value_after || ev.params || ev);
-          const wasiCheck = matchWasiOrProperty(text, allProperties);
-          if (wasiCheck && wasiCheck.status === 'MATCH') {
-            saveLeadPropertyContext(leadId, wasiCheck.property, talkId, contactId);
-            console.log(`[Lead Context Recovery] Inmueble recuperado de eventos de Kommo para Lead #${leadId}: ${wasiCheck.property.ID_PROPIEDAD}`);
-            return wasiCheck.property;
+        // 3b. Consultar eventos del Contacto (donde Kommo vincula chats)
+        if (contactId) {
+          const resContact = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=contact&filter[entity_id]=${contactId}&limit=15`, {
+            headers: { Authorization: authHeader },
+            timeout: 4500
+          });
+          const contactEvents = resContact.data?._embedded?.events || [];
+          for (const ev of contactEvents) {
+            const text = JSON.stringify(ev.value_after || ev.params || ev);
+            const wasiCheck = matchWasiOrProperty(text, allProperties);
+            if (wasiCheck && wasiCheck.status === 'MATCH') {
+              saveLeadPropertyContext(leadId, wasiCheck.property, talkId, contactId);
+              console.log(`[Lead Context Recovery] Inmueble recuperado de eventos de Contacto #${contactId}: ${wasiCheck.property.ID_PROPIEDAD}`);
+              return wasiCheck.property;
+            }
           }
+
+          // 3c. Consultar notas del Contacto
+          try {
+            const resContactNotes = await axios.get(`https://${subdomain}.kommo.com/api/v4/contacts/${contactId}/notes?limit=10`, {
+              headers: { Authorization: authHeader },
+              timeout: 3500
+            });
+            const cNotes = resContactNotes.data?._embedded?.notes || [];
+            for (const n of cNotes) {
+              const text = n.params?.text || '';
+              const matchNote = text.match(/\[INMUEBLE_IDENTIFICADO:\s*(REF-\d{3})/i);
+              if (matchNote) {
+                const refCode = matchNote[1].toUpperCase();
+                const found = allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === refCode);
+                if (found) {
+                  console.log(`[Lead Context Recovery] Inmueble ${refCode} recuperado de nota de Contacto #${contactId}`);
+                  saveLeadPropertyContext(leadId, found, talkId, contactId);
+                  return found;
+                }
+              }
+            }
+          } catch (eNotes) {}
         }
       }
     } catch (err) {
-      console.warn(`[Lead Context Recovery Warning] Error consultando eventos de Lead #${leadId}:`, err.message);
+      console.warn(`[Lead Context Recovery Warning] Error consultando eventos/notas:`, err.message);
     }
   }
 
@@ -1153,12 +1223,19 @@ function isAvailabilityWithoutProperty(text, hasProperty) {
   const t = normalizeText(text).replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!¿¡]/g, '').trim();
 
   // Si menciona tipo de inmueble o zona, ya no es pregunta seca sin inmueble
-  if (/apto|apartamento|casa|local|oficina|galpon|terreno|california|marques|mercedes|palos grandes|haciendas|encantado|florida|boyera|urbina/i.test(t)) {
+  if (/apto|apartamento|casa|local|oficina|galpon|terreno|california|marques|mercedes|palos grandes|haciendas|encantado|florida|boyera|urbina|samanes|chacao|baruta|hatillo/i.test(t)) {
     return false;
   }
 
-  return /^(?:hola\s+)?(?:buenas?\s+(?:tardes|dias|noches)\s+)?(?:esta|sigue|aun\s+esta)?\s*dispon[io]ble\??$/i.test(t) ||
-         /^(?:esta|sigue|aun\s+esta)\s+dispon[io]ble$/i.test(t);
+  // Detectar si pregunta por disponibilidad genérica sin especificar cuál inmueble
+  const isGenericAvail = /\b(?:esta|sigue|aun\s+esta|se\s+encuentra)?\s*dispon[io]ble\b/i.test(t);
+  const mentionsSpecifics = /\b(?:habitacion|habitaciones|bano|banos|metro|metros|precio|costo|canon)\b/i.test(t);
+
+  if (isGenericAvail && !mentionsSpecifics) {
+    return true;
+  }
+
+  return false;
 }
 
 // ==========================================
