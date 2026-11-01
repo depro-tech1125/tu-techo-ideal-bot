@@ -263,6 +263,26 @@ async function getAvailableProperties(forceRefresh = false) {
         skip_empty_lines: true,
         trim: true
       });
+      for (const row of records) {
+        if (!row.Wasi_URL && row.Wasi && row.Wasi.startsWith('http')) {
+          row.Wasi_URL = row.Wasi;
+        }
+        if (!row.CODIGO_WASI) {
+          const wasiUrl = row.Wasi_URL || row.Wasi || '';
+          const wasiMatch = wasiUrl.match(/\/(\d{7,9})(?:\?|$)/);
+          row.CODIGO_WASI = wasiMatch ? wasiMatch[1] : '';
+        }
+        if (!row.LINK_FOTOS_URL && row.LINK_FOTOS && row.LINK_FOTOS.startsWith('http')) {
+          row.LINK_FOTOS_URL = row.LINK_FOTOS;
+        }
+        let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || '').replace(/[^0-9]/g, '');
+        if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
+          agentPhone = '58' + agentPhone;
+        } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
+          agentPhone = '58' + agentPhone.substring(1);
+        }
+        row.TELEFONO_ASESOR_CLEAN = agentPhone;
+      }
       console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
       indexPropertiesVocabulary(records);
       cachedProperties = records;
