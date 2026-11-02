@@ -431,6 +431,22 @@ function isCasualOrChitChat(text, imageUrl = null, hasActiveContext = false, act
   if (!text || typeof text !== 'string') return true;
   const q = normalizeText(text);
 
+  // 0. Filtrar ofrecimientos de servicios de terceros, publicidad o preguntas de atención externa
+  // (ej: "¿Cómo podemos ayudarte?", agencias de marketing, diseño, etc.)
+  const vendorServicePhrases = [
+    'como podemos ayudarte', 'como puedo ayudarte', 'en que podemos ayudarte',
+    'en que te puedo ayudar', 'en que le puedo ayudar', 'en que te puedo colaborar',
+    'en que le puedo colaborar', 'en que te colaboro', 'en que le colaboro',
+    'a la orden', 'a su orden', 'a sus ordenes', 'ofrecemos servicios', 'ofrezco servicios',
+    'manejo redes', 'marketing digital', 'diseno web', 'somos una agencia'
+  ];
+  if (vendorServicePhrases.some(phrase => q.includes(phrase))) {
+    const hasPropertyRef = /REF-\d{3}|\b\d{7,9}\b|https?:\/\//i.test(text);
+    if (!hasPropertyRef) {
+      return true; // Se descarta por completo y se deja en visto
+    }
+  }
+
   // 1. Si ya hay un inmueble activo en contexto para este lead, CUALQUIER consulta es válida y NUNCA se descarta
   if (hasActiveContext) {
     // Solo si el mensaje es exclusivamente un cierre social aislado ("ok gracias", "chao", "jajaja")
@@ -3341,6 +3357,13 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   }
 
   // 6. Si no se puede validar ni responder con certeza de la BD:
+  // Si el mensaje no tiene intención inmobiliaria (no busca comprar, alquilar, ni menciona zonas o características),
+  // se deja en visto silenciosamente sin gastar tokens ni alertar innecesariamente
+  if (!hasExplicitRealEstateIntent(cleanMessage, imageUrl)) {
+    console.log(`[Anti-Spam Filter] Mensaje sin intención inmobiliaria descartado silenciosamente: "${cleanMessage}"`);
+    return { text: null, notFoundItem: null, skip: true };
+  }
+
   return {
     text: 'Deme un momento, voy a consultar',
     action: 'NO_EXISTE_EN_DESCRIPCION',
