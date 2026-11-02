@@ -6,6 +6,7 @@ const fs = require('fs');
 const nodemailer = require('nodemailer');
 const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
+const { loadFichasTecnicas, findFichaTecnica, handleFichaTecnicaQuery } = require('./fichas_manager.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1058,6 +1059,29 @@ function getLeadPropertyContext(leadId, allProperties, talkId = null, contactId 
   if (!ctx || !ctx.propertyRef) return null;
   const isFresh = (Date.now() - ctx.updatedAt) < (7 * 24 * 60 * 60 * 1000);
   if (!isFresh) return null;
+
+  // Soporte prioritario nativo para Fichas Técnicas Oficiales de Word
+  if (ctx.propertyRef.startsWith('FICHA-')) {
+    const fichas = loadFichasTecnicas();
+    const f = fichas.find(item => item.id.toUpperCase() === ctx.propertyRef.toUpperCase());
+    if (f) {
+      return {
+        ID_PROPIEDAD: f.id,
+        TIPO: 'Apartamento',
+        ZONA: f.zona,
+        ESTATUS: 'Disponible',
+        DESCRIPCION_BREVE: f.rawText,
+        isFichaTecnica: true,
+        rawFicha: f,
+        CODIGO_WASI: f.codigoWasi || '',
+        Wasi: f.wasiUrl || '',
+        Wasi_URL: f.wasiUrl || '',
+        LINK_FOTOS: f.photoUrl || '',
+        LINK_FOTOS_URL: f.photoUrl || ''
+      };
+    }
+  }
+
   return allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === ctx.propertyRef.toUpperCase()) || null;
 }
 
@@ -1080,9 +1104,31 @@ async function getOrRecoverLeadPropertyContext(leadId, allProperties, talkId = n
         const notes = resNotes.data?._embedded?.notes || [];
         for (const n of notes) {
           const text = n.params?.text || '';
-          const matchNote = text.match(/\[INMUEBLE_IDENTIFICADO:\s*(REF-\d{3})/i);
+          const matchNote = text.match(/\[INMUEBLE_IDENTIFICADO:\s*(REF-\d{3}|FICHA-[A-Z-]+)/i);
           if (matchNote) {
             const refCode = matchNote[1].toUpperCase();
+            if (refCode.startsWith('FICHA-')) {
+              const fichas = loadFichasTecnicas();
+              const f = fichas.find(item => item.id.toUpperCase() === refCode);
+              if (f) {
+                const fichaProp = {
+                  ID_PROPIEDAD: f.id,
+                  TIPO: 'Apartamento',
+                  ZONA: f.zona,
+                  ESTATUS: 'Disponible',
+                  DESCRIPCION_BREVE: f.rawText,
+                  isFichaTecnica: true,
+                  rawFicha: f,
+                  CODIGO_WASI: f.codigoWasi || '',
+                  Wasi: f.wasiUrl || '',
+                  Wasi_URL: f.wasiUrl || '',
+                  LINK_FOTOS: f.photoUrl || '',
+                  LINK_FOTOS_URL: f.photoUrl || ''
+                };
+                saveLeadPropertyContext(leadId, fichaProp, talkId, contactId);
+                return fichaProp;
+              }
+            }
             const found = allProperties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === refCode);
             if (found) {
               console.log(`[Lead Context Recovery] Inmueble ${refCode} recuperado de nota interna de Kommo para Lead #${leadId}`);
@@ -3214,6 +3260,78 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
       matchedProperty: activeProp,
       skip: false
     };
+  }
+
+  // 🛑 CAPA DE FICHAS TÉCNICAS OFICIALES WORD (PRIORIDAD ABSOLUTA SOBRE EXCEL)
+  // "los nombres de la ficha tecnica tienen las ubicaciones del inmueble, espero que respetes la informacion dada por word y no consulte nada en excel..."
+  const matchedFicha = findFichaTecnica(cleanMessage, existingProp);
+  if (matchedFicha) {
+    console.log(`[Ficha Técnica Match] Propiedad identificada en Ficha Técnica Word: ${matchedFicha.zona} (${matchedFicha.id})`);
+
+    const fichaProp = {
+      ID_PROPIEDAD: matchedFicha.id,
+      TIPO: 'Apartamento',
+      ZONA: matchedFicha.zona,
+      ESTATUS: 'Disponible',
+      DESCRIPCION_BREVE: matchedFicha.rawText,
+      isFichaTecnica: true,
+      rawFicha: matchedFicha,
+      CODIGO_WASI: matchedFicha.codigoWasi || '',
+      Wasi: matchedFicha.wasiUrl || '',
+      Wasi_URL: matchedFicha.wasiUrl || '',
+      LINK_FOTOS: matchedFicha.photoUrl || '',
+      LINK_FOTOS_URL: matchedFicha.photoUrl || ''
+    };
+
+    // 1. Si el cliente o colega pide agendar cita para ver este inmueble
+    if (isVisitSchedulingIntent(cleanMessage)) {
+      saveLeadPropertyContext(leadId, fichaProp, talkId, contactId);
+      console.log(`[Visit Scheduling Intent] Solicitud de cita para ${matchedFicha.zona}.`);
+      return {
+        text: 'Ok, ya consulto con mi jefe para agendar la cita',
+        action: 'AGENDAR_CITA',
+        matchedProperty: fichaProp,
+        skip: false
+      };
+    }
+
+    // 2. Si el cliente o colega pide el link/fotos
+    if (isPropertyLinkRequest(cleanMessage)) {
+      const wasiUrl = fichaProp.Wasi_URL && fichaProp.Wasi_URL.startsWith('http') ? fichaProp.Wasi_URL : '';
+      const photoUrl = fichaProp.LINK_FOTOS_URL && fichaProp.LINK_FOTOS_URL.startsWith('http') ? fichaProp.LINK_FOTOS_URL : '';
+      const wantsOnlyPhotos = /fotos?|im[aá]genes/i.test(cleanMessage) && !/wasi|link|enlace/i.test(cleanMessage);
+
+      let linkReply = '';
+      if (wantsOnlyPhotos && photoUrl) {
+        linkReply = `Con gusto, aquí puedes ver las fotos del inmueble: ${photoUrl}`;
+      } else if (wasiUrl && photoUrl && /fotos?/i.test(cleanMessage)) {
+        linkReply = `Con gusto, aquí tienes el enlace en Wasi: ${wasiUrl}\n\nY aquí puedes ver las fotos: ${photoUrl}`;
+      } else if (wasiUrl) {
+        linkReply = `Con gusto, aquí tienes el enlace en Wasi del inmueble: ${wasiUrl}`;
+      } else if (photoUrl) {
+        linkReply = `Con gusto, aquí tienes el enlace del inmueble: ${photoUrl}`;
+      }
+
+      if (linkReply) {
+        saveLeadPropertyContext(leadId, fichaProp, talkId, contactId);
+        console.log(`[Link Request Fulfilled] Enlace entregado para Ficha ${matchedFicha.zona}: ${wasiUrl || photoUrl}`);
+        return {
+          text: linkReply,
+          action: 'ENLACE_ENTREGADO',
+          matchedProperty: fichaProp,
+          exactText: true,
+          skip: false
+        };
+      }
+    }
+
+    // 3. Ejecutar consulta técnica blindada con Claude Sonnet 4.5 (con silencio absoluto si no está en el Word)
+    const fichaResult = await handleFichaTecnicaQuery(cleanMessage, existingProp, clientName);
+    if (fichaResult) {
+      saveLeadPropertyContext(leadId, fichaProp, talkId, contactId);
+      fichaResult.matchedProperty = fichaProp;
+      return fichaResult;
+    }
   }
 
   // 1. Emparejar propiedad mencionada en el mensaje actual (o por imagen/flyer)
