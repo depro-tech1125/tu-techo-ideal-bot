@@ -1986,27 +1986,42 @@ async function checkRecentHumanActivity(contactId, leadId, talkId) {
   if (!token) return false;
 
   const headers = { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` };
-  const entityParam = contactId ? `entity]=contact&filter[entity_id]=${contactId}` : `entity]=lead&filter[entity_id]=${leadId}`;
 
   try {
-    const url = `https://${subdomain}.kommo.com/api/v4/events?filter[${entityParam}&filter[type]=outgoing_chat_message&limit=5`;
-    const res = await axios.get(url, { headers, timeout: 3500 });
-    const events = (res.data._embedded && res.data._embedded.events) || [];
+    // Consultar eventos del lead y contacto para análisis completo
+    const [leadEventsRes, contactEventsRes] = await Promise.all([
+      leadId ? axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=lead&filter[entity_id]=${leadId}&limit=40`, { headers, timeout: 4000 }).catch(() => null) : null,
+      contactId ? axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[entity]=contact&filter[entity_id]=${contactId}&limit=40`, { headers, timeout: 4000 }).catch(() => null) : null
+    ]);
+
+    const leadEvents = (leadEventsRes?.data?._embedded?.events) || [];
+    const contactEvents = (contactEventsRes?.data?._embedded?.events) || [];
+    const allEvents = [...leadEvents, ...contactEvents];
 
     const now = Date.now();
-    const fifteenMinutesAgo = now - 15 * 60 * 1000; // Ventana humana activa de 15 minutos (no 24 horas)
+    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000; // Ventana completa de 24 horas para atención humana activa
     const lastBotTime = lastBotDispatchTimes.get(String(leadId)) || 0;
 
-    for (const ev of events) {
-      const evTime = ev.created_at * 1000;
-      if (evTime > fifteenMinutesAgo) {
-        // En Kommo, los mensajes generados por un asesor humano tienen un created_by > 0 (ID de usuario del asesor)
-        // Los mensajes generados por bots, API o integraciones automáticas tienen created_by === 0
-        const isBotTimestamp = lastBotTime > 0 && Math.abs(evTime - lastBotTime) < 15000;
-        const isHumanUser = typeof ev.created_by === 'number' && ev.created_by > 0;
+    // Cambios en Respuesta_IA para contrastar si un mensaje saliente provino del bot
+    const cfChanges = allEvents.filter(e => e.type && e.type.includes('custom_field_2103996'));
+    const outMessages = allEvents.filter(e => e.type === 'outgoing_chat_message');
 
-        if (!isBotTimestamp && isHumanUser) {
-          console.log(`[Human Activity Confirmed] Evento de mensaje saliente ${ev.id} en Kommo por asesor #${ev.created_by} a las ${new Date(evTime).toISOString()}. Intervención humana confirmada.`);
+    for (const ev of outMessages) {
+      const evTime = ev.created_at * 1000;
+      if (evTime > twentyFourHoursAgo) {
+        // 1. Si fue enviado por un asesor desde Kommo Web (created_by > 0)
+        if (typeof ev.created_by === 'number' && ev.created_by > 0) {
+          console.log(`[Human Activity Confirmed] Mensaje saliente ${ev.id} por asesor #${ev.created_by} en Kommo a las ${new Date(evTime).toISOString()}. Intervención humana confirmada.`);
+          return true;
+        }
+
+        // 2. Si created_by === 0 (mensajes desde WhatsApp Web o app móvil sincronizados por integración):
+        // Se descarta como bot SOLO si coincide con el timestamp del microservicio en memoria O con un cambio de Respuesta_IA en Kommo
+        const isBotInMemory = lastBotTime > 0 && Math.abs(evTime - lastBotTime) < 25000;
+        const isBotInKommoField = cfChanges.some(cf => Math.abs((cf.created_at * 1000) - evTime) < 30000);
+
+        if (!isBotInMemory && !isBotInKommoField) {
+          console.log(`[Human WhatsApp Activity Confirmed] Mensaje saliente ${ev.id} vía WhatsApp a las ${new Date(evTime).toISOString()} sin registro de bot. Intervención humana confirmada.`);
           return true;
         }
       }
@@ -3497,6 +3512,33 @@ async function triggerKommoSalesbot(leadId) {
   return response.data;
 }
 
+// 🛑 DETENER SALESBOT EN KOMMO PARA EVITAR SECUENCIAS O TIMERS NO DESEADOS
+async function stopKommoSalesbot(leadId) {
+  if (!leadId) return;
+  const token = process.env.KOMMO_TOKEN;
+  const subdomain = process.env.KOMMO_SUBDOMAIN;
+  const botId = parseInt(process.env.KOMMO_BOT_ID || '100766', 10);
+  if (!token || !subdomain || !botId) return;
+
+  try {
+    const url = `https://${subdomain}.kommo.com/api/v4/bots/${botId}/stop`;
+    const payload = {
+      entity_id: parseInt(leadId, 10),
+      entity_type: 'leads'
+    };
+    await axios.post(url, payload, {
+      headers: {
+        'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 5000
+    });
+    console.log(`[Kommo API] Salesbot #${botId} DETENIDO exitosamente para Lead #${leadId} (Parada forzosa por atención humana/bloqueo).`);
+  } catch (err) {
+    console.warn(`[Kommo API Stop Bot Warning] No se pudo detener Salesbot #${botId} para Lead #${leadId}:`, err.response?.data?.detail || err.message);
+  }
+}
+
 function extractImageUrl(body, messageObj) {
   const attachType = (messageObj?.attachment?.type || body?.['message[add][0][attachment][type]'] || '').toLowerCase();
   const attachMime = (messageObj?.attachment?.mime_type || body?.['message[add][0][attachment][mime_type]'] || '').toLowerCase();
@@ -3740,6 +3782,50 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
+    // 🛑 DETECCIÓN INMEDIATA DE INTERVENCIÓN HUMANA EN CHAT (OUTGOING)
+    // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
+    // Se procesa inmediatamente antes de cualquier filtro para que NINGÚN mensaje humano pase desapercibido.
+    if (messageObj.type === 'outgoing') {
+      const outText = (messageObj.text || messageObj.value || '').trim();
+      const isFromBot = isRecentBotDispatchedMessage(outText, messageObj.entity_id);
+
+      if (!isFromBot) {
+        let outLeadId = messageObj.entity_id || messageObj.element_id;
+        const outTalkId = messageObj.talk_id;
+        const outContactId = messageObj.contact_id;
+
+        if (!outLeadId && outTalkId) {
+          try {
+            const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${outTalkId}`, {
+              headers: { Authorization: process.env.KOMMO_TOKEN },
+              timeout: 4000
+            });
+            outLeadId = talkRes.data?.entity_id;
+          } catch (e) {}
+        }
+
+        console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] El asesor humano escribió en el chat (Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas y deteniendo Salesbot.`);
+
+        if (outLeadId) setLeadHandoff(outLeadId);
+        if (outTalkId) setTalkHandoff(outTalkId);
+        if (outContactId) setContactHandoff(outContactId);
+
+        // Cancelar inmediatamente Salesbot y cualquier Respuesta_IA residual para evitar colisiones
+        if (outLeadId) {
+          await stopKommoSalesbot(outLeadId);
+          try {
+            await updateKommoLead(outLeadId, ' ');
+            console.log(`[Anti-Collision] Respuesta_IA vaciada y Salesbot detenido para Lead #${outLeadId}`);
+          } catch (e) {}
+        }
+
+        return;
+      } else {
+        console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado ("${outText.substring(0, 40)}..."). Skipping echo.`);
+        return;
+      }
+    }
+
     const imageUrl = extractImageUrl(body, messageObj);
     let userText = (messageObj.text || messageObj.value || '').trim();
 
@@ -3783,49 +3869,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     if (!isStandaloneInmobiliariaTuTechoIdeal(userText) && (userText.includes('Tu Techo Ideal, ') || userText.includes('Robert Jiménez') || (messageObj.author?.type !== 'external' && userText.includes('Tu Techo Ideal')))) {
       console.log('[Webhook] Bot self-message detected. Skipping.');
       return;
-    }
-
-    // 🛑 DETECCIÓN INMEDIATA DE INTERVENCIÓN HUMANA EN CHAT (OUTGOING)
-    // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
-    // Si un asesor humano (o WhatsApp Lite / App / Web) envía un mensaje en el chat, el bot se retira de inmediato.
-    if (messageObj.type === 'outgoing') {
-      const outText = (messageObj.text || messageObj.value || '').trim();
-      const isFromBot = isRecentBotDispatchedMessage(outText, messageObj.entity_id);
-
-      if (!isFromBot) {
-        let outLeadId = messageObj.entity_id || messageObj.element_id;
-        const outTalkId = messageObj.talk_id;
-        const outContactId = messageObj.contact_id;
-
-        if (!outLeadId && outTalkId) {
-          try {
-            const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${outTalkId}`, {
-              headers: { Authorization: process.env.KOMMO_TOKEN },
-              timeout: 4000
-            });
-            outLeadId = talkRes.data?.entity_id;
-          } catch (e) {}
-        }
-
-        console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] El asesor humano escribió en el chat (Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas.`);
-
-        if (outLeadId) setLeadHandoff(outLeadId);
-        if (outTalkId) setTalkHandoff(outTalkId);
-        if (outContactId) setContactHandoff(outContactId);
-
-        // Cancelar inmediatamente cualquier Respuesta_IA residual para evitar colisiones
-        if (outLeadId) {
-          try {
-            await updateKommoLead(outLeadId, ' ');
-            console.log(`[Anti-Collision] Respuesta_IA vaciada preventivamente para Lead #${outLeadId}`);
-          } catch (e) {}
-        }
-
-        return;
-      } else {
-        console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado ("${outText.substring(0, 40)}..."). Skipping echo.`);
-        return;
-      }
     }
 
     // 🛑 FILTRO 2: Solo mensajes entrantes del cliente
@@ -3990,19 +4033,24 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       const handoffStatus = checkLeadHandoffStatus(currentLeadId, currentTalkId, messageObj.contact_id);
       const intent = detectLeadIntent(userText);
 
-      if (handoffStatus.inHandoff && !hasDirectPropertyLink) {
+      if (handoffStatus.inHandoff) {
         console.log(`[Handoff Silence] Lead #${currentLeadId} (Talk #${currentTalkId}) está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+        await stopKommoSalesbot(currentLeadId);
         return;
       }
 
       // 🛑 DOBLE VERIFICACIÓN EN VIVO EN KOMMO (FAILSAFE CONTRA INTERVENCIÓN HUMANA)
       // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
       const humanAttended = await checkRecentHumanActivity(messageObj.contact_id, currentLeadId, currentTalkId);
-      if (humanAttended && !hasDirectPropertyLink) {
-        console.log(`[Handoff Silence - Live Check] Se detectó intervención humana reciente en Kommo para el Lead #${currentLeadId} (Contact #${messageObj.contact_id}). El bot cede el control total al equipo humano y se silencia.`);
+      if (humanAttended) {
+        console.log(`[Handoff Silence - Live Check] Se detectó intervención humana previa en Kommo para el Lead #${currentLeadId} (Contact #${messageObj.contact_id}). El bot cede el control total al equipo humano y se silencia.`);
         setLeadHandoff(currentLeadId);
         if (currentTalkId) setTalkHandoff(currentTalkId);
         if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
+        await stopKommoSalesbot(currentLeadId);
+        try {
+          await updateKommoLead(currentLeadId, ' ');
+        } catch (e) {}
         return;
       }
 
@@ -4066,24 +4114,29 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       const responseNum = incrementLeadResponseCount(currentLeadId);
       console.log(`[Response Count] Lead #${currentLeadId} - Respuestas automáticas acumuladas: ${responseNum}/${MAX_AI_RESPONSES_PER_LEAD}`);
 
-      // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS)
-      // Ventana de 60 segundos: Da tiempo total de holgura para que Salesbot lea y despache el mensaje por WhatsApp
+      // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS) Y PARADA DE SALESBOT
+      // Ventana de 45 segundos: Da tiempo de holgura para que Salesbot lea y despache el mensaje, luego se limpia y SE DETIENE SALESBOT
       setTimeout(async () => {
         try {
           await updateKommoLead(currentLeadId, ' ');
-          console.log(`[Anti-Duplicate] Campo Respuesta_IA vaciado para Lead #${currentLeadId}`);
+          await stopKommoSalesbot(currentLeadId);
+          console.log(`[Anti-Duplicate] Campo Respuesta_IA vaciado y Salesbot detenido para Lead #${currentLeadId}`);
         } catch (e) {
           console.warn('[Anti-Duplicate Clear Error]:', e.message);
         }
-      }, 60000);
+      }, 45000);
 
       // 🛑 SI LA RESPUESTA FUE DE DISPONIBILIDAD DIRECTA ("Si disponible" / "No disponible") O INFORMACIÓN NO DISPONIBLE EN BD:
       // Ceder el control y esperar a que el asesor humano continúe la conversación
       if (result.action === 'DISPONIBILIDAD' || result.action === 'NO_DISPONIBLE' || result.action === 'NO_EXISTE_EN_DESCRIPCION') {
-        console.log(`[Handoff Activated] Respuesta directa enviada ("${responseText}"). El bot cede el control total y queda a la espera del asesor humano.`);
+        console.log(`[Handoff Activated] Respuesta directa enviada ("${responseText}"). El bot cede el control total, detiene Salesbot y queda a la espera del asesor humano.`);
         setLeadHandoff(currentLeadId);
         if (currentTalkId) setTalkHandoff(currentTalkId);
         if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
+
+        setTimeout(async () => {
+          await stopKommoSalesbot(currentLeadId);
+        }, 15000);
       }
 
       // 5. Despacho de Alertas según la acción ejecutada (Omnicanal: WhatsApp, Instagram, Facebook)
