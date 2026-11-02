@@ -5,3 +5,5 @@ node_modules
 audit_state.json
 
 lead_context.json
+
+handoffs.json
