@@ -1279,8 +1279,9 @@ function isVisitSchedulingIntent(text) {
 }
 
 function isExplicitAvailabilityQuery(text) {
+  if (!text) return false;
   const t = normalizeText(text);
-  return /(?:est[aá]\s*disponible|saber\s*si\s*est[aá]\s*disponible|tienes\s*(?:un|el|este)|estoy\s*interesad[oa]|quisiera\s*saber\s*del|informaci[oó]n\s*del\s*inmueble|compartiste\s*en\s*(?:la\s*red\s*)?wasi)/i.test(t);
+  return /(?:disponib|est[aá]\s*(?:disponible|libre)|sigue\s*(?:disponible|libre)|a[uú]n\s*(?:disponible|libre)|est[aá]\s*en\s*(?:alquiler|venta)|tienes\s*(?:un|el|este)|estoy\s*interesad[oa]|quisiera\s*saber\s*del|informaci[oó]n\s*del\s*inmueble|compartiste\s*en\s*(?:la\s*red\s*)?wasi)/i.test(t);
 }
 
 function isPropertyLinkRequest(text) {
@@ -1534,6 +1535,26 @@ function matchWasiOrProperty(text, properties) {
 
   // Emparejamiento por zona y tipo si se especifica claramente en el texto
   const qNorm = normalizeText(text);
+  if (qNorm.includes('samanes')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-012');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-012' };
+  }
+  if (qNorm.includes('lomas del sol')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-062');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-062' };
+  }
+  if (qNorm.includes('trinidad')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-051');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-051' };
+  }
+  if (qNorm.includes('lagunita')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-053');
+    if (matched) return { status: 'MATCH', property: matched, code: 'REF-053' };
+  }
+  if (qNorm.includes('campitos')) {
+    const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-009' || p.ID_PROPIEDAD === 'REF-010');
+    if (matched) return { status: 'MATCH', property: matched, code: matched.ID_PROPIEDAD };
+  }
   if (qNorm.includes('california') && (qNorm.includes('apartamento') || qNorm.includes('alquiler') || qNorm.includes('apto'))) {
     const matched = properties.find(p => p.ID_PROPIEDAD === 'REF-013');
     if (matched) return { status: 'MATCH', property: matched, code: 'REF-013' };
@@ -1925,7 +1946,11 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
     norm.includes('hola, bienvenido a tu techo ideal') ||
     norm.includes('hola! gracias por comunicarte con, tu techo ideal') ||
     norm.includes('somos barbara bravo y robert jimenez') ||
-    norm.includes('tu techo ideal')
+    norm.includes('tu techo ideal') ||
+    norm === 'si, disponible' ||
+    norm === 'si disponible' ||
+    norm === 'no, disponible' ||
+    norm === 'no disponible'
   ) {
     return true;
   }
@@ -3191,42 +3216,7 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
     };
   }
 
-  // 🛑 FILTRO DE SALUDO PURO (Desiree en Chat #1287: "Hola buenas dias")
-  if (isPureGreeting(cleanMessage) && !hasActiveContext) {
-    const greeting = getVenezuelaGreeting();
-    console.log(`[Pure Greeting Detected] Cliente ${clientName} envió un saludo plano ("${cleanMessage}").`);
-    return {
-      text: `Hola, bienvenido a Tu techo ideal, ${greeting}. ¿En qué inmueble o zona estás interesado para brindarte información?`,
-      action: 'SALUDO_CORDIAL',
-      skip: false
-    };
-  }
-
-  // 🛑 FILTRO DE CONSULTA DE DISPONIBILIDAD SIN INMUEBLE (SimonTuripe en Chat #1281: "Esta disponoble")
-  if (isAvailabilityWithoutProperty(cleanMessage, hasActiveContext)) {
-    const greeting = getVenezuelaGreeting();
-    console.log(`[Availability Without Property] Cliente ${clientName} consultó disponibilidad sin especificar inmueble ("${cleanMessage}").`);
-    return {
-      text: `Hola, bienvenido a Tu techo ideal, ${greeting}. Con gusto, ¿cuál es el inmueble o enlace por el que consultas para confirmarte la disponibilidad?`,
-      action: 'CONSULTA_INMUEBLE_PENDIENTE',
-      skip: false
-    };
-  }
-
-  // 1. Verificar si el cliente pide AGENDAR CITA o VER/VISITAR el inmueble
-  // "si la persona sigue: Ok estoy interesa quiero agendar para verla, la ia responde 'Ok, ya consulto con mi jefe para agendar la cita'"
-  if (isVisitSchedulingIntent(cleanMessage)) {
-    const activeProp = existingProp || getLeadPropertyContext(leadId, allProperties, talkId, contactId);
-    console.log(`[Visit Scheduling Intent] El cliente ${clientName} solicita agendar cita para ver inmueble.`);
-    return {
-      text: 'Ok, ya consulto con mi jefe para agendar la cita',
-      action: 'AGENDAR_CITA',
-      matchedProperty: activeProp,
-      skip: false
-    };
-  }
-
-  // 2. Emparejar propiedad mencionada en el mensaje actual (o por imagen/flyer)
+  // 1. Emparejar propiedad mencionada en el mensaje actual (o por imagen/flyer)
   let matchedProp = null;
   const wasiCheck = matchWasiOrProperty(cleanMessage, allProperties);
 
@@ -3261,8 +3251,7 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
     }
   }
 
-  // 🛑 2.5: SI EL CLIENTE O COLEGA PIDE EL LINK / ENLACE / WASI / COMPARTIR
-  // "Si algun cliente pide un link dentro de la conversacion, entonces vamos a buscar el inmueble en la base de datos que corresponda a ese mismo que nos esta pidiendo... y apenas encontremos el inmuble y nos estan pidiendo el enlace entonces vamos a enviar el link de wasi que tenemos en la base de datos de dicho inmuble, se me entendio?"
+  // 🛑 1.5: SI EL CLIENTE O COLEGA PIDE EL LINK / ENLACE / WASI / COMPARTIR
   if (isPropertyLinkRequest(cleanMessage)) {
     if (matchedProp) {
       const wasiUrl = matchedProp.Wasi_URL || (matchedProp.Wasi && matchedProp.Wasi.startsWith('http') ? matchedProp.Wasi : '');
@@ -3302,15 +3291,27 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
     };
   }
 
-  // 3. Determinar si es una consulta de DISPONIBILIDAD o contacto inicial del inmueble
+  // 🛑 2: Verificar si el cliente pide AGENDAR CITA o VER/VISITAR el inmueble
+  if (isVisitSchedulingIntent(cleanMessage)) {
+    const activeProp = matchedProp || existingProp || getLeadPropertyContext(leadId, allProperties, talkId, contactId);
+    console.log(`[Visit Scheduling Intent] El cliente ${clientName} solicita agendar cita para ver inmueble.`);
+    return {
+      text: 'Ok, ya consulto con mi jefe para agendar la cita',
+      action: 'AGENDAR_CITA',
+      matchedProperty: activeProp,
+      skip: false
+    };
+  }
+
+  // 🛑 3: Determinar si es una consulta de DISPONIBILIDAD del inmueble identificado
   const isAvailabilityQuery = isExplicitAvailabilityQuery(cleanMessage) || wasiCheck.status === 'MATCH' || !!imageUrl || /https?:\/\/[^\s]+/i.test(cleanMessage);
 
   if (matchedProp && isAvailabilityQuery) {
     const isAvail = normalizeText(matchedProp.ESTATUS || '').includes('disponible') && !normalizeText(matchedProp.ESTATUS || '').includes('no');
     if (!isAvail) {
-      console.log(`[Disponibilidad Inmueble] ${matchedProp.ID_PROPIEDAD} estatus: "${matchedProp.ESTATUS}". Respondiendo escuetamente "No disponible".`);
+      console.log(`[Disponibilidad Inmueble] ${matchedProp.ID_PROPIEDAD} estatus: "${matchedProp.ESTATUS}". Respondiendo escuetamente "No, disponible".`);
       return {
-        text: 'No disponible',
+        text: 'No, disponible',
         action: 'NO_DISPONIBLE',
         matchedProperty: matchedProp,
         exactText: true,
@@ -3318,14 +3319,37 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
       };
     }
 
-    console.log(`[Disponibilidad Inmueble] ${matchedProp.ID_PROPIEDAD} estatus: "${matchedProp.ESTATUS}". Respondiendo escuetamente "Si disponible".`);
+    console.log(`[Disponibilidad Inmueble] ${matchedProp.ID_PROPIEDAD} estatus: "${matchedProp.ESTATUS}". Respondiendo escuetamente "Si, disponible".`);
     return {
-      text: 'Si disponible',
+      text: 'Si, disponible',
       action: 'DISPONIBILIDAD',
       matchedProperty: matchedProp,
       exactText: true,
       skip: false
     };
+  }
+
+  // 🛑 4: Si no hay propiedad identificada, comprobar si es saludo plano o consulta genérica sin inmueble
+  if (!matchedProp) {
+    if (isPureGreeting(cleanMessage)) {
+      const greeting = getVenezuelaGreeting();
+      console.log(`[Pure Greeting Detected] Cliente ${clientName} envió un saludo plano ("${cleanMessage}").`);
+      return {
+        text: `Hola, bienvenido a Tu techo ideal, ${greeting}. ¿En qué inmueble o zona estás interesado para brindarte información?`,
+        action: 'SALUDO_CORDIAL',
+        skip: false
+      };
+    }
+
+    if (isAvailabilityWithoutProperty(cleanMessage, false)) {
+      const greeting = getVenezuelaGreeting();
+      console.log(`[Availability Without Property] Cliente ${clientName} consultó disponibilidad sin especificar inmueble ("${cleanMessage}").`);
+      return {
+        text: `Hola, bienvenido a Tu techo ideal, ${greeting}. Con gusto, ¿cuál es el inmueble o enlace por el que consultas para confirmarte la disponibilidad?`,
+        action: 'CONSULTA_INMUEBLE_PENDIENTE',
+        skip: false
+      };
+    }
   }
 
   // 4. Si tenemos una propiedad activa y el cliente hace preguntas sobre ella (habitaciones, baños, metros, precio, etc.):
@@ -4056,12 +4080,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       const handoffStatus = checkLeadHandoffStatus(currentLeadId, currentTalkId, messageObj.contact_id);
       const intent = detectLeadIntent(userText);
 
-      if (handoffStatus.inHandoff) {
-        console.log(`[Handoff Silence] Lead #${currentLeadId} (Talk #${currentTalkId}) está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
-        await stopKommoSalesbot(currentLeadId);
-        return;
-      }
-
       // 🛑 DOBLE VERIFICACIÓN EN VIVO EN KOMMO (FAILSAFE CONTRA INTERVENCIÓN HUMANA)
       // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
       const humanAttended = await checkRecentHumanActivity(messageObj.contact_id, currentLeadId, currentTalkId);
@@ -4074,6 +4092,14 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         try {
           await updateKommoLead(currentLeadId, ' ');
         } catch (e) {}
+        return;
+      }
+
+      // Si el cliente envía un enlace directo o código de inmueble, SIEMPRE se atiende y valida contra la BD ("Si, disponible" / "No, disponible")
+      // a menos que un humano haya intervenido directamente en el chat en vivo
+      if (handoffStatus.inHandoff && !hasDirectPropertyLink) {
+        console.log(`[Handoff Silence] Lead #${currentLeadId} (Talk #${currentTalkId}) está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
+        await stopKommoSalesbot(currentLeadId);
         return;
       }
 
@@ -4149,10 +4175,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         }
       }, 45000);
 
-      // 🛑 SI LA RESPUESTA FUE DE DISPONIBILIDAD DIRECTA ("Si disponible" / "No disponible") O INFORMACIÓN NO DISPONIBLE EN BD:
-      // Ceder el control y esperar a que el asesor humano continúe la conversación
-      if (result.action === 'DISPONIBILIDAD' || result.action === 'NO_DISPONIBLE' || result.action === 'NO_EXISTE_EN_DESCRIPCION') {
-        console.log(`[Handoff Activated] Respuesta directa enviada ("${responseText}"). El bot cede el control total, detiene Salesbot y queda a la espera del asesor humano.`);
+      // 🛑 SI LA INFORMACIÓN NO EXISTE EN BD O EL CLIENTE PIDE AGENDAR CITA:
+      // Se activa el traspaso al asesor humano para que continúe la conversación
+      if (result.action === 'NO_EXISTE_EN_DESCRIPCION' || result.action === 'AGENDAR_CITA') {
+        console.log(`[Handoff Activated] Inmueble no registrado o cita solicitada ("${responseText}"). El bot cede el control total, detiene Salesbot y queda a la espera del asesor humano.`);
         setLeadHandoff(currentLeadId);
         if (currentTalkId) setTalkHandoff(currentTalkId);
         if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
