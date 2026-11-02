@@ -303,6 +303,81 @@ function normalizeText(text) {
     .trim();
 }
 
+function cleanUrlForMatching(url) {
+  if (!url) return '';
+  return String(url).toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '')
+    .trim();
+}
+
+function findPropertyByAnyLinkOrCode(text, allProps) {
+  if (!text || !allProps || allProps.length === 0) return null;
+  const raw = String(text).trim();
+
+  // 1. Extraer códigos numéricos (7 a 9 dígitos)
+  const numMatches = raw.match(/\b(\d{7,9})\b/g) || [];
+  for (const code of numMatches) {
+    const found = allProps.find(p =>
+      p.CODIGO_WASI === code ||
+      (p.Wasi_URL && p.Wasi_URL.includes(code)) ||
+      (p.Wasi && p.Wasi.includes(code))
+    );
+    if (found) return found;
+  }
+
+  // 2. Extraer código REF (REF-012)
+  const refMatch = raw.match(/\b(REF-?\d{3})\b/i);
+  if (refMatch) {
+    const cleanRef = refMatch[1].toUpperCase().replace('REF', 'REF-').replace('--', '-');
+    const found = allProps.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === cleanRef);
+    if (found) return found;
+  }
+
+  // 3. Extraer código Rexup (cod_inmueble)
+  const rexupMatch = raw.match(/cod_inmueble=(\d+)/i);
+  if (rexupMatch) {
+    const found = allProps.find(p => (p.LINK_FOTOS || p.LINK_FOTOS_URL || '').includes(rexupMatch[1]));
+    if (found) return found;
+  }
+
+  // 4. Extraer código Mercado Libre (MLV)
+  const mlMatch = raw.match(/MLV-?(\d+)/i);
+  if (mlMatch) {
+    const found = allProps.find(p => (p['Mercado Libre'] || p.MercadoLibre_URL || '').includes(mlMatch[1]));
+    if (found) return found;
+  }
+
+  // 5. Extraer URLs completas o parciales (Wasi, Web, Mercado Libre, Rexup)
+  const urlMatches = raw.match(/https?:\/\/[^\s"'<>]+/gi) || [];
+  for (const rawUrl of urlMatches) {
+    const cleaned = cleanUrlForMatching(rawUrl);
+
+    for (const p of allProps) {
+      const wasiClean = cleanUrlForMatching(p.Wasi_URL || p.Wasi);
+      const webClean = cleanUrlForMatching(p['Pagina Web'] || p.PaginaWeb_URL);
+      const mlClean = cleanUrlForMatching(p['Mercado Libre'] || p.MercadoLibre_URL);
+      const fotosClean = cleanUrlForMatching(p.LINK_FOTOS || p.LINK_FOTOS_URL);
+
+      if (wasiClean && (cleaned === wasiClean || cleaned.includes(wasiClean) || wasiClean.includes(cleaned))) return p;
+      if (webClean && (cleaned === webClean || cleaned.includes(webClean) || webClean.includes(cleaned))) return p;
+      if (mlClean && (cleaned === mlClean || cleaned.includes(mlClean) || mlClean.includes(cleaned))) return p;
+      if (fotosClean && (cleaned === fotosClean || cleaned.includes(fotosClean) || fotosClean.includes(cleaned))) return p;
+
+      // Comparar por slug final de la URL
+      const slugMatch = cleaned.match(/\/([a-z0-9-]+)$/i);
+      if (slugMatch && slugMatch[1].length > 5) {
+        const slug = slugMatch[1];
+        if (wasiClean.includes(slug) || webClean.includes(slug)) return p;
+      }
+    }
+  }
+
+  return null;
+}
+
 function isStandaloneLinkWithoutQuestion(text, properties = null) {
   if (!text || typeof text !== 'string') return false;
   const clean = text.trim();
@@ -313,9 +388,13 @@ function isStandaloneLinkWithoutQuestion(text, properties = null) {
 
   // Si tenemos el catálogo de propiedades y el link coincide con una propiedad real de la BD, NO es un link descartable
   if (properties && Array.isArray(properties) && properties.length > 0) {
-    const match = matchWasiOrProperty(clean, properties);
-    if (match && match.property) {
+    const match = findPropertyByAnyLinkOrCode(clean, properties);
+    if (match) {
       return false; // ¡Es una consulta legítima de un inmueble de nuestro inventario!
+    }
+    // Si contiene dominios de inmobiliaria o catálogos, NUNCA descartar
+    if (/wasi\.co|tutechoideal\.com|mercadolibre\.com|rexup\.net/i.test(clean)) {
+      return false;
     }
   }
 
@@ -324,7 +403,10 @@ function isStandaloneLinkWithoutQuestion(text, properties = null) {
 
   // Si al quitar las URLs no queda nada o solo puntuación/emojis (< 4 caracteres)
   if (textWithoutUrls.length < 4) {
-    return true; // Es solo un link en seco sin texto alguno (ej: reel de Instagram suelto o link ajeno)
+    if (/instagram\.com|tiktok\.com|facebook\.com|youtube\.com|youtu\.be/i.test(clean)) {
+      return true; // Reel o red social suelta sin consulta
+    }
+    return false;
   }
 
   // Si el texto incluye palabras claras de consulta inmobiliaria o red Wasi
@@ -335,7 +417,7 @@ function isStandaloneLinkWithoutQuestion(text, properties = null) {
     return false; // Es una consulta inmobiliaria válida con texto
   }
 
-  return true; // Envió un link sin relación inmobiliaria ni pregunta
+  return false;
 }
 
 // ==========================================
@@ -1240,6 +1322,12 @@ function isPureGreeting(text) {
 function isAvailabilityWithoutProperty(text, hasProperty) {
   if (hasProperty) return false;
   if (!text) return false;
+
+  // Si el mensaje contiene un link o código, NO es disponibilidad genérica sin inmueble
+  if (/https?:\/\/[^\s]+/i.test(text) || /\b\d{7,9}\b|\bREF-?\d{3}\b/i.test(text)) {
+    return false;
+  }
+
   const t = normalizeText(text).replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!¿¡]/g, '').trim();
 
   // Si menciona tipo de inmueble o zona, ya no es pregunta seca sin inmueble
@@ -1388,44 +1476,21 @@ async function dispatchDirectWhatsAppToRobert(messageText) {
 // 🔍 DETECCIÓN Y EMPAREJAMIENTO DE INMUEBLES
 // ==========================================
 function matchWasiOrProperty(text, properties) {
-  let wasiCode = null;
-
-  // 1. URL con código numérico de 7 a 9 dígitos (wasi.co o cualquier portal/dominio afiliado a la red Wasi)
-  const anyUrlMatch = text.match(/https?:\/\/[^\s\/$.?#].[^\s]*\/(\d{7,9})(?:[\/?#]|$)/i);
-  if (anyUrlMatch) {
-    wasiCode = anyUrlMatch[1];
-  } else {
-    const explicitCodeMatch = text.match(/(?:c[oó]digo\s*(?:es)?:?\s*|inmueble\s*(?:es)?:?\s*|wasi\s*(?:es)?:?\s*)(\d{7,9})/i);
-    if (explicitCodeMatch) {
-      wasiCode = explicitCodeMatch[1];
-    } else {
-      const numMatches = text.match(/\b(\d{7,9})\b/g);
-      if (numMatches) {
-        for (const nm of numMatches) {
-          const exists = properties.find(p => p.CODIGO_WASI === nm || (p.Wasi_URL && p.Wasi_URL.includes(nm)) || (p.Wasi && p.Wasi.includes(nm)));
-          if (exists) {
-            wasiCode = nm;
-            break;
-          }
-        }
-        if (!wasiCode && numMatches.length > 0 && /wasi|inmueble|propiedad|codigo|código/i.test(text)) {
-          wasiCode = numMatches[0];
-        }
-      }
-    }
+  // 1. Detección exhaustiva por enlaces (Wasi, Web, Mercado Libre, Rexup) o códigos directos
+  const directProp = findPropertyByAnyLinkOrCode(text, properties);
+  if (directProp) {
+    return { status: 'MATCH', property: directProp, code: directProp.CODIGO_WASI || directProp.ID_PROPIEDAD };
   }
 
-  if (wasiCode) {
-    const matched = properties.find(p =>
-      p.CODIGO_WASI === wasiCode ||
-      (p.Wasi_URL && p.Wasi_URL.includes(wasiCode)) ||
-      (p.Wasi && p.Wasi.includes(wasiCode))
-    );
-    if (matched) {
-      return { status: 'MATCH', property: matched, code: wasiCode };
-    } else {
-      return { status: 'NOT_FOUND', code: wasiCode, item: `Inmueble código Wasi ${wasiCode}` };
-    }
+  // 2. Si vino un código numérico explícito (7 a 9 dígitos) que no existe en inventario
+  const explicitCodeMatch = text.match(/(?:c[oó]digo\s*(?:es)?:?\s*|inmueble\s*(?:es)?:?\s*|wasi\s*(?:es)?:?\s*|\binfo\.wasi\.co\/[^\s\/]+\/)(\d{7,9})/i);
+  if (explicitCodeMatch) {
+    return { status: 'NOT_FOUND', code: explicitCodeMatch[1], item: `Inmueble código Wasi ${explicitCodeMatch[1]}` };
+  }
+
+  // 3. Si vino un link de portal inmobiliario que no coincide con nuestro catálogo
+  if (/https?:\/\/[^\s]*(?:wasi\.co|tutechoideal\.com|mercadolibre\.com|rexup\.net)[^\s]*/i.test(text)) {
+    return { status: 'NOT_FOUND', code: 'LINK_NO_REGISTRADO', item: 'Enlace de inmueble no registrado en catálogo' };
   }
 
   // Emparejamiento por código REF directo (ej: REF-005)
@@ -1926,16 +1991,19 @@ async function checkRecentHumanActivity(contactId, leadId, talkId) {
     const events = (res.data._embedded && res.data._embedded.events) || [];
 
     const now = Date.now();
-    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+    const fifteenMinutesAgo = now - 15 * 60 * 1000; // Ventana humana activa de 15 minutos (no 24 horas)
     const lastBotTime = lastBotDispatchTimes.get(String(leadId)) || 0;
 
     for (const ev of events) {
       const evTime = ev.created_at * 1000;
-      if (evTime > twentyFourHoursAgo) {
-        // Si el evento no ocurrió dentro de los 15s de una respuesta de nuestro bot, fue un asesor humano
+      if (evTime > fifteenMinutesAgo) {
+        // En Kommo, los mensajes generados por un asesor humano tienen un created_by > 0 (ID de usuario del asesor)
+        // Los mensajes generados por bots, API o integraciones automáticas tienen created_by === 0
         const isBotTimestamp = lastBotTime > 0 && Math.abs(evTime - lastBotTime) < 15000;
-        if (!isBotTimestamp) {
-          console.log(`[Human Activity Confirmed] Evento de mensaje saliente ${ev.id} en Kommo a las ${new Date(evTime).toISOString()}. Intervención humana confirmada.`);
+        const isHumanUser = typeof ev.created_by === 'number' && ev.created_by > 0;
+
+        if (!isBotTimestamp && isHumanUser) {
+          console.log(`[Human Activity Confirmed] Evento de mensaje saliente ${ev.id} en Kommo por asesor #${ev.created_by} a las ${new Date(evTime).toISOString()}. Intervención humana confirmada.`);
           return true;
         }
       }
@@ -3201,25 +3269,27 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
   }
 
   // 3. Determinar si es una consulta de DISPONIBILIDAD o contacto inicial del inmueble
-  const isAvailabilityQuery = isExplicitAvailabilityQuery(cleanMessage) || wasiCheck.status === 'MATCH' || !!imageUrl;
+  const isAvailabilityQuery = isExplicitAvailabilityQuery(cleanMessage) || wasiCheck.status === 'MATCH' || !!imageUrl || /https?:\/\/[^\s]+/i.test(cleanMessage);
 
   if (matchedProp && isAvailabilityQuery) {
-    const isAvail = normalizeText(matchedProp.ESTATUS || '').includes('disponible');
-    const greeting = getVenezuelaGreeting();
+    const isAvail = normalizeText(matchedProp.ESTATUS || '').includes('disponible') && !normalizeText(matchedProp.ESTATUS || '').includes('no');
     if (!isAvail) {
+      console.log(`[Disponibilidad Inmueble] ${matchedProp.ID_PROPIEDAD} estatus: "${matchedProp.ESTATUS}". Respondiendo escuetamente "No disponible".`);
       return {
-        text: `Hola, bienvenido a Tu techo ideal, ${greeting}, actualmente este inmueble ya no se encuentra disponible.`,
+        text: 'No disponible',
         action: 'NO_DISPONIBLE',
         matchedProperty: matchedProp,
+        exactText: true,
         skip: false
       };
     }
 
-    const availResp = formatAvailabilityResponse(matchedProp, cleanMessage);
+    console.log(`[Disponibilidad Inmueble] ${matchedProp.ID_PROPIEDAD} estatus: "${matchedProp.ESTATUS}". Respondiendo escuetamente "Si disponible".`);
     return {
-      text: availResp,
+      text: 'Si disponible',
       action: 'DISPONIBILIDAD',
       matchedProperty: matchedProp,
+      exactText: true,
       skip: false
     };
   }
@@ -3267,8 +3337,18 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
 function finalizeResponse(result, leadId) {
   if (!result || result.skip || !result.text) return result;
 
-  // 🛑 SI ES LA RESPUESTA EXACTA STANDALONE ("Inmobiliaria tu techo ideal."), NO ALTERAR NI DUPLICAR SALUDO
-  if (result.action === 'INMOBILIARIA_STANDALONE' || result.exactText) {
+  // 🛑 SI ES LA RESPUESTA DIRECTA DE DISPONIBILIDAD, NO DISPONIBLE, ESPERA O STANDALONE, NO AGREGAR SALUDO DE BIENVENIDA
+  if (
+    result.action === 'INMOBILIARIA_STANDALONE' ||
+    result.action === 'DISPONIBILIDAD' ||
+    result.action === 'NO_DISPONIBLE' ||
+    result.action === 'NO_EXISTE_EN_DESCRIPCION' ||
+    result.exactText ||
+    /^deme\s+un\s+momento/i.test(result.text)
+  ) {
+    if (/^deme\s+un\s+momento/i.test(result.text)) {
+      result.text = 'Deme un momento, voy a consultar.';
+    }
     return result;
   }
 
@@ -3895,11 +3975,15 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log(`Message: "${userText}"`);
       console.log(`========================================`);
 
+      // 1. Obtener propiedades de Google Sheets y verificar si envió link directo
+      const properties = await getAvailableProperties();
+      const hasDirectPropertyLink = !!findPropertyByAnyLinkOrCode(userText, properties);
+
       // 🛑 CONTROL DE TRASPASO A HUMANO (HANDOFF)
       const handoffStatus = checkLeadHandoffStatus(currentLeadId, currentTalkId, messageObj.contact_id);
       const intent = detectLeadIntent(userText);
 
-      if (handoffStatus.inHandoff) {
+      if (handoffStatus.inHandoff && !hasDirectPropertyLink) {
         console.log(`[Handoff Silence] Lead #${currentLeadId} (Talk #${currentTalkId}) está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
         return;
       }
@@ -3907,8 +3991,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 🛑 DOBLE VERIFICACIÓN EN VIVO EN KOMMO (FAILSAFE CONTRA INTERVENCIÓN HUMANA)
       // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
       const humanAttended = await checkRecentHumanActivity(messageObj.contact_id, currentLeadId, currentTalkId);
-      if (humanAttended) {
-        console.log(`[Handoff Silence - Live Check] Se detectó intervención humana previa en Kommo para el Lead #${currentLeadId} (Contact #${messageObj.contact_id}). El bot cede el control total al equipo humano y se silencia.`);
+      if (humanAttended && !hasDirectPropertyLink) {
+        console.log(`[Handoff Silence - Live Check] Se detectó intervención humana reciente en Kommo para el Lead #${currentLeadId} (Contact #${messageObj.contact_id}). El bot cede el control total al equipo humano y se silencia.`);
         setLeadHandoff(currentLeadId);
         if (currentTalkId) setTalkHandoff(currentTalkId);
         if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
@@ -3945,9 +4029,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         console.log(`[Instagram Story/Restricted Ignored] Lead #${currentLeadId}: Descartado silenciosamente. Sin mensaje al cliente y sin alerta a Robert.`);
         return;
       }
-
-      // 1. Obtener propiedades de Google Sheets
-      const properties = await getAvailableProperties();
 
       // 2. Generar respuesta personalizada
       console.log('[Processing] Generating response based on DESCRIPCION_BREVE & inventory...');
@@ -3988,6 +4069,15 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           console.warn('[Anti-Duplicate Clear Error]:', e.message);
         }
       }, 60000);
+
+      // 🛑 SI LA RESPUESTA FUE DE DISPONIBILIDAD DIRECTA ("Si disponible" / "No disponible"):
+      // Ceder el control y esperar a que el asesor humano continúe la conversación
+      if (result.action === 'DISPONIBILIDAD' || result.action === 'NO_DISPONIBLE') {
+        console.log(`[Handoff Activated] Respuesta de disponibilidad directa enviada ("${responseText}"). El bot cede el control total y queda a la espera del asesor humano.`);
+        setLeadHandoff(currentLeadId);
+        if (currentTalkId) setTalkHandoff(currentTalkId);
+        if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
+      }
 
       // 5. Despacho de Alertas según la acción ejecutada (Omnicanal: WhatsApp, Instagram, Facebook)
       let channel = 'WhatsApp';
