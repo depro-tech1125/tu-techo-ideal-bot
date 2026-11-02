@@ -1374,13 +1374,14 @@ function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedP
   }
 
   if (type === 'NO_EXISTE_EN_DESCRIPCION') {
-    return `🚨 *CONSULTA SIN INFORMACIÓN EN BASE DE DATOS* 🚨\n\n` +
+    return `🚨 *ALERTA URGENTE: CONSULTA SIN ACCESO A INFORMACIÓN* 🚨\n\n` +
       `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
       `📱 *Canal:* ${channel}\n` +
       `🏢 *Inmueble:* ${propDescription}\n` +
       `💬 *Pregunta del cliente:*\n"${userText}"\n\n` +
-      `⚠️ *Diagnóstico:* La información solicitada no existe en la columna "DESCRIPCION_BREVE" del inventario.\n` +
-      `⚡ *Acción realizada:* Se respondió al cliente: "Deme un momento, voy a consultar." y el bot se pausó automáticamente para tu atención personal.\n\n` +
+      `⚠️ *Diagnóstico:* No tenemos acceso a esta información en la base de datos o inventario.\n` +
+      `⚡ *Acción realizada:* Se envió el mensaje de cortesía: "Hola, bienvenido a Tu techo ideal, [saludo]. Voy a consultar y ya le doy informacion."\n` +
+      `🛑 *Estado del bot:* El bot se pausó automáticamente en este chat para que respondas tú personalmente.\n\n` +
       (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
       `🕒 *Fecha y hora:* ${nowFormatted}`;
   }
@@ -1903,6 +1904,8 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
   if (
     norm.includes('deme un momento, voy a consultar') ||
     norm.includes('deme un momento voy a consultar') ||
+    norm.includes('voy a consultar y ya le doy informacion') ||
+    norm.includes('voy a consultar y ya le doy informacin') ||
     norm.includes('hola, bienvenido a tu techo ideal') ||
     norm.includes('hola! gracias por comunicarte con, tu techo ideal') ||
     norm.includes('somos barbara bravo y robert jimenez') ||
@@ -3337,24 +3340,33 @@ async function generateResponseRaw(userMessage, allProperties, imageUrl = null, 
 function finalizeResponse(result, leadId) {
   if (!result || result.skip || !result.text) return result;
 
-  // 🛑 SI ES LA RESPUESTA DIRECTA DE DISPONIBILIDAD, NO DISPONIBLE, ESPERA O STANDALONE, NO AGREGAR SALUDO DE BIENVENIDA
+  const greeting = getVenezuelaGreeting();
+  const officialGreetingPrefix = `Hola, bienvenido a Tu techo ideal, ${greeting}`;
+
+  // 🛑 CASO: FALTA DE INFORMACIÓN EN BD / INMUEBLE NO ENCONTRADO
+  // "esta bien el mensaje de entrada pero no, no respondas porque no tenemos acceso a esa informacion,
+  // en este caso avisa urgente a robert para que en futuro responda el...
+  // Y este mensaje 'Hola, bienvenido a Tu techo ideal, buenas tardes. Con mucho gusto te asesoramos.'
+  // vamos acomodarlo por esto 'Hola, bienvenido a Tu techo ideal, buenas tardes. Voy a consultar y ya le doy informacion.'
+  // listo esperamos a que el humano responda"
+  if (result.action === 'NO_EXISTE_EN_DESCRIPCION' || /^deme\s+un\s+momento/i.test(result.text)) {
+    result.text = `${officialGreetingPrefix}. Voy a consultar y ya le doy informacion.`;
+    result.action = 'NO_EXISTE_EN_DESCRIPCION';
+    result.exactText = true;
+    return result;
+  }
+
+  // 🛑 SI ES LA RESPUESTA DIRECTA DE DISPONIBILIDAD, NO DISPONIBLE O STANDALONE, NO AGREGAR SALUDO DE BIENVENIDA
   if (
     result.action === 'INMOBILIARIA_STANDALONE' ||
     result.action === 'DISPONIBILIDAD' ||
     result.action === 'NO_DISPONIBLE' ||
-    result.action === 'NO_EXISTE_EN_DESCRIPCION' ||
-    result.exactText ||
-    /^deme\s+un\s+momento/i.test(result.text)
+    result.exactText
   ) {
-    if (/^deme\s+un\s+momento/i.test(result.text)) {
-      result.text = 'Deme un momento, voy a consultar.';
-    }
     return result;
   }
 
   const currentCount = getLeadResponseCount(leadId);
-  const greeting = getVenezuelaGreeting();
-  const officialGreetingPrefix = `Hola, bienvenido a Tu techo ideal, ${greeting}`;
 
   if (currentCount === 0) {
     let cleanText = result.text.trim();
@@ -3365,12 +3377,7 @@ function finalizeResponse(result, leadId) {
       cleanText = cleanText.replace(/^(Hola,\s*bienvenido\s+a\s+Tu\s+techo\s+ideal,\s*(?:buen d[ií]a|buenas tardes|buenas noches))\.\s*(s[ií]\s*disponible)/i, '$1, $2');
     } else if (!/^hola,\s*bienvenido\s+a\s+tu\s+techo\s+ideal/i.test(cleanText)) {
       // Si la respuesta no contiene el saludo oficial de bienvenida, anteponerlo con cordialidad profesional
-      if (/^deme\s+un\s+momento/i.test(cleanText)) {
-        cleanText = `${officialGreetingPrefix}. Con mucho gusto te asesoramos.`;
-        if (result.action === 'NO_EXISTE_EN_DESCRIPCION') {
-          result.action = 'CONSULTA_INMUEBLE_PENDIENTE';
-        }
-      } else if (/^ok,\s*ya\s+consulto/i.test(cleanText)) {
+      if (/^ok,\s*ya\s+consulto/i.test(cleanText)) {
         cleanText = `${officialGreetingPrefix}. Ok, ya consulto con mi jefe para agendar la cita.`;
       } else {
         cleanText = `${officialGreetingPrefix}. ${cleanText}`;
@@ -3387,9 +3394,9 @@ function finalizeResponse(result, leadId) {
       cleanText = cleanText.replace(/^bienvenido\s+a\s+tu\s+techo\s+ideal[,\.]?\s*(buen d[ií]a|buenas tardes|buenas noches)?[,\.]?\s*/i, '').trim();
       if (cleanText) cleanText = cleanText.charAt(0).toUpperCase() + cleanText.slice(1);
     }
-    // Si la respuesta es de espera por falta de datos, responder única y secamente la frase oficial
+    // Si la respuesta es de espera por falta de datos, responder la frase oficial
     if (/^deme\s+un\s+momento/i.test(cleanText)) {
-      cleanText = 'Deme un momento, voy a consultar.';
+      cleanText = `${officialGreetingPrefix}. Voy a consultar y ya le doy informacion.`;
     } else if (/^ok,\s*ya\s+consulto/i.test(cleanText)) {
       cleanText = 'Ok, ya consulto con mi jefe para agendar la cita.';
     }
@@ -4070,10 +4077,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         }
       }, 60000);
 
-      // 🛑 SI LA RESPUESTA FUE DE DISPONIBILIDAD DIRECTA ("Si disponible" / "No disponible"):
+      // 🛑 SI LA RESPUESTA FUE DE DISPONIBILIDAD DIRECTA ("Si disponible" / "No disponible") O INFORMACIÓN NO DISPONIBLE EN BD:
       // Ceder el control y esperar a que el asesor humano continúe la conversación
-      if (result.action === 'DISPONIBILIDAD' || result.action === 'NO_DISPONIBLE') {
-        console.log(`[Handoff Activated] Respuesta de disponibilidad directa enviada ("${responseText}"). El bot cede el control total y queda a la espera del asesor humano.`);
+      if (result.action === 'DISPONIBILIDAD' || result.action === 'NO_DISPONIBLE' || result.action === 'NO_EXISTE_EN_DESCRIPCION') {
+        console.log(`[Handoff Activated] Respuesta directa enviada ("${responseText}"). El bot cede el control total y queda a la espera del asesor humano.`);
         setLeadHandoff(currentLeadId);
         if (currentTalkId) setTalkHandoff(currentTalkId);
         if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
@@ -4117,10 +4124,37 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           leadId: currentLeadId
         });
 
-        console.log(`[Missing Info Alert] Despachando alerta ejecutiva de información fuera de BD a Robert...`);
+        console.log(`[Missing Info Alert] Despachando alerta urgente de información no disponible en BD a Robert...`);
         await dispatchDirectWhatsAppToRobert(robertAlertText);
-        // NOTA: No llamamos setLeadHandoff aquí ("si un humano no ha respondido sigue la conversacion").
-        // La alerta queda despachada a Robert, pero si el cliente escribe un nuevo mensaje o enlace, el bot continúa activo.
+
+        // Crear tarea urgente en Kommo asignada a Robert
+        try {
+          const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
+          const nowSec = Math.floor(Date.now() / 1000);
+          await axios.post(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/tasks`, [
+            {
+              responsible_user_id: robertUserId,
+              entity_id: parseInt(currentLeadId, 10),
+              entity_type: 'leads',
+              text: `🚨 [Atención Urgente] ${clientName || 'Cliente'}: "${userText}". No tenemos información en BD. Responder personalmente.`,
+              complete_till: nowSec + 1800,
+              task_type_id: 1
+            }
+          ], {
+            headers: { Authorization: process.env.KOMMO_TOKEN, 'Content-Type': 'application/json' },
+            timeout: 5000
+          });
+          console.log(`[Missing Info Kommo Task] Tarea urgente creada para Robert en Lead #${currentLeadId}`);
+        } catch (e) {
+          console.warn('[Missing Info Kommo Task Error]:', e.response?.data || e.message);
+        }
+
+        // 🛑 ACTIVAR TRASPASO (HANDOFF) INMEDIATO:
+        // "esta bien el mensaje de entrada pero no, no respondas porque no tenemos acceso a esa informacion,
+        // en este caso avisa urgente a robert para que en futuro responda el... listo esperamos a que el humano responda"
+        setLeadHandoff(currentLeadId);
+        if (currentTalkId) setTalkHandoff(currentTalkId);
+        if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
       } else if (result.action === 'LIMITE_ALCANZADO') {
         const robertAlertText = buildRobertAlertText({
           type: 'LIMITE_ALCANZADO',
