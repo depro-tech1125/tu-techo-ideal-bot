@@ -2037,7 +2037,6 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
     norm.includes('hola, bienvenido a tu techo ideal') ||
     norm.includes('hola! gracias por comunicarte con, tu techo ideal') ||
     norm.includes('somos barbara bravo y robert jimenez') ||
-    norm.includes('tu techo ideal') ||
     norm === 'si, disponible' ||
     norm === 'si disponible' ||
     norm === 'no, disponible' ||
@@ -2070,9 +2069,10 @@ function setHandoffEntity(entityType, id) {
   if (!handoffsData.talks) handoffsData.talks = {};
   if (!handoffsData.contacts) handoffsData.contacts = {};
 
-  if (entityType === 'lead') handoffsData.leads[String(id)] = { timestamp: now };
-  if (entityType === 'talk') handoffsData.talks[String(id)] = { timestamp: now };
-  if (entityType === 'contact') handoffsData.contacts[String(id)] = { timestamp: now };
+  const handoffRecord = { lastHumanIntervention: now, timestamp: now };
+  if (entityType === 'lead') handoffsData.leads[String(id)] = handoffRecord;
+  if (entityType === 'talk') handoffsData.talks[String(id)] = handoffRecord;
+  if (entityType === 'contact') handoffsData.contacts[String(id)] = handoffRecord;
   saveHandoffs();
 }
 

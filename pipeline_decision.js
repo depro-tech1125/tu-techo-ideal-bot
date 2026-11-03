@@ -503,14 +503,15 @@ class HandoffManager {
     const contactEntry = contactId && this.handoffs.contacts ? this.handoffs.contacts[String(contactId)] : null;
 
     const entry = talkEntry || leadEntry || contactEntry;
+    const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
 
-    if (entry && entry.lastHumanIntervention) {
-      const hoursElapsed = (now - entry.lastHumanIntervention) / (1000 * 60 * 60);
+    if (humanTime) {
+      const hoursElapsed = (now - humanTime) / (1000 * 60 * 60);
       if (hoursElapsed < 24) {
         return {
           isLocked: true,
           hoursElapsed,
-          lastIntervention: entry.lastHumanIntervention,
+          lastIntervention: humanTime,
           hadPreviousIntervention: true,
           activeAutomationPropertyId: null
         };
@@ -518,7 +519,7 @@ class HandoffManager {
       return {
         isLocked: false,
         hoursElapsed,
-        lastIntervention: entry.lastHumanIntervention,
+        lastIntervention: humanTime,
         hadPreviousIntervention: true,
         activeAutomationPropertyId: entry.activeAutomationPropertyId || null
       };
@@ -1053,7 +1054,12 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
   const createdBy = messageObj.created_by !== undefined && messageObj.created_by !== null ? Number(messageObj.created_by) : null;
   const botId = process.env.KOMMO_BOT_ID || '100766';
 
-  // 1. Detección segura de Bot / Salesbot / App:
+  // 1. Detección de Asesor Humano desde Kommo Web UI (prioridad de autor humano explícito):
+  if (authorType === 'user' && createdBy !== null && createdBy > 0) {
+    return { isBot: false, isHuman: true, isHumanAdvisor: true, isUncertain: false, source: 'KOMMO_WEB', reason: 'KOMMO_WEB', userId: createdBy };
+  }
+
+  // 2. Detección segura de Bot / Salesbot / App:
   if (['bot', 'salesbot', 'app', 'system'].includes(authorType)) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_AUTHOR_TYPE', reason: 'KOMMO_AUTHOR_BOT' };
   }
@@ -1062,11 +1068,6 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
   }
   if (recentBotDispatchedFn && typeof recentBotDispatchedFn === 'function' && recentBotDispatchedFn(outText, messageObj.entity_id)) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_DISPATCHED_ECHO', reason: 'BOT_DISPATCHED_ECHO' };
-  }
-
-  // 2. Detección de Asesor Humano desde Kommo Web UI:
-  if (authorType === 'user' && createdBy !== null && createdBy > 0) {
-    return { isBot: false, isHuman: true, isHumanAdvisor: true, isUncertain: false, source: 'KOMMO_WEB', reason: 'KOMMO_WEB', userId: createdBy };
   }
 
   // 3. Detección de Asesor Humano desde WhatsApp Móvil:
