@@ -1,45 +1,24 @@
 /**
  * ============================================================================
- * TEST SUITE — NUEVA LÓGICA DEL BOT INMOBILIARIO TU TECHO IDEAL
+ * TEST SUITE — NUEVA LÓGICA DEL BOT INMOBILIARIO TU TECHO IDEAL (29 ESCENARIOS)
  * ============================================================================
  * 
- * Verificación exhaustiva de los 16 escenarios obligatorios originales
- * MÁS 7 pruebas críticas de blindaje técnico (Total: 23 escenarios):
- * 
- * --- Bloque 1: Escenarios Originales (1 a 16) ---
- * 1. Mención de historia -> Ignorar sin llamar a IA.
- * 2. Enlace Wasi disponible -> "Sí, disponible.".
- * 3. Búsqueda por zona con coincidencias -> "Sí, disponible." (sin listado).
- * 4. Pregunta por metros cuadrados (dato en Sheets) -> Responde dato exacto.
- * 5. Pregunta por condominio (dato no aparece) -> Silencio absoluto.
- * 6. Pregunta por estacionamiento (descripción indica que no tiene) -> Responde que no tiene.
- * 7. Crédito Venezuela Renace (Sheets dice que sí) -> "Sí".
- * 8. Crédito Venezuela Renace (Sheets dice que no) -> "No".
- * 9. Crédito Venezuela Renace (dato no existe en Sheets) -> "Voy a consultar y ya le informo.".
- * 10. Solicitud de reunión -> Silencio y atención humana.
- * 11. Ofrecimiento para vender o alquilar inmueble propio -> Silencio y atención humana.
- * 12. Humano responde y cliente escribe antes de 24h -> Silencio (bloqueo activo).
- * 13. Humano responde, transcurren 24h y cliente envía nuevo enlace Wasi -> Se permite evaluar.
- * 14. Cliente envía dos enlaces diferentes -> Derivar al humano sin mezclar.
- * 15. Propiedad no encontrada en Sheets -> No inventar, silencio.
- * 16. Servidor se reinicia mientras conversación está bloqueada -> El bloqueo persiste.
- * 
- * --- Bloque 2: Nuevas Pruebas Críticas de Blindaje (17 a 23) ---
- * 17. Reinicio sin archivo local: Kommo API remota tiene evento humano (<24h) -> Reconstruye bloqueo, silencio.
- * 18. Falla temporal de Kommo API (error 500/timeout) sin archivo local -> Falla cerrada / Silencio seguro.
- * 19. Mensaje con precios ($100000, $40.000) -> No se confunde con código Wasi, silencio.
- * 20. Mensaje con teléfonos (04143115105, +584142504024) -> No se confunde con código Wasi, silencio.
- * 21. Estatus ambiguo ("No Disponible", "Disponible en 15 días") -> Equivalencia exacta exige 'disponible', silencio.
- * 22. Base de datos de Google Sheets vacía o no disponible -> Silencio seguro preventivo.
- * 23. Reactivación post-24h sin enlace Wasi ("Hola, qué tal") -> Permanece en silencio (requiere nuevo enlace Wasi).
+ * Verificación exhaustiva de:
+ * - 16 Escenarios Originales (Tests 1 a 16)
+ * - 7 Pruebas Críticas de Blindaje (Tests 17 a 23)
+ * - 6 Pruebas Adicionales de Integración y Concurrencia (Tests 24 a 29)
  */
 
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 const {
   evaluateCentralDecisionPipeline,
-  HandoffManager
+  HandoffManager,
+  DeduplicationManager,
+  ConversationContextManager,
+  verifyPreDispatchSafety
 } = require('./pipeline_decision.js');
 
 // Dataset de prueba representativo fiel a las columnas y estructura real de Google Sheets
@@ -100,7 +79,7 @@ const mockProperties = [
     TIPO: 'Apartamento',
     OPERACION: 'Venta',
     ZONA: 'Chacao',
-    ESTATUS: 'Disponible en 15 días', // Caso de prueba para equivalencia exacta de estatus
+    ESTATUS: 'Disponible en 15 días',
     Wasi_URL: 'https://info.wasi.co/apartamento-venta-chacao-caracas/10466376',
     DESCRIPCION_BREVE: 'Apartamento en Chacao en remodelación final.'
   }
@@ -108,7 +87,7 @@ const mockProperties = [
 
 async function runTests() {
   console.log('================================================================');
-  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (23 ESCENARIOS) ');
+  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (29 ESCENARIOS) ');
   console.log('================================================================\n');
 
   const testHandoffFile = path.join(__dirname, 'test_handoffs_temp.json');
@@ -120,12 +99,12 @@ async function runTests() {
 
   function recordResult(testNum, name, condition, details = '') {
     if (condition) {
-      console.log(`✅ [Test ${testNum}/23] PASÓ: ${name}`);
+      console.log(`✅ [Test ${testNum}/29] PASÓ: ${name}`);
       if (details) console.log(`   Detalle: ${details}`);
       passedCount++;
       results.push({ testNum, name, status: 'PASSED', details });
     } else {
-      console.error(`❌ [Test ${testNum}/23] FALLÓ: ${name}`);
+      console.error(`❌ [Test ${testNum}/29] FALLÓ: ${name}`);
       if (details) console.error(`   Detalle: ${details}`);
       results.push({ testNum, name, status: 'FAILED', details });
     }
@@ -322,7 +301,7 @@ async function runTests() {
   // TEST 12: Un humano responde al cliente y este vuelve a escribir antes de 24h -> Silencio
   // --------------------------------------------------------------------------
   const now = Date.now();
-  const humanInterventionTime = now - (2 * 60 * 60 * 1000); // Hace 2 horas
+  const humanInterventionTime = now - (2 * 60 * 60 * 1000);
   handoffManager.recordHumanIntervention('lead_t12', 'talk_t12', 'contact_t12', humanInterventionTime);
 
   const res12 = await evaluateCentralDecisionPipeline({
@@ -344,7 +323,7 @@ async function runTests() {
   // --------------------------------------------------------------------------
   // TEST 13: Humano responde, transcurren 24h y cliente envía nuevo enlace Wasi -> Se permite evaluar
   // --------------------------------------------------------------------------
-  const pastHumanTime = now - (25 * 60 * 60 * 1000); // Hace 25 horas
+  const pastHumanTime = now - (25 * 60 * 60 * 1000);
   handoffManager.recordHumanIntervention('lead_t13', 'talk_t13', 'contact_t13', pastHumanTime);
 
   const res13 = await evaluateCentralDecisionPipeline({
@@ -364,7 +343,7 @@ async function runTests() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 14: Cliente envía dos enlaces de propiedades diferentes -> No mezclar fichas y derivar al humano
+  // TEST 14: Cliente envía dos enlaces diferentes -> No mezclar fichas y derivar al humano
   // --------------------------------------------------------------------------
   const res14 = await evaluateCentralDecisionPipeline({
     userText: 'Hola, me interesan estos dos: https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109 y https://info.wasi.co/apartamento-venta-lomas-del-sol-caracas/10544010',
@@ -399,10 +378,9 @@ async function runTests() {
   // TEST 16: El servidor se reinicia mientras conversación está bloqueada -> El bloqueo persiste
   // --------------------------------------------------------------------------
   const restartLeadId = 'lead_t16_restart';
-  const lockTime = now - (5 * 60 * 60 * 1000); // Bloqueado hace 5 horas
+  const lockTime = now - (5 * 60 * 60 * 1000);
   handoffManager.recordHumanIntervention(restartLeadId, null, null, lockTime);
 
-  // Simular reinicio creando una instancia que lee del archivo persistente
   const rebootedHandoffManager = new HandoffManager(testHandoffFile);
 
   const res16 = await evaluateCentralDecisionPipeline({
@@ -419,23 +397,15 @@ async function runTests() {
     `Respondió: ${res16.shouldRespond}, Motivo: ${res16.log.reason}`
   );
 
-  // ==========================================================================
-  // BLOQUE 2: NUEVAS PRUEBAS CRÍTICAS DE BLINDAJE TÉCNICO (TESTS 17 A 23)
-  // ==========================================================================
-
   // --------------------------------------------------------------------------
-  // TEST 17: Reinicio sin archivo local: Kommo API remota tiene evento humano (<24h) -> Reconstruye bloqueo
+  // TEST 17: Reinicio sin archivo local: Kommo API remota tiene evento humano (<24h)
   // --------------------------------------------------------------------------
-  // Simular dyno nuevo de Render donde el archivo local NO EXISTE, pero Kommo API responde con evento humano de hace 3 horas
   const nonExistentFile = path.join(__dirname, 'non_existent_handoffs_test.json');
   if (fs.existsSync(nonExistentFile)) fs.unlinkSync(nonExistentFile);
 
-  const mockKommoFetcher = async ({ leadId }) => {
-    // Simula respuesta de Kommo API con evento outgoing_chat_message humano de hace 3 horas
-    return {
-      lastHumanTimestamp: now - (3 * 60 * 60 * 1000)
-    };
-  };
+  const mockKommoFetcher = async () => ({
+    lastHumanTimestamp: now - (3 * 60 * 60 * 1000)
+  });
 
   const remoteRebuiltHandoffManager = new HandoffManager(nonExistentFile, mockKommoFetcher);
 
@@ -446,7 +416,6 @@ async function runTests() {
     handoffManager: remoteRebuiltHandoffManager,
     currentTime: now
   });
-
   recordResult(
     17,
     'Reinicio sin archivo local: Kommo API remota informa intervención (<24h) -> Reconstruye bloqueo y SILENCIO',
@@ -455,10 +424,10 @@ async function runTests() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 18: Falla temporal de Kommo API (error 500/timeout) sin archivo local -> Falla cerrada / Silencio seguro
+  // TEST 18: Falla temporal de Kommo API (error 500/timeout) sin archivo local
   // --------------------------------------------------------------------------
   const mockFailingKommoFetcher = async () => {
-    throw new Error('504 Gateway Timeout: Kommo API no disponible temporalmente');
+    throw new Error('504 Gateway Timeout: Kommo API no disponible');
   };
 
   const failingKommoHandoffManager = new HandoffManager(nonExistentFile, mockFailingKommoFetcher);
@@ -470,7 +439,6 @@ async function runTests() {
     handoffManager: failingKommoHandoffManager,
     currentTime: now
   });
-
   recordResult(
     18,
     'Falla temporal de Kommo API (timeout/500) -> Falla cerrada (SILENCIO SEGURO, no desbloquea indebidamente)',
@@ -479,7 +447,7 @@ async function runTests() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 19: Mensaje con números que son precios ($100000, $40.000) -> No se confunden con Wasi
+  // TEST 19: Mensaje con números que son precios ($100000, $40.000)
   // --------------------------------------------------------------------------
   const res19 = await evaluateCentralDecisionPipeline({
     userText: 'Hola, cuento con un presupuesto de $100000 para comprar apartamento en Caracas',
@@ -487,7 +455,6 @@ async function runTests() {
     properties: mockProperties,
     handoffManager
   });
-
   recordResult(
     19,
     'Mensaje con precios monetarios ($100000) -> No se confunde con código Wasi, SILENCIO sin inventar',
@@ -496,7 +463,7 @@ async function runTests() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 20: Mensaje con números de teléfono (04143115105, +584142504024) -> No se confunden con Wasi
+  // TEST 20: Mensaje con números de teléfono (04143115105, +584142504024)
   // --------------------------------------------------------------------------
   const res20 = await evaluateCentralDecisionPipeline({
     userText: 'Hola, por favor escríbeme a mi WhatsApp 04143115105 para coordinar',
@@ -504,7 +471,6 @@ async function runTests() {
     properties: mockProperties,
     handoffManager
   });
-
   recordResult(
     20,
     'Mensaje con teléfono móvil (04143115105) -> No se confunde con código Wasi, SILENCIO para atención humana',
@@ -513,16 +479,14 @@ async function runTests() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 21: Estatus ambiguo ("Disponible en 15 días" o "No Disponible") -> Equivalencia exacta exige 'disponible'
+  // TEST 21: Estatus no equivalente exacto ("Disponible en 15 días")
   // --------------------------------------------------------------------------
-  // REF-006 tiene ESTATUS: "Disponible en 15 días" (contiene la palabra disponible pero NO es equivalente exacto)
   const res21 = await evaluateCentralDecisionPipeline({
     userText: 'Buenas tardes, me interesa el inmueble 10466376 https://info.wasi.co/apartamento-venta-chacao-caracas/10466376',
     leadId: 'lead_status_21',
     properties: mockProperties,
     handoffManager
   });
-
   recordResult(
     21,
     'Estatus no equivalente exacto ("Disponible en 15 días") -> No afirma disponible, SILENCIO seguro',
@@ -531,15 +495,14 @@ async function runTests() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 22: Base de datos de Google Sheets vacía o no disponible -> Silencio seguro preventivo
+  // TEST 22: Base de datos de Google Sheets vacía o no disponible
   // --------------------------------------------------------------------------
   const res22 = await evaluateCentralDecisionPipeline({
     userText: 'Hola, busco apartamento en Los Samanes https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109',
     leadId: 'lead_empty_sheets_22',
-    properties: [], // Simulando fallo de conexión con Google Sheets
+    properties: [],
     handoffManager
   });
-
   recordResult(
     22,
     'Google Sheets vacío o inaccesible -> Silencio seguro preventivo (0 tokens)',
@@ -548,9 +511,8 @@ async function runTests() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 23: Reactivación post-24h sin enlace Wasi ("Hola, qué tal") -> Permanece en silencio
+  // TEST 23: Reactivación post-24h sin enlace Wasi ("Hola, qué tal")
   // --------------------------------------------------------------------------
-  // Un humano intervino hace 26 horas. El cliente envía un saludo simple sin enlace Wasi.
   const oldHumanTime = now - (26 * 60 * 60 * 1000);
   handoffManager.recordHumanIntervention('lead_t23', 'talk_t23', 'contact_t23', oldHumanTime);
 
@@ -563,7 +525,6 @@ async function runTests() {
     handoffManager,
     currentTime: now
   });
-
   recordResult(
     23,
     'Transcurridas >24h pero cliente envía mensaje SIN nuevo enlace Wasi -> Permanece en SILENCIO',
@@ -571,15 +532,166 @@ async function runTests() {
     `Respondió: ${res23.shouldRespond}, Motivo: ${res23.log.reason}`
   );
 
+  // ==========================================================================
+  // BLOQUE 3: PRUEBAS ADICIONALES DE INTEGRACIÓN Y CONCURRENCIA (TESTS 24 A 29)
+  // ==========================================================================
+
+  // --------------------------------------------------------------------------
+  // TEST 24: Webhooks duplicados y recibidos fuera de orden
+  // --------------------------------------------------------------------------
+  const dedup = new DeduplicationManager();
+  const msgId = 'msg_webhook_123';
+  const talkId = 'talk_order_1';
+
+  // 1. Mensaje original llega a t0
+  const firstCheck = dedup.checkAndRecord(msgId, talkId, now);
+  // 2. Reintento duplicado idéntico llega a t0 + 200ms
+  const duplicateCheck = dedup.checkAndRecord(msgId, talkId, now + 200);
+  // 3. Webhook con mensaje anterior que llega fuera de orden (t0 - 5000ms)
+  const outOfOrderCheck = dedup.checkAndRecord('msg_older_122', talkId, now - 5000);
+
+  recordResult(
+    24,
+    'Webhooks duplicados y fuera de orden -> Deduplicación y descarte de eventos obsoletos',
+    firstCheck.isDuplicate === false && duplicateCheck.isDuplicate === true && outOfOrderCheck.isOutOfOrder === true,
+    `Original: ${!firstCheck.isDuplicate}, Duplicado detectado: ${duplicateCheck.isDuplicate}, Fuera de orden detectado: ${outOfOrderCheck.isOutOfOrder}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 25: Mensaje con enlace Wasi Y solicitud de reunión (Conflicto de intenciones)
+  // --------------------------------------------------------------------------
+  const res25 = await evaluateCentralDecisionPipeline({
+    userText: 'Buenas tardes, me interesa este apartamento https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109 y me gustaría agendar una reunión presencial o videollamada para conversar.',
+    leadId: 'lead_conflict_25',
+    properties: mockProperties,
+    handoffManager
+  });
+  recordResult(
+    25,
+    'Mensaje con enlace Wasi Y solicitud de reunión -> Prioridad 3 domina sobre Prioridad 6 (SILENCIO y traspaso humano)',
+    res25.shouldRespond === false && res25.log.typeDetected === 'HUMAN_ATTENTION_REQUEST',
+    `Respondió: ${res25.shouldRespond}, Acción: ${res25.log.action}, Tipo detectado: ${res25.log.typeDetected}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 26: Propiedad que cambia de Disponible a No Disponible mientras está en caché
+  // --------------------------------------------------------------------------
+  const propDynamic = { ...targetProp1, ESTATUS: 'Disponible' };
+  // Cliente pregunta disponibilidad cuando está disponible
+  const res26a = await evaluateCentralDecisionPipeline({
+    userText: 'https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109',
+    leadId: 'lead_dyn_26',
+    properties: [propDynamic],
+    handoffManager
+  });
+
+  // La propiedad se vende o reserva en la hoja (cambia estatus)
+  const propDynamicSold = { ...targetProp1, ESTATUS: 'Reservado' };
+  const res26b = await evaluateCentralDecisionPipeline({
+    userText: 'https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109',
+    leadId: 'lead_dyn_26',
+    properties: [propDynamicSold],
+    handoffManager
+  });
+
+  recordResult(
+    26,
+    'Propiedad cambia de Disponible a Reservado -> Se detecta cambio en tiempo real y guarda SILENCIO',
+    res26a.shouldRespond === true && res26b.shouldRespond === false && res26b.log.typeDetected === 'WASI_LINK_NOT_AVAILABLE',
+    `Inicial: ${res26a.text}, Posterior: Respondió=${res26b.shouldRespond} (${res26b.log.typeDetected})`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 27: Intervención humana en vuelo (Race condition: humano escribe mientras bot prepara respuesta)
+  // --------------------------------------------------------------------------
+  const raceLeadId = 'lead_race_27';
+  // Simular que el bot empezó a evaluar y preparó respuesta válida
+  const evalResult = await evaluateCentralDecisionPipeline({
+    userText: '¿Cuántos metros cuadrados tiene?',
+    leadId: raceLeadId,
+    properties: mockProperties,
+    activePropertyContext: targetProp1,
+    handoffManager
+  });
+
+  // Justo antes del despacho, un asesor humano escribe en WhatsApp o Kommo
+  handoffManager.recordHumanIntervention(raceLeadId, null, null, Date.now());
+
+  // Verificación pre-despacho inmediata
+  const preDispatch = await verifyPreDispatchSafety(raceLeadId, null, null, handoffManager);
+
+  recordResult(
+    27,
+    'Intervención humana en vuelo -> Pre-dispatch check aborta envío y cancela respuesta de forma segura',
+    evalResult.shouldRespond === true && preDispatch.canDispatch === false,
+    `Respuesta generada: "${evalResult.text}", Puede despachar: ${preDispatch.canDispatch} (${preDispatch.reason})`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 28: Dos conversaciones diferentes del mismo contacto sin mezclar estados ni propiedades
+  // --------------------------------------------------------------------------
+  const convManager = new ConversationContextManager();
+  const contactId = 'contact_multitalk_99';
+  const talk1 = 'talk_samanes_01';
+  const talk2 = 'talk_lomas_02';
+
+  convManager.saveContext(talk1, 'lead_1', mockProperties[0]); // Los Samanes
+  convManager.saveContext(talk2, 'lead_1', mockProperties[1]); // Lomas del Sol
+
+  const recoveredTalk1 = convManager.getContext(talk1, 'lead_1');
+  const recoveredTalk2 = convManager.getContext(talk2, 'lead_1');
+
+  recordResult(
+    28,
+    'Dos conversaciones del mismo contacto (Talk A y Talk B) -> Aislamiento estricto por Talk ID sin mezclar',
+    recoveredTalk1.ID_PROPIEDAD === 'REF-001' && recoveredTalk2.ID_PROPIEDAD === 'REF-002',
+    `Talk 1: ${recoveredTalk1.ID_PROPIEDAD} (${recoveredTalk1.ZONA}), Talk 2: ${recoveredTalk2.ID_PROPIEDAD} (${recoveredTalk2.ZONA})`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 29: Recuperación real desde la API de Kommo en vivo (Verificación de scopes y eventos)
+  // --------------------------------------------------------------------------
+  let realKommoEventsPassed = false;
+  let kommoDetails = '';
+
+  try {
+    const token = process.env.KOMMO_TOKEN;
+    const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+    if (token) {
+      const headers = { Authorization: token.startsWith('Bearer ') ? token : 'Bearer ' + token };
+      // Consulta en vivo a la API de eventos de Kommo
+      const evRes = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[type]=outgoing_chat_message&limit=1`, { headers, timeout: 6000 });
+      const events = evRes.data?._embedded?.events || [];
+      if (events.length > 0) {
+        realKommoEventsPassed = true;
+        kommoDetails = `API Kommo en vivo verificada con éxito: Evento #${events[0].id}, Type=${events[0].type}, Lead=${events[0].entity_id}, CreatedBy=${events[0].created_by}`;
+      } else {
+        realKommoEventsPassed = true;
+        kommoDetails = 'API Kommo respondió 200 OK (sin eventos salientes recientes).';
+      }
+    } else {
+      kommoDetails = 'Sin KOMMO_TOKEN en entorno para prueba en vivo.';
+    }
+  } catch (errKommo) {
+    kommoDetails = `Error en API Kommo: ${errKommo.message}`;
+  }
+
+  recordResult(
+    29,
+    'Recuperación en vivo desde Kommo Events API (`outgoing_chat_message`) -> Conexión real confirmada',
+    realKommoEventsPassed,
+    kommoDetails
+  );
+
   // Limpieza de archivos temporales
   if (fs.existsSync(testHandoffFile)) fs.unlinkSync(testHandoffFile);
   if (fs.existsSync(nonExistentFile)) fs.unlinkSync(nonExistentFile);
 
   console.log('\n================================================================');
-  console.log(` RESULTADOS FINALES: ${passedCount} / 23 PRUEBAS SUPERADAS (${Math.round((passedCount / 23) * 100)}%) `);
+  console.log(` RESULTADOS FINALES: ${passedCount} / 29 PRUEBAS SUPERADAS (${Math.round((passedCount / 29) * 100)}%) `);
   console.log('================================================================');
 
-  if (passedCount !== 23) {
+  if (passedCount !== 29) {
     process.exit(1);
   }
 }

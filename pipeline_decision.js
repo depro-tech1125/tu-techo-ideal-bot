@@ -13,6 +13,9 @@
  * 3. Reactivación post-24h estricta: Solo con nuevo enlace Wasi válido y existente en Sheets.
  * 4. Extracción blindada de Wasi: Prohibido confundir con precios ($100.000) o teléfonos (0414...).
  * 5. Integridad de Google Sheets: Silencio seguro si la fuente está vacía o inaccesible.
+ * 6. Deduplicación y orden de llegada: Ventana antirreintento y descarte de eventos obsoletos.
+ * 7. Verificación previa al despacho (Pre-dispatch check): Aborta si hubo intervención humana en vuelo.
+ * 8. Aislamiento por conversación (Talk ID): Previene mezcla de inmuebles entre chats del mismo contacto.
  */
 
 const fs = require('fs');
@@ -143,7 +146,6 @@ function extractWasiPropertyIdentifiers(text, properties = []) {
   const codeSet = new Set();
 
   // 1. Extraer códigos de URLs Wasi oficiales
-  // Patrón preciso: https://...wasi.co/<slug>/<codigo> o wasi.com/<slug>/<codigo>
   const wasiUrlRegex = /https?:\/\/(?:[a-zA-Z0-9.-]+\.)?wasi\.(?:co|com)\/[^\s\/]+\/(\d{6,9})/gi;
   const urlMatches = Array.from(raw.matchAll(wasiUrlRegex));
   for (const m of urlMatches) {
@@ -151,8 +153,6 @@ function extractWasiPropertyIdentifiers(text, properties = []) {
   }
 
   // 2. Extraer menciones textuales con indicador INEQUÍVOCO de inmueble
-  // Se exige prefijo obligatorio: "inmueble 10493109", "código 10493109", "id: 10493109", "ref 10493109", "propiedad 10493109"
-  // PROHIBIDO extraer números sueltos sin prefijo para no colisionar con precios ($100.000) o teléfonos (04143115105)
   const explicitTextMatches = Array.from(raw.matchAll(/(?:inmueble|c[oó]digo|cod|id|ref|propiedad)\s*[:#]?\s*(\d{6,9})\b/gi));
   for (const m of explicitTextMatches) {
     const candidateCode = m[1];
@@ -223,7 +223,6 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
   const matches = [];
 
   for (const prop of properties) {
-    // Exigencia de disponibilidad estricta (no parcial)
     if (!isPropertyAvailable(prop)) continue;
 
     const zona = normalizeText(prop.ZONA || '');
@@ -347,11 +346,6 @@ class HandoffManager {
     this.save();
   }
 
-  /**
-   * Comprueba el estado de bloqueo de 24 horas.
-   * Si no hay registro local y existe kommoFetcher, consulta Kommo.
-   * Si Kommo API falla -> Aplica FALLA CERRADA (bloqueo preventivo en silencio).
-   */
   async checkLockStatus(leadId = null, talkId = null, contactId = null, now = Date.now()) {
     const entries = [
       leadId && this.handoffs.leads ? this.handoffs.leads[String(leadId)] : null,
@@ -383,9 +377,7 @@ class HandoffManager {
           return { isLocked: false, hoursElapsed, lastIntervention: remoteResult.lastHumanTimestamp, hadPreviousIntervention: true };
         }
       } catch (err) {
-        // 🛑 FALLA CERRADA ANTE ERROR TEMPORAL DE KOMMO API:
-        // "Si no puede determinarse de forma segura si el asesor intervino, evita que el bot responda hasta resolver la incertidumbre."
-        console.warn('[Handoff Failsafe] Error consultando Kommo API. Bloqueo preventivo:', err.message);
+        // Falla cerrada ante error temporal de Kommo API
         return {
           isLocked: true,
           hoursElapsed: 0,
@@ -402,7 +394,94 @@ class HandoffManager {
 }
 
 // ============================================================================
-// 8. CONSULTA PRECISA DE ATRIBUTOS CON CLAUDE SONNET 4.5 (REGLA 3.E & 6)
+// 8. DEDUPLICACIÓN ROBUSTA Y ORDEN DE LLEGADA DE WEBHOOKS
+// ============================================================================
+class DeduplicationManager {
+  constructor(windowMs = 15 * 60 * 1000) {
+    this.windowMs = windowMs;
+    this.processedMessages = new Map(); // key -> timestamp
+    this.lastProcessedTimestampByTalk = new Map(); // talkId -> timestamp
+  }
+
+  /**
+   * Verifica si un mensaje es duplicado o llega fuera de orden (obsoleto).
+   * Retorna { isDuplicate: boolean, isOutOfOrder: boolean }
+   */
+  checkAndRecord(msgId, talkId, messageTimestamp = Date.now()) {
+    const now = Date.now();
+
+    // 1. Limpieza de memoria
+    for (const [key, ts] of this.processedMessages.entries()) {
+      if (now - ts > this.windowMs) this.processedMessages.delete(key);
+    }
+
+    // 2. Comprobar si ya fue procesado por ID único
+    if (msgId && this.processedMessages.has(String(msgId))) {
+      return { isDuplicate: true, isOutOfOrder: false };
+    }
+
+    // 3. Comprobar orden de llegada por Talk
+    if (talkId) {
+      const lastTs = this.lastProcessedTimestampByTalk.get(String(talkId)) || 0;
+      if (messageTimestamp < lastTs) {
+        return { isDuplicate: false, isOutOfOrder: true };
+      }
+      this.lastProcessedTimestampByTalk.set(String(talkId), messageTimestamp);
+    }
+
+    if (msgId) {
+      this.processedMessages.set(String(msgId), now);
+    }
+
+    return { isDuplicate: false, isOutOfOrder: false };
+  }
+}
+
+// ============================================================================
+// 9. AISLAMIENTO DE CONTEXTO POR CONVERSACIÓN (TALK ID)
+// ============================================================================
+class ConversationContextManager {
+  constructor() {
+    this.talkContexts = new Map(); // talkId -> property
+    this.leadContexts = new Map(); // leadId -> property
+  }
+
+  saveContext(talkId, leadId, property) {
+    if (!property) return;
+    if (talkId) this.talkContexts.set(String(talkId), property);
+    if (leadId) this.leadContexts.set(String(leadId), property);
+  }
+
+  getContext(talkId, leadId) {
+    // Prioridad 1: Contexto de la conversación exacta (Talk ID)
+    if (talkId && this.talkContexts.has(String(talkId))) {
+      return this.talkContexts.get(String(talkId));
+    }
+    // Prioridad 2: Contexto general del Lead
+    if (leadId && this.leadContexts.has(String(leadId))) {
+      return this.leadContexts.get(String(leadId));
+    }
+    return null;
+  }
+}
+
+// ============================================================================
+// 10. COMPROBACIÓN PREVIA AL DESPACHO (PRE-DISPATCH CHECK)
+// ============================================================================
+async function verifyPreDispatchSafety(leadId, talkId, contactId, handoffManager, now = Date.now()) {
+  if (!handoffManager) return { canDispatch: true };
+  const status = await handoffManager.checkLockStatus(leadId, talkId, contactId, now);
+  if (status.isLocked) {
+    return {
+      canDispatch: false,
+      reason: 'Intervención humana detectada mientras se preparaba la respuesta. Despacho cancelado.'
+    };
+  }
+  return { canDispatch: true };
+}
+
+// ============================================================================
+// 11. CONSULTA PRECISA DE ATRIBUTOS CON CLAUDE SONNET 4.5 (REGLA 3.E & 6)
 // ============================================================================
 async function evaluatePropertyQuestionWithClaude(userQuestion, property) {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
@@ -475,7 +554,7 @@ REGLAS ABSOLUTAS:
 }
 
 // ============================================================================
-// 9. PUNTO CENTRAL DE DECISIÓN ÚNICO (REGLA 8 — PRIORIDADES 1 AL 12)
+// 12. PUNTO CENTRAL DE DECISIÓN ÚNICO (REGLA 8 — PRIORIDADES 1 AL 12)
 // ============================================================================
 async function evaluateCentralDecisionPipeline(context) {
   const {
@@ -491,6 +570,7 @@ async function evaluateCentralDecisionPipeline(context) {
 
   const logEntry = {
     leadId,
+    talkId,
     userText,
     typeDetected: null,
     propertyIdentified: null,
@@ -541,8 +621,6 @@ async function evaluateCentralDecisionPipeline(context) {
 
   // --------------------------------------------------------------------------
   // PRIORIDAD 2.1: CONDICIÓN DE REACTIVACIÓN POST-24H (REGLA 4):
-  // Si hubo intervención humana previa y ya pasaron las 24 horas, pero el cliente NO envió un enlace Wasi:
-  // el bot permanece en silencio.
   // --------------------------------------------------------------------------
   const wasiExtraction = extractWasiPropertyIdentifiers(textClean, properties);
 
@@ -626,7 +704,6 @@ async function evaluateCentralDecisionPipeline(context) {
 
   // --------------------------------------------------------------------------
   // PRIORIDAD 4: CONSULTA POR ZONA O CARACTERÍSTICAS GENERALES
-  // (Solo si no hubo identificador puntual ni contexto previo)
   // --------------------------------------------------------------------------
   if (wasiExtraction.count === 0 && !activePropertyContext) {
     const zoneSearch = searchZoneOrFeatureMatches(textClean, properties);
@@ -699,6 +776,9 @@ module.exports = {
   isVenezuelaRenaceCreditQuery,
   evaluateVenezuelaRenaceCredit,
   HandoffManager,
+  DeduplicationManager,
+  ConversationContextManager,
+  verifyPreDispatchSafety,
   evaluatePropertyQuestionWithClaude,
   evaluateCentralDecisionPipeline
 };
