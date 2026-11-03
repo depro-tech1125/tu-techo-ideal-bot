@@ -3,7 +3,10 @@
  * TEST SUITE — NUEVA LÓGICA DEL BOT INMOBILIARIO TU TECHO IDEAL
  * ============================================================================
  * 
- * Verificación exhaustiva de los 16 escenarios obligatorios del Apartado 10:
+ * Verificación exhaustiva de los 16 escenarios obligatorios originales
+ * MÁS 7 pruebas críticas de blindaje técnico (Total: 23 escenarios):
+ * 
+ * --- Bloque 1: Escenarios Originales (1 a 16) ---
  * 1. Mención de historia -> Ignorar sin llamar a IA.
  * 2. Enlace Wasi disponible -> "Sí, disponible.".
  * 3. Búsqueda por zona con coincidencias -> "Sí, disponible." (sin listado).
@@ -20,6 +23,15 @@
  * 14. Cliente envía dos enlaces diferentes -> Derivar al humano sin mezclar.
  * 15. Propiedad no encontrada en Sheets -> No inventar, silencio.
  * 16. Servidor se reinicia mientras conversación está bloqueada -> El bloqueo persiste.
+ * 
+ * --- Bloque 2: Nuevas Pruebas Críticas de Blindaje (17 a 23) ---
+ * 17. Reinicio sin archivo local: Kommo API remota tiene evento humano (<24h) -> Reconstruye bloqueo, silencio.
+ * 18. Falla temporal de Kommo API (error 500/timeout) sin archivo local -> Falla cerrada / Silencio seguro.
+ * 19. Mensaje con precios ($100000, $40.000) -> No se confunde con código Wasi, silencio.
+ * 20. Mensaje con teléfonos (04143115105, +584142504024) -> No se confunde con código Wasi, silencio.
+ * 21. Estatus ambiguo ("No Disponible", "Disponible en 15 días") -> Equivalencia exacta exige 'disponible', silencio.
+ * 22. Base de datos de Google Sheets vacía o no disponible -> Silencio seguro preventivo.
+ * 23. Reactivación post-24h sin enlace Wasi ("Hola, qué tal") -> Permanece en silencio (requiere nuevo enlace Wasi).
  */
 
 require('dotenv').config();
@@ -81,12 +93,22 @@ const mockProperties = [
     ESTATUS: 'No Disponible',
     Wasi_URL: 'https://info.wasi.co/apartamento-venta-la-boyera-caracas/10443213',
     DESCRIPCION_BREVE: 'Apartamento en La Boyera ya reservado.'
+  },
+  {
+    ID_PROPIEDAD: 'REF-006',
+    CODIGO_WASI: '10466376',
+    TIPO: 'Apartamento',
+    OPERACION: 'Venta',
+    ZONA: 'Chacao',
+    ESTATUS: 'Disponible en 15 días', // Caso de prueba para equivalencia exacta de estatus
+    Wasi_URL: 'https://info.wasi.co/apartamento-venta-chacao-caracas/10466376',
+    DESCRIPCION_BREVE: 'Apartamento en Chacao en remodelación final.'
   }
 ];
 
 async function runTests() {
   console.log('================================================================');
-  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (16 ESCENARIOS) ');
+  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (23 ESCENARIOS) ');
   console.log('================================================================\n');
 
   const testHandoffFile = path.join(__dirname, 'test_handoffs_temp.json');
@@ -98,12 +120,12 @@ async function runTests() {
 
   function recordResult(testNum, name, condition, details = '') {
     if (condition) {
-      console.log(`✅ [Test ${testNum}/16] PASÓ: ${name}`);
+      console.log(`✅ [Test ${testNum}/23] PASÓ: ${name}`);
       if (details) console.log(`   Detalle: ${details}`);
       passedCount++;
       results.push({ testNum, name, status: 'PASSED', details });
     } else {
-      console.error(`❌ [Test ${testNum}/16] FALLÓ: ${name}`);
+      console.error(`❌ [Test ${testNum}/23] FALLÓ: ${name}`);
       if (details) console.error(`   Detalle: ${details}`);
       results.push({ testNum, name, status: 'FAILED', details });
     }
@@ -376,12 +398,11 @@ async function runTests() {
   // --------------------------------------------------------------------------
   // TEST 16: El servidor se reinicia mientras conversación está bloqueada -> El bloqueo persiste
   // --------------------------------------------------------------------------
-  // 1. Simular bloqueo en la instancia actual
   const restartLeadId = 'lead_t16_restart';
   const lockTime = now - (5 * 60 * 60 * 1000); // Bloqueado hace 5 horas
   handoffManager.recordHumanIntervention(restartLeadId, null, null, lockTime);
 
-  // 2. Simular reinicio creando una instancia COMPLETAMENTE NUEVA que lee desde el archivo persistente
+  // Simular reinicio creando una instancia que lee del archivo persistente
   const rebootedHandoffManager = new HandoffManager(testHandoffFile);
 
   const res16 = await evaluateCentralDecisionPipeline({
@@ -398,14 +419,167 @@ async function runTests() {
     `Respondió: ${res16.shouldRespond}, Motivo: ${res16.log.reason}`
   );
 
-  // Limpieza de archivo temporal de prueba
+  // ==========================================================================
+  // BLOQUE 2: NUEVAS PRUEBAS CRÍTICAS DE BLINDAJE TÉCNICO (TESTS 17 A 23)
+  // ==========================================================================
+
+  // --------------------------------------------------------------------------
+  // TEST 17: Reinicio sin archivo local: Kommo API remota tiene evento humano (<24h) -> Reconstruye bloqueo
+  // --------------------------------------------------------------------------
+  // Simular dyno nuevo de Render donde el archivo local NO EXISTE, pero Kommo API responde con evento humano de hace 3 horas
+  const nonExistentFile = path.join(__dirname, 'non_existent_handoffs_test.json');
+  if (fs.existsSync(nonExistentFile)) fs.unlinkSync(nonExistentFile);
+
+  const mockKommoFetcher = async ({ leadId }) => {
+    // Simula respuesta de Kommo API con evento outgoing_chat_message humano de hace 3 horas
+    return {
+      lastHumanTimestamp: now - (3 * 60 * 60 * 1000)
+    };
+  };
+
+  const remoteRebuiltHandoffManager = new HandoffManager(nonExistentFile, mockKommoFetcher);
+
+  const res17 = await evaluateCentralDecisionPipeline({
+    userText: 'Buenas tardes, ¿está disponible?',
+    leadId: 'lead_remote_17',
+    properties: mockProperties,
+    handoffManager: remoteRebuiltHandoffManager,
+    currentTime: now
+  });
+
+  recordResult(
+    17,
+    'Reinicio sin archivo local: Kommo API remota informa intervención (<24h) -> Reconstruye bloqueo y SILENCIO',
+    res17.shouldRespond === false && res17.log.typeDetected === 'HUMAN_LOCKED',
+    `Respondió: ${res17.shouldRespond}, Motivo: ${res17.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 18: Falla temporal de Kommo API (error 500/timeout) sin archivo local -> Falla cerrada / Silencio seguro
+  // --------------------------------------------------------------------------
+  const mockFailingKommoFetcher = async () => {
+    throw new Error('504 Gateway Timeout: Kommo API no disponible temporalmente');
+  };
+
+  const failingKommoHandoffManager = new HandoffManager(nonExistentFile, mockFailingKommoFetcher);
+
+  const res18 = await evaluateCentralDecisionPipeline({
+    userText: 'Hola, información por favor',
+    leadId: 'lead_failing_18',
+    properties: mockProperties,
+    handoffManager: failingKommoHandoffManager,
+    currentTime: now
+  });
+
+  recordResult(
+    18,
+    'Falla temporal de Kommo API (timeout/500) -> Falla cerrada (SILENCIO SEGURO, no desbloquea indebidamente)',
+    res18.shouldRespond === false && res18.log.typeDetected === 'HUMAN_LOCKED',
+    `Respondió: ${res18.shouldRespond}, Motivo: ${res18.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 19: Mensaje con números que son precios ($100000, $40.000) -> No se confunden con Wasi
+  // --------------------------------------------------------------------------
+  const res19 = await evaluateCentralDecisionPipeline({
+    userText: 'Hola, cuento con un presupuesto de $100000 para comprar apartamento en Caracas',
+    leadId: 'lead_price_19',
+    properties: mockProperties,
+    handoffManager
+  });
+
+  recordResult(
+    19,
+    'Mensaje con precios monetarios ($100000) -> No se confunde con código Wasi, SILENCIO sin inventar',
+    res19.shouldRespond === false && res19.log.propertyIdentified === null,
+    `Respondió: ${res19.shouldRespond}, Propiedad identificada: ${res19.log.propertyIdentified}, Motivo: ${res19.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 20: Mensaje con números de teléfono (04143115105, +584142504024) -> No se confunden con Wasi
+  // --------------------------------------------------------------------------
+  const res20 = await evaluateCentralDecisionPipeline({
+    userText: 'Hola, por favor escríbeme a mi WhatsApp 04143115105 para coordinar',
+    leadId: 'lead_phone_20',
+    properties: mockProperties,
+    handoffManager
+  });
+
+  recordResult(
+    20,
+    'Mensaje con teléfono móvil (04143115105) -> No se confunde con código Wasi, SILENCIO para atención humana',
+    res20.shouldRespond === false && res20.log.propertyIdentified === null,
+    `Respondió: ${res20.shouldRespond}, Propiedad identificada: ${res20.log.propertyIdentified}, Motivo: ${res20.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 21: Estatus ambiguo ("Disponible en 15 días" o "No Disponible") -> Equivalencia exacta exige 'disponible'
+  // --------------------------------------------------------------------------
+  // REF-006 tiene ESTATUS: "Disponible en 15 días" (contiene la palabra disponible pero NO es equivalente exacto)
+  const res21 = await evaluateCentralDecisionPipeline({
+    userText: 'Buenas tardes, me interesa el inmueble 10466376 https://info.wasi.co/apartamento-venta-chacao-caracas/10466376',
+    leadId: 'lead_status_21',
+    properties: mockProperties,
+    handoffManager
+  });
+
+  recordResult(
+    21,
+    'Estatus no equivalente exacto ("Disponible en 15 días") -> No afirma disponible, SILENCIO seguro',
+    res21.shouldRespond === false && res21.log.typeDetected === 'WASI_LINK_NOT_AVAILABLE',
+    `Respondió: ${res21.shouldRespond}, Motivo: ${res21.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 22: Base de datos de Google Sheets vacía o no disponible -> Silencio seguro preventivo
+  // --------------------------------------------------------------------------
+  const res22 = await evaluateCentralDecisionPipeline({
+    userText: 'Hola, busco apartamento en Los Samanes https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109',
+    leadId: 'lead_empty_sheets_22',
+    properties: [], // Simulando fallo de conexión con Google Sheets
+    handoffManager
+  });
+
+  recordResult(
+    22,
+    'Google Sheets vacío o inaccesible -> Silencio seguro preventivo (0 tokens)',
+    res22.shouldRespond === false && res22.log.typeDetected === 'SHEETS_UNAVAILABLE',
+    `Respondió: ${res22.shouldRespond}, Motivo: ${res22.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 23: Reactivación post-24h sin enlace Wasi ("Hola, qué tal") -> Permanece en silencio
+  // --------------------------------------------------------------------------
+  // Un humano intervino hace 26 horas. El cliente envía un saludo simple sin enlace Wasi.
+  const oldHumanTime = now - (26 * 60 * 60 * 1000);
+  handoffManager.recordHumanIntervention('lead_t23', 'talk_t23', 'contact_t23', oldHumanTime);
+
+  const res23 = await evaluateCentralDecisionPipeline({
+    userText: 'Hola, buenas tardes',
+    leadId: 'lead_t23',
+    talkId: 'talk_t23',
+    contactId: 'contact_t23',
+    properties: mockProperties,
+    handoffManager,
+    currentTime: now
+  });
+
+  recordResult(
+    23,
+    'Transcurridas >24h pero cliente envía mensaje SIN nuevo enlace Wasi -> Permanece en SILENCIO',
+    res23.shouldRespond === false && (res23.log.typeDetected === 'POST_24H_REQUIRES_WASI_LINK' || res23.log.typeDetected === 'PURE_GREETING'),
+    `Respondió: ${res23.shouldRespond}, Motivo: ${res23.log.reason}`
+  );
+
+  // Limpieza de archivos temporales
   if (fs.existsSync(testHandoffFile)) fs.unlinkSync(testHandoffFile);
+  if (fs.existsSync(nonExistentFile)) fs.unlinkSync(nonExistentFile);
 
   console.log('\n================================================================');
-  console.log(` RESULTADOS FINALES: ${passedCount} / 16 PRUEBAS SUPERADAS (${Math.round((passedCount / 16) * 100)}%) `);
+  console.log(` RESULTADOS FINALES: ${passedCount} / 23 PRUEBAS SUPERADAS (${Math.round((passedCount / 23) * 100)}%) `);
   console.log('================================================================');
 
-  if (passedCount !== 16) {
+  if (passedCount !== 23) {
     process.exit(1);
   }
 }
