@@ -9,6 +9,7 @@
  * Si NO está en el documento (o dice "No especificado en la fuente") -> SILENCIO ABSOLUTO (100% callada).
  */
 
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
@@ -199,9 +200,20 @@ function findFichaTecnica(query, activeContext = null) {
 }
 
 /**
- * Determina si la pregunta del usuario es una consulta de disponibilidad
+ * Determina si la pregunta del usuario es una consulta puntual sobre un atributo específico
+ * (gas, pozo, medidas, mascotas, precio, baños, estacionamiento, etc.)
+ */
+function isSpecificAttributeQuestion(query) {
+  if (!query) return false;
+  const q = normalizeText(query);
+  return /(?:cuant[oa]s?\s*(?:mide|habitac|cuarto|bano|puesto|estacion|metro|meses|cuesta|vale|paga)|(?:tiene|cuenta\s*con|hay)\s*(?:gas|pozo|tanque|piscina|balcon|terraza|maletero|aire|internet|wifi|estacion|puesto|lavander|ascensor|consej)|(?:aceptan?|admiten?|permiten?)\s*(?:mascota|perro|gato|nino|binance|cripto|zelle|efectivo|credito|financ)|(?:qu[eé]\s*(?:piso|cocina|internet|bano|tipo|acabado|zona|banco|metodo|forma))|color\s*de|antiguedad)/i.test(q);
+}
+
+/**
+ * Determina si la pregunta del usuario es una consulta de disponibilidad o interés general
  */
 function isAvailabilityQuestion(query) {
+  if (!query) return false;
   const q = normalizeText(query);
   return /(?:disponib|est[aá]\s*(?:disponible|libre)|sigue\s*(?:disponible|libre)|a[uú]n\s*(?:disponible|libre)|tienes\s*(?:este|el|un)|sigue\s*en\s*(?:alquiler|venta))/i.test(q);
 }
@@ -232,21 +244,34 @@ ${ficha.rawText}
 ===================== FIN DOCUMENTO OFICIAL =====================
 
 INFORMACIÓN DE CONTEXTO:
-- Este documento oficial corresponde al inmueble que el usuario identifica como "${ficha.zona}" (nombre tomado del título/archivo de la ficha).
-- Por ejemplo, si el documento se titula "${ficha.fileName}", todo su contenido describe dicho apartamento.
+- Este documento oficial corresponde al inmueble que el usuario identifica como "${ficha.zona}" (tomado del título/archivo de la ficha).
 
 REGLAS DE ORO OBLIGATORIAS (CERO ALUCINACIÓN - SILENCIO ABSOLUTO):
-1. BLINDAJE TOTAL: Solo puedes responder preguntas cuya respuesta esté AFIRMADA o DESCRITA en el CONTENIDO OFICIAL.
-2. POLÍTICA DE SILENCIO (100% CALLADA):
-   Si el dato consultado por el usuario:
-   - NO aparece en el documento.
-   - O aparece explícitamente con la frase "No especificado en la fuente".
-   - O es una pregunta capciosa sobre algo de lo que no hay registro (ej: color de paredes, closets, piscina si no se menciona, gas si dice no especificado, mascotas si no se aclara).
+1. CONSULTA GENERAL / ENLACE / DISPONIBILIDAD:
+   Si el cliente consulta de forma general por el inmueble, envía un enlace del inmueble, o pregunta si está disponible:
+   Debes confirmar "Sí, disponible." y presentar un resumen completo, profesional y directo con los datos del documento (ubicación exacta, metraje, ambientes, equipamiento, canon/precio, condiciones de negociación y restricciones).
+
+2. PREGUNTAS CON RESPUESTA NEGATIVA O RESTRICCIÓN EN EL DOCUMENTO:
+   Si el cliente pregunta por un servicio o característica que el documento aclara explícitamente que NO posee o está restringido (ej: "No posee gas directo", "No posee estacionamiento propio", "No se admiten niños ni mascotas"):
+   Debes responder con precisión la respuesta negativa y la alternativa oficial explicada en el documento (ej: "No posee gas directo, cuenta con cocina eléctrica." / "No posee estacionamiento propio; dispone de estacionamiento privado de alquiler a media cuadra." / "No se admiten niños ni mascotas.").
+
+3. SILENCIO ABSOLUTO ([SILENCIO]):
+   Única y exclusivamente si el dato NO aparece en absoluto en el documento (o dice explícitamente "No especificado en la fuente", o preguntan por cosas inexistentes como color de paredes, piscina o gimnasio si no se mencionan):
    DEBES responder ÚNICA Y EXCLUSIVAMENTE con la palabra exacta:
    [SILENCIO]
-   Está terminantemente prohibido inventar, deducir, pedir disculpas o decir "no tengo esa información". Si no está, responde solo: [SILENCIO].
-3. RESPUESTA PRECISA: Si la información SÍ está en el documento (ej: canon, precio, metraje, ambientes, baños, estacionamiento, agua, cocina, aire acondicionado, internet, restricciones, requisitos), responde de forma profesional, directa y concisa en español (1 o 2 frases directas al grano).
-4. TONO: Profesional inmobiliario, educado y directo. Sin saludos largos ni rodeos.`;
+   Está terminantemente prohibido inventar o deducir información que no esté en el documento.
+
+4. TONO: Profesional inmobiliario, educado y directo al grano, sin rodeos innecesarios.`;
+
+  // Si el usuario envió un enlace o consulta general sin atributo específico, preparamos la pregunta para Claude
+  let promptUserQuery = (userQuestion || '').trim();
+  const hasUrl = /https?:\/\/[^\s]+/i.test(promptUserQuery);
+  const isShortOrLink = hasUrl && promptUserQuery.split(/\s+/).length <= 4;
+  const isAttribute = isSpecificAttributeQuestion(promptUserQuery);
+
+  if ((isShortOrLink || isAvailabilityQuestion(promptUserQuery)) && !isAttribute) {
+    promptUserQuery = `El cliente está consultando por este inmueble (mensaje: "${userQuestion}"). Confirma la disponibilidad ("Sí, disponible.") y presenta un resumen completo, profesional y directo con los datos del documento (ubicación exacta, metraje, ambientes, equipamiento, canon/precio, negociación y restricciones).`;
+  }
 
   try {
     const response = await axios.post(
@@ -255,10 +280,10 @@ REGLAS DE ORO OBLIGATORIAS (CERO ALUCINACIÓN - SILENCIO ABSOLUTO):
         model,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userQuestion }
+          { role: 'user', content: promptUserQuery }
         ],
         temperature: 0.0,
-        max_tokens: 300
+        max_tokens: 400
       },
       {
         headers: {
@@ -326,19 +351,7 @@ async function handleFichaTecnicaQuery(userMessage, activeContext = null, client
 
   console.log(`[Fichas Manager] Consulta emparejada con Ficha Técnica: ${ficha.zona} (${ficha.id})`);
 
-  // Si pregunta disponibilidad directa ("Está disponible?", "Sigue libre?")
-  if (isAvailabilityQuestion(userMessage)) {
-    console.log(`[Fichas Manager] Consulta de disponibilidad para ${ficha.zona}. Respondiendo "Si, disponible".`);
-    return {
-      text: 'Si, disponible',
-      action: 'DISPONIBILIDAD',
-      matchedFicha: ficha,
-      exactText: true,
-      skip: false
-    };
-  }
-
-  // Para cualquier otra pregunta técnica sobre el inmueble, consultar con Claude blindado
+  // Ejecutar consulta técnica blindada con Claude Sonnet 4.5
   return await queryFichaTecnicaWithClaude(userMessage, ficha, clientName);
 }
 
