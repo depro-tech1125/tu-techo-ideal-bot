@@ -1,29 +1,34 @@
 services:
   - type: web
-    name: tu-techo-ideal-bot
+    name: tu-techo-ideal-staging
     env: node
     plan: free
+    branch: feature/reinicio-logica-inmobiliaria
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: PORT
         value: 10000
+      - key: OBSERVATION_MODE
+        value: "true"
+      - key: NODE_ENV
+        value: "staging"
       - key: KOMMO_SUBDOMAIN
-        sync: false
-      - key: KOMMO_TOKEN
-        sync: false
+        value: "tutechoidealrd"
       - key: KOMMO_BOT_ID
-        sync: false
+        value: "100766"
       - key: KOMMO_FIELD_ID
-        sync: false
-      - key: GOOGLE_SHEET_CSV_URL
-        sync: false
+        value: "2103996"
+      - key: KOMMO_ACCOUNT_ID
+        value: "36728143"
       - key: USE_CLAUDE
         value: "true"
       - key: CLAUDE_MODEL
         value: "anthropic/claude-sonnet-4.5"
+      - key: KOMMO_TOKEN
+        sync: false
+      - key: GOOGLE_SHEET_CSV_URL
+        sync: false
       - key: OPENROUTER_API_KEY
-        value: "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"
-      - key: ROBERT_WHATSAPP
-        value: "+584223115105"
+        sync: false

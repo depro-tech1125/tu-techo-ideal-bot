@@ -4463,8 +4463,8 @@ app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, async () => {
-    console.log(`Tu Techo Ideal Bot running on port ${PORT}`);
+  app.listen(PORT, '0.0.0.0', async () => {
+    console.log(`Tu Techo Ideal Bot running on 0.0.0.0:${PORT}`);
     initDailyReportScheduler();
     initWeeklyAuditScheduler();
 
