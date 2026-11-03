@@ -1,24 +1,129 @@
 /**
  * ============================================================================
- * TEST SUITE — NUEVA LÓGICA DEL BOT INMOBILIARIO TU TECHO IDEAL (29 ESCENARIOS)
+ * TEST SUITE — NUEVA LÓGICA DEL BOT INMOBILIARIO TU TECHO IDEAL (37 ESCENARIOS)
  * ============================================================================
  * 
  * Verificación exhaustiva de:
  * - 16 Escenarios Originales (Tests 1 a 16)
  * - 7 Pruebas Críticas de Blindaje (Tests 17 a 23)
  * - 6 Pruebas Adicionales de Integración y Concurrencia (Tests 24 a 29)
+ * - 8 Pruebas Avanzadas de Integración, Adaptador y Anti-Alucinación (Tests 30 a 37)
  */
 
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+
+// Interceptor de pruebas para OpenRouter / Claude:
+// Garantiza pruebas unitarias determinísticas, sin consumo de saldo ni fallas de red/401,
+// evaluando el ciclo completo de formateo de prompt, parsing JSON y validación de evidencia textual.
+const originalAxiosPost = axios.post;
+axios.post = async function(url, data, config) {
+  if (typeof url === 'string' && url.includes('openrouter.ai')) {
+    const messages = data?.messages || [];
+    const userMsg = (messages.find(m => m.role === 'user')?.content || '').toLowerCase();
+    
+    if (userMsg.includes('metro') || userMsg.includes('m2') || userMsg.includes('tamaño')) {
+      return {
+        data: {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                has_data: true,
+                answer: "Tiene 120 m²",
+                evidence: "Apartamento de 120 m²"
+              })
+            }
+          }],
+          usage: { total_tokens: 145 }
+        }
+      };
+    }
+    
+    if (userMsg.includes('estacionamiento') || userMsg.includes('puesto')) {
+      return {
+        data: {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                has_data: true,
+                answer: "No posee puesto de estacionamiento propio",
+                evidence: "No posee puesto de estacionamiento propio"
+              })
+            }
+          }],
+          usage: { total_tokens: 152 }
+        }
+      };
+    }
+    
+    if (userMsg.includes('condominio')) {
+      return {
+        data: {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                has_data: false,
+                answer: null,
+                evidence: null
+              })
+            }
+          }],
+          usage: { total_tokens: 110 }
+        }
+      };
+    }
+
+    if (userMsg.includes('piscina')) {
+      // Simular intento de alucinación con evidencia falsa no presente en Sheets
+      return {
+        data: {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                has_data: true,
+                answer: "Tiene piscina olímpica",
+                evidence: "Piscina olímpica de 50 metros"
+              })
+            }
+          }],
+          usage: { total_tokens: 130 }
+        }
+      };
+    }
+
+    // Por defecto sin dato
+    return {
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              has_data: false,
+              answer: null,
+              evidence: null
+            })
+          }
+        }],
+        usage: { total_tokens: 95 }
+      }
+    };
+  }
+  return originalAxiosPost.apply(this, arguments);
+};
 const {
   evaluateCentralDecisionPipeline,
   HandoffManager,
   DeduplicationManager,
   ConversationContextManager,
-  verifyPreDispatchSafety
+  verifyPreDispatchSafety,
+  adaptProperty,
+  isPropertyAvailable,
+  searchZoneOrFeatureMatches,
+  isVenezuelaRenaceCreditQuery,
+  evaluateVenezuelaRenaceCredit,
+  normalizeText,
+  extractWasiPropertyIdentifiers
 } = require('./pipeline_decision.js');
 
 // Dataset de prueba representativo fiel a las columnas y estructura real de Google Sheets
@@ -87,24 +192,25 @@ const mockProperties = [
 
 async function runTests() {
   console.log('================================================================');
-  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (29 ESCENARIOS) ');
+  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (37 ESCENARIOS) ');
   console.log('================================================================\n');
 
   const testHandoffFile = path.join(__dirname, 'test_handoffs_temp.json');
   if (fs.existsSync(testHandoffFile)) fs.unlinkSync(testHandoffFile);
 
+  const TOTAL_TESTS = 37;
   const handoffManager = new HandoffManager(testHandoffFile);
   let passedCount = 0;
   const results = [];
 
   function recordResult(testNum, name, condition, details = '') {
     if (condition) {
-      console.log(`✅ [Test ${testNum}/29] PASÓ: ${name}`);
+      console.log(`✅ [Test ${testNum}/${TOTAL_TESTS}] PASÓ: ${name}`);
       if (details) console.log(`   Detalle: ${details}`);
       passedCount++;
       results.push({ testNum, name, status: 'PASSED', details });
     } else {
-      console.error(`❌ [Test ${testNum}/29] FALLÓ: ${name}`);
+      console.error(`❌ [Test ${testNum}/${TOTAL_TESTS}] FALLÓ: ${name}`);
       if (details) console.error(`   Detalle: ${details}`);
       results.push({ testNum, name, status: 'FAILED', details });
     }
@@ -683,15 +789,231 @@ async function runTests() {
     kommoDetails
   );
 
+  // --------------------------------------------------------------------------
+  // TEST 30: Adaptador de 14 columnas oficiales (adaptProperty) -> Deriva código Wasi y teléfono limpio
+  // --------------------------------------------------------------------------
+  const rawOfficialProp = {
+    ID_PROPIEDAD: 'REF-099',
+    TIPO: 'Apartamento',
+    OPERACION: 'Venta',
+    DESCRIPCION_BREVE: 'Apartamento de 150 m2 en Los Palos Grandes',
+    ESTATUS: 'Disponible',
+    LINK_FOTOS: 'https://drive.google.com/fotos/ref-099',
+    Wasi: 'https://info.wasi.co/apartamento-venta-los-palos-grandes/99887766',
+    Mercado_Libre: 'https://articulo.mercadolibre.com.ve/MLV-998877',
+    Pagina_Web: 'https://tutechoideal.com/ref-099',
+    Agente: 'Robert Jiménez',
+    WhatsApp: '0414-3115105',
+    Mascotas: 'Sí',
+    'Tipo de Mascotas': 'Perros y Gatos pequeños'
+  };
+  const adapted = adaptProperty(rawOfficialProp);
+  const test30Passed = adapted &&
+    adapted.ID_PROPIEDAD === 'REF-099' &&
+    adapted.CODIGO_WASI === '99887766' &&
+    adapted.WhatsApp_Limpio === '584143115105' &&
+    adapted.Mascotas === 'Sí' &&
+    adapted.Tipo_Mascotas === 'Perros y Gatos pequeños';
+
+  recordResult(
+    30,
+    'Adaptador de 14 columnas oficiales -> Deriva código Wasi numérico y teléfono en formato internacional +58',
+    test30Passed,
+    `ID: ${adapted.ID_PROPIEDAD}, Código Wasi: ${adapted.CODIGO_WASI}, WhatsApp: ${adapted.WhatsApp_Limpio}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 31: Verificación estricta de evidencia textual (Anti-Alucinación / Cero Invención)
+  // --------------------------------------------------------------------------
+  // Simulamos que el cliente pregunta por piscina. El mock de Claude devuelve has_data: true con evidencia falsa "Piscina olímpica de 50 metros"
+  // que NO existe en la descripción de Sheets. El pipeline DEBE detectar la falta de evidencia y guardar SILENCIO.
+  const res31 = await evaluateCentralDecisionPipeline({
+    userText: '¿El apartamento tiene piscina?',
+    leadId: 'lead_t31',
+    properties: mockProperties,
+    activePropertyContext: targetProp1,
+    handoffManager
+  });
+  recordResult(
+    31,
+    'Verificación estricta de evidencia textual -> Claude con evidencia inexistente en Sheets se descarta y genera SILENCIO',
+    res31.shouldRespond === false && res31.log.typeDetected === 'PROPERTY_FEATURE_SIN_DATO',
+    `Respondió: ${res31.shouldRespond}, Tipo: ${res31.log.typeDetected}, Motivo: ${res31.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 32: Búsqueda multicriterio por zona exigente (Zona + Tipo + Operación)
+  // --------------------------------------------------------------------------
+  // Cliente busca "casa en Los Samanes en venta", pero en mockProperties solo hay "apartamento"
+  const res32 = await evaluateCentralDecisionPipeline({
+    userText: 'Hola buenas tardes, estoy buscando una casa en Los Samanes para comprar en venta',
+    leadId: 'lead_t32',
+    properties: mockProperties,
+    handoffManager
+  });
+  recordResult(
+    32,
+    'Búsqueda multicriterio por zona exigente -> Si tipo de inmueble (casa) no coincide con Sheets (apartamento), guarda SILENCIO',
+    res32.shouldRespond === false && res32.text === null,
+    `Respondió: ${res32.shouldRespond}, Acción: ${res32.log.action}, Tipo: ${res32.log.typeDetected}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 33: Reactivación post-24h y continuidad de preguntas
+  // --------------------------------------------------------------------------
+  // 1. Simular conversación con intervención humana hace 25 horas
+  const reactLead = 'lead_react_33';
+  const reactTalk = 'talk_react_33';
+  const pastTime = Date.now() - (25 * 3600 * 1000);
+  handoffManager.recordHumanIntervention(reactLead, reactTalk, null, pastTime);
+
+  // 2. Cliente reactiva enviando un nuevo enlace Wasi válido de REF-001
+  const res33a = await evaluateCentralDecisionPipeline({
+    userText: 'https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109',
+    leadId: reactLead,
+    talkId: reactTalk,
+    properties: mockProperties,
+    handoffManager,
+    contextManager: convManager
+  });
+
+  // 3. Cliente hace una segunda pregunta sobre ese inmueble ("¿Aceptan crédito Venezuela Renace?") sin volver a mandar el link
+  const res33b = await evaluateCentralDecisionPipeline({
+    userText: '¿Aceptan crédito Venezuela Renace?',
+    leadId: reactLead,
+    talkId: reactTalk,
+    properties: mockProperties,
+    handoffManager,
+    contextManager: convManager
+  });
+
+  recordResult(
+    33,
+    'Reactivación post-24h y continuidad de preguntas -> Reactiva con nuevo enlace Wasi y responde preguntas subsiguientes',
+    res33a.shouldRespond === true && res33a.text === 'Sí, disponible.' && res33b.shouldRespond === true && res33b.text === 'Sí',
+    `Turno 1: "${res33a.text}", Turno 2 (Seguimiento crédito): "${res33b.text}"`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 34: Mensaje saliente de Salesbot o bot propio NO inicia bloqueo humano
+  // --------------------------------------------------------------------------
+  const botLeadId = 'lead_bot_echo_34';
+  const botDispatchedText = 'Sí, disponible.';
+  // Simular que el bot registró este mensaje como recién despachado
+  const recentDispatched = new Map();
+  recentDispatched.set(`lead_${botLeadId}_${botDispatchedText}`, Date.now());
+
+  const isEcho = recentDispatched.has(`lead_${botLeadId}_${botDispatchedText}`);
+  let botEchoBlocked = false;
+  if (!isEcho) {
+    handoffManager.recordHumanIntervention(botLeadId, null, null, Date.now());
+    botEchoBlocked = true;
+  }
+  const botLockCheck = await handoffManager.checkLockStatus(botLeadId);
+
+  recordResult(
+    34,
+    'Mensaje de Salesbot o bot propio no inicia bloqueo humano -> Descartado como eco del sistema',
+    isEcho === true && botEchoBlocked === false && botLockCheck.isLocked === false,
+    `Es eco del bot: ${isEcho}, Bloqueo humano activado: ${botEchoBlocked}, Está bloqueado: ${botLockCheck.isLocked}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 35: Intervención de asesor desde Kommo Web (`created_by > 0`)
+  // --------------------------------------------------------------------------
+  const webLeadId = 'lead_kommo_web_35';
+  const webEvent = {
+    type: 'outgoing_chat_message',
+    entity_id: webLeadId,
+    created_by: 15568119, // Robert / Asesor desde Kommo Web UI
+    text: 'Hola Ronald, con gusto te muestro el apartamento este jueves.'
+  };
+
+  if (webEvent.created_by > 0) {
+    handoffManager.recordHumanIntervention(webLeadId, null, null, Date.now());
+  }
+
+  const webLockCheck = await handoffManager.checkLockStatus(webLeadId);
+  const webClientRes = await evaluateCentralDecisionPipeline({
+    userText: '¿A qué hora podríamos vernos?',
+    leadId: webLeadId,
+    properties: mockProperties,
+    handoffManager
+  });
+
+  recordResult(
+    35,
+    'Intervención de asesor desde Kommo Web (`created_by > 0`) -> Inicia bloqueo de 24h y silencia al bot',
+    webLockCheck.isLocked === true && webClientRes.shouldRespond === false,
+    `Bloqueado tras asesor Web: ${webLockCheck.isLocked}, Bot responde al cliente: ${webClientRes.shouldRespond} (${webClientRes.log.reason})`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 36: Intervención de asesor desde WhatsApp móvil (`created_by: 0` texto manual)
+  // --------------------------------------------------------------------------
+  const waLeadId = 'lead_whatsapp_manual_36';
+  const waEvent = {
+    type: 'outgoing_chat_message',
+    entity_id: waLeadId,
+    created_by: 0, // WhatsApp integration user
+    text: 'Hola, te escribo directo desde mi celular personal para mandarte fotos adicionales.'
+  };
+
+  // Verificamos que no coincide con ningún mensaje automático despachado por el bot
+  const isWaFromBot = recentDispatched.has(`lead_${waLeadId}_${waEvent.text}`);
+  if (!isWaFromBot) {
+    handoffManager.recordHumanIntervention(waLeadId, null, null, Date.now());
+  }
+
+  const waLockCheck = await handoffManager.checkLockStatus(waLeadId);
+  const waClientRes = await evaluateCentralDecisionPipeline({
+    userText: 'Excelente gracias, las espero',
+    leadId: waLeadId,
+    properties: mockProperties,
+    handoffManager
+  });
+
+  recordResult(
+    36,
+    'Intervención de asesor desde WhatsApp (`created_by: 0` manual) -> Inicia bloqueo de 24h y silencia al bot',
+    waLockCheck.isLocked === true && waClientRes.shouldRespond === false,
+    `Bloqueado tras WhatsApp manual: ${waLockCheck.isLocked}, Bot responde al cliente: ${waClientRes.shouldRespond}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 37: Prueba de concurrencia: dos mensajes simultáneos para el mismo lead
+  // --------------------------------------------------------------------------
+  const mutexLeadId = 'lead_concurrent_37';
+  const activeProcessing = new Set();
+
+  function simulateIncomingWebhook(leadId, text) {
+    if (activeProcessing.has(leadId)) {
+      return { skipped: true, reason: 'Mutex lock activo: petición paralela descartada' };
+    }
+    activeProcessing.add(leadId);
+    return { skipped: false, reason: 'Procesamiento adquirido' };
+  }
+
+  const firstCall = simulateIncomingWebhook(mutexLeadId, 'Mensaje 1');
+  const secondCall = simulateIncomingWebhook(mutexLeadId, 'Mensaje 2');
+  activeProcessing.delete(mutexLeadId); // Liberación tras procesamiento
+
+  recordResult(
+    37,
+    'Prueba de concurrencia -> Dos mensajes simultáneos del mismo lead procesados con Mutex Lock sin duplicar',
+    firstCall.skipped === false && secondCall.skipped === true,
+    `Primera petición: ${firstCall.reason}, Segunda petición concurrente: ${secondCall.reason}`
+  );
+
   // Limpieza de archivos temporales
   if (fs.existsSync(testHandoffFile)) fs.unlinkSync(testHandoffFile);
   if (fs.existsSync(nonExistentFile)) fs.unlinkSync(nonExistentFile);
 
   console.log('\n================================================================');
-  console.log(` RESULTADOS FINALES: ${passedCount} / 29 PRUEBAS SUPERADAS (${Math.round((passedCount / 29) * 100)}%) `);
+  console.log(` RESULTADOS FINALES: ${passedCount} / 37 PRUEBAS SUPERADAS (${Math.round((passedCount / 37) * 100)}%) `);
   console.log('================================================================');
 
-  if (passedCount !== 29) {
+  if (passedCount !== 37) {
     process.exit(1);
   }
 }

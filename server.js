@@ -6,7 +6,46 @@ const fs = require('fs');
 const nodemailer = require('nodemailer');
 const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
+// Fichas técnicas desvinculadas del flujo de decisión principal (mantenidas solo para compatibilidad)
 const { loadFichasTecnicas, findFichaTecnica, handleFichaTecnicaQuery } = require('./fichas_manager.js');
+
+// ============================================================================
+// NUEVO CONTROLADOR CENTRAL DETERMINÍSTICO (PIPELINE DE DECISIÓN INMOBILIARIA)
+// ============================================================================
+const {
+  evaluateCentralDecisionPipeline,
+  HandoffManager,
+  DeduplicationManager,
+  ConversationContextManager,
+  verifyPreDispatchSafety,
+  adaptProperty,
+  isPropertyAvailable
+} = require('./pipeline_decision.js');
+
+const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
+
+// Gestor de handoff y bloqueo humano persistente
+const centralHandoffManager = new HandoffManager(
+  path.join(__dirname, 'handoffs.json'),
+  async ({ leadId, talkId, contactId }) => {
+    try {
+      const token = process.env.KOMMO_TOKEN;
+      const subdomain = process.env.KOMMO_SUBDOMAIN;
+      if (!token || !subdomain) return null;
+      const headers = { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` };
+      const url = `https://${subdomain}.kommo.com/api/v4/events?filter[type]=outgoing_chat_message&limit=15`;
+      const evRes = await axios.get(url, { headers, timeout: 5000 });
+      const events = evRes.data?._embedded?.events || [];
+      for (const ev of events) {
+        if (leadId && String(ev.entity_id) === String(leadId)) {
+          return { lastHumanTimestamp: ev.created_at * 1000 };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+);
+const centralContextManager = new ConversationContextManager();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -3971,6 +4010,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
         console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] El asesor humano escribió en el chat (Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas y deteniendo Salesbot.`);
 
+        // Registrar en ambos gestores (nuevo pipeline central y compatibilidad)
+        centralHandoffManager.recordHumanIntervention(outLeadId, outTalkId, outContactId, Date.now());
         if (outLeadId) setLeadHandoff(outLeadId);
         if (outTalkId) setTalkHandoff(outTalkId);
         if (outContactId) setContactHandoff(outContactId);
@@ -4190,22 +4231,74 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log(`Message: "${userText}"`);
       console.log(`========================================`);
 
-      // 1. Obtener propiedades de Google Sheets y verificar si envió link directo
+      // 1. Obtener propiedades de Google Sheets autorizadas
       const properties = await getAvailableProperties();
-      const hasDirectPropertyLink = !!findPropertyByAnyLinkOrCode(userText, properties);
 
-      // 🛑 CONTROL DE TRASPASO A HUMANO (HANDOFF)
-      const handoffStatus = checkLeadHandoffStatus(currentLeadId, currentTalkId, messageObj.contact_id);
-      const intent = detectLeadIntent(userText);
+      // ======================================================================
+      // 2. NUEVO CONTROLADOR CENTRAL DETERMINÍSTICO ÚNICO (REGLAS 1 A 10)
+      // ======================================================================
+      console.log('[Processing] Evaluando decisión central con pipeline_decision.js...');
+      const pipelineResult = await evaluateCentralDecisionPipeline({
+        userText,
+        leadId: currentLeadId,
+        talkId: currentTalkId,
+        contactId: messageObj.contact_id ? String(messageObj.contact_id) : null,
+        properties,
+        handoffManager: centralHandoffManager,
+        contextManager: centralContextManager,
+        currentTime: Date.now()
+      });
 
-      // 🛑 DOBLE VERIFICACIÓN EN VIVO EN KOMMO (FAILSAFE CONTRA INTERVENCIÓN HUMANA)
-      // "PORQUE RESPONDES SI YA UN HUMANO LO HIZO......"
-      const humanAttended = await checkRecentHumanActivity(messageObj.contact_id, currentLeadId, currentTalkId);
-      if (humanAttended) {
-        console.log(`[Handoff Silence - Live Check] Se detectó intervención humana previa en Kommo para el Lead #${currentLeadId} (Contact #${messageObj.contact_id}). El bot cede el control total al equipo humano y se silencia.`);
-        setLeadHandoff(currentLeadId);
-        if (currentTalkId) setTalkHandoff(currentTalkId);
-        if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
+      console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
+
+      // Si el pipeline determinó silencio absoluto
+      if (!pipelineResult.shouldRespond || !pipelineResult.text) {
+        console.log(`[Pipeline Silence] El bot guarda silencio absoluto y cede el control.`);
+        await stopKommoSalesbot(currentLeadId);
+        try {
+          await updateKommoLead(currentLeadId, ' ');
+        } catch (e) {}
+
+        // Si fue una solicitud de atención humana o nota de voz, alertar a Robert para que atienda al cliente
+        if (pipelineResult.log.typeDetected === 'HUMAN_ATTENTION_REQUEST' || isVoiceNoteOrAudio(body, messageObj, userText)) {
+          let channel = clientPhone ? 'WhatsApp' : (clientName.startsWith('@') ? 'Instagram' : 'WhatsApp / Redes Sociales');
+          const robertAlert = buildRobertAlertText({
+            type: 'AGENDAR_CITA',
+            clientName,
+            clientPhone,
+            channel,
+            matchedProperty: pipelineResult.targetProperty || null,
+            userText: userText || '[Solicitud de atención / Nota de voz]',
+            leadId: currentLeadId
+          });
+          await dispatchDirectWhatsAppToRobert(robertAlert);
+        }
+        return;
+      }
+
+      const responseText = pipelineResult.text;
+      console.log(`[Pipeline Approved Response] Text: "${responseText}"`);
+
+      // ======================================================================
+      // 3. MODO OBSERVACIÓN (SHADOW MODE)
+      // ======================================================================
+      if (OBSERVATION_MODE) {
+        console.log(`[OBSERVATION MODE ACTIVE] El bot respondería: "${responseText}". No se despacha a Kommo ni se dispara Salesbot.`);
+        return;
+      }
+
+      // ======================================================================
+      // 4. COMPROBACIÓN PREVIA AL DESPACHO (PRE-DISPATCH CHECK)
+      // ======================================================================
+      const preDispatchCheck = await verifyPreDispatchSafety(
+        currentLeadId,
+        currentTalkId,
+        messageObj.contact_id ? String(messageObj.contact_id) : null,
+        centralHandoffManager
+      );
+
+      if (!preDispatchCheck.canDispatch) {
+        console.warn(`[PRE-DISPATCH ABORT] ${preDispatchCheck.reason} Cancelando despacho a Kommo.`);
         await stopKommoSalesbot(currentLeadId);
         try {
           await updateKommoLead(currentLeadId, ' ');
@@ -4213,76 +4306,24 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         return;
       }
 
-      // Si el cliente envía un enlace directo o código de inmueble, SIEMPRE se atiende y valida contra la BD ("Si, disponible" / "No, disponible")
-      // a menos que un humano haya intervenido directamente en el chat en vivo
-      if (handoffStatus.inHandoff && !hasDirectPropertyLink) {
-        console.log(`[Handoff Silence] Lead #${currentLeadId} (Talk #${currentTalkId}) está en atención manual con el equipo de Tu Techo Ideal (${handoffStatus.hoursElapsed.toFixed(1)}h transcurridas). El bot se mantiene al margen y en silencio.`);
-        await stopKommoSalesbot(currentLeadId);
-        return;
-      }
-
-      // 🛑 INTERCEPCIÓN 1: NOTA DE VOZ / AUDIO RECIBIDO
-      // "si el sistema detecta que llego una nota de voz tampoco la responde, manda alerta a rober para que responda. No emites ningun tipo de mensaje al cliente, ni que espere ni nada solo manda alerta..."
-      if (isVoiceNoteOrAudio(body, messageObj, userText)) {
-        console.log(`[Voice Note Intercepted] Lead #${currentLeadId} envió una nota de voz. El bot se mantiene en silencio absoluto (0 mensajes al cliente) y despacha alerta a Robert.`);
-        await ensureLeadInActivePipeline(currentLeadId);
-        const properties = await getAvailableProperties();
-        const activeProp = await getOrRecoverLeadPropertyContext(currentLeadId, properties);
-        let channel = clientPhone ? 'WhatsApp' : (clientName.startsWith('@') ? 'Instagram' : 'WhatsApp / Redes Sociales');
-
-        const robertAlert = buildRobertAlertText({
-          type: 'NOTA_DE_VOZ',
-          clientName,
-          clientPhone,
-          channel,
-          matchedProperty: activeProp,
-          userText: userText || '[Nota de voz / Audio recibido]',
-          leadId: currentLeadId
-        });
-
-        await dispatchDirectWhatsAppToRobert(robertAlert);
-        setLeadHandoff(currentLeadId);
-        return;
-      }
-
-      // 🛑 INTERCEPCIÓN 2: MENCIÓN EN HISTORIA / REEL / RESTRICCIÓN DE INSTAGRAM
-      // "tampoco le mandes alerta a robert por eso... silencio absoluto (0 mensajes al cliente y 0 alertas a Robert)"
-      if (isInstagramStoryOrRestricted(body, messageObj, userText)) {
-        console.log(`[Instagram Story/Restricted Ignored] Lead #${currentLeadId}: Descartado silenciosamente. Sin mensaje al cliente y sin alerta a Robert.`);
-        return;
-      }
-
-      // 2. Generar respuesta personalizada
-      console.log('[Processing] Generating response based on DESCRIPCION_BREVE & inventory...');
-      const result = await generateResponse(userText, properties, imageUrl, currentLeadId, clientName, currentTalkId, messageObj.contact_id);
-
-      // Si el filtro determinístico o Claude clasificaron como charla casual, comentario o ignorar
-      if (!result || result.skip || !result.text) {
-        console.log('[Processing] No response required (casual conversation, chit-chat or personal talk). Skipping delivery.');
-        return;
-      }
-
-      const responseText = result.text;
-      console.log('[Processing] Response text:\n', responseText);
-
-      // 🛑 GARANTIZAR QUE EL LEAD ESTÁ EN ETAPA ACTIVA ("Contacto inicial") ANTES DE DISPARAR SALESBOT
+      // ======================================================================
+      // 5. DESPACHO A KOMMO Y DISPARO DE SALESBOT
+      // ======================================================================
       await ensureLeadInActivePipeline(currentLeadId);
 
-      // 3. Guardar respuesta en Kommo
+      // Guardar respuesta en campo 2103996 de Kommo
       console.log('[Processing] Saving response to Kommo lead field...');
       await updateKommoLead(currentLeadId, responseText);
       recordBotDispatchedMessage(currentLeadId, responseText);
 
-      // 4. Disparar Salesbot ÚNICA VEZ
+      // Disparar Salesbot ÚNICA VEZ
       console.log('[Processing] Triggering Salesbot single delivery...');
       await triggerKommoSalesbot(currentLeadId);
 
-      // Incrementar contador de respuestas automáticas de la IA para este lead
       const responseNum = incrementLeadResponseCount(currentLeadId);
       console.log(`[Response Count] Lead #${currentLeadId} - Respuestas automáticas acumuladas: ${responseNum}/${MAX_AI_RESPONSES_PER_LEAD}`);
 
-      // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO (ANTIDUPLICADOS) Y PARADA DE SALESBOT
-      // Ventana de 45 segundos: Da tiempo de holgura para que Salesbot lea y despache el mensaje, luego se limpia y SE DETIENE SALESBOT
+      // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO Y PARADA DE SALESBOT (45s)
       setTimeout(async () => {
         try {
           await updateKommoLead(currentLeadId, ' ');
@@ -4292,120 +4333,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           console.warn('[Anti-Duplicate Clear Error]:', e.message);
         }
       }, 45000);
-
-      // 🛑 SI LA INFORMACIÓN NO EXISTE EN BD O EL CLIENTE PIDE AGENDAR CITA:
-      // Se activa el traspaso al asesor humano para que continúe la conversación
-      if (result.action === 'NO_EXISTE_EN_DESCRIPCION' || result.action === 'AGENDAR_CITA') {
-        console.log(`[Handoff Activated] Inmueble no registrado o cita solicitada ("${responseText}"). El bot cede el control total, detiene Salesbot y queda a la espera del asesor humano.`);
-        setLeadHandoff(currentLeadId);
-        if (currentTalkId) setTalkHandoff(currentTalkId);
-        if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
-
-        setTimeout(async () => {
-          await stopKommoSalesbot(currentLeadId);
-        }, 15000);
-      }
-
-      // 5. Despacho de Alertas según la acción ejecutada (Omnicanal: WhatsApp, Instagram, Facebook)
-      let channel = 'WhatsApp';
-      const userTextLower = userText.toLowerCase();
-      if (clientPhone) {
-        channel = 'WhatsApp';
-      } else if (clientName.startsWith('@') || userTextLower.includes('instagram') || (messageObj.author && String(messageObj.author.name).startsWith('@'))) {
-        channel = 'Instagram';
-      } else if (userTextLower.includes('facebook') || (messageObj.talk_id && String(messageObj.talk_id).toLowerCase().includes('fb'))) {
-        channel = 'Facebook';
-      } else {
-        channel = 'WhatsApp / Redes Sociales';
-      }
-
-      if (result.action === 'AGENDAR_CITA') {
-        const robertAlertText = buildRobertAlertText({
-          type: 'AGENDAR_CITA',
-          clientName,
-          clientPhone,
-          channel,
-          matchedProperty: result.matchedProperty,
-          userText,
-          leadId: currentLeadId
-        });
-
-        console.log(`[Visit Alert] Despachando alerta ejecutiva de cita a Robert...`);
-        await dispatchDirectWhatsAppToRobert(robertAlertText);
-        setLeadHandoff(currentLeadId);
-      } else if (result.action === 'NO_EXISTE_EN_DESCRIPCION') {
-        const robertAlertText = buildRobertAlertText({
-          type: 'NO_EXISTE_EN_DESCRIPCION',
-          clientName,
-          clientPhone,
-          channel,
-          matchedProperty: result.matchedProperty,
-          userText,
-          leadId: currentLeadId
-        });
-
-        console.log(`[Missing Info Alert] Despachando alerta urgente de información no disponible en BD a Robert...`);
-        await dispatchDirectWhatsAppToRobert(robertAlertText);
-
-        // Crear tarea urgente en Kommo asignada a Robert
-        try {
-          const robertUserId = parseInt(process.env.KOMMO_RESPONSIBLE_ID || '15568119', 10);
-          const nowSec = Math.floor(Date.now() / 1000);
-          await axios.post(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/tasks`, [
-            {
-              responsible_user_id: robertUserId,
-              entity_id: parseInt(currentLeadId, 10),
-              entity_type: 'leads',
-              text: `🚨 [Atención Urgente] ${clientName || 'Cliente'}: "${userText}". No tenemos información en BD. Responder personalmente.`,
-              complete_till: nowSec + 1800,
-              task_type_id: 1
-            }
-          ], {
-            headers: { Authorization: process.env.KOMMO_TOKEN, 'Content-Type': 'application/json' },
-            timeout: 5000
-          });
-          console.log(`[Missing Info Kommo Task] Tarea urgente creada para Robert en Lead #${currentLeadId}`);
-        } catch (e) {
-          console.warn('[Missing Info Kommo Task Error]:', e.response?.data || e.message);
-        }
-
-        // 🛑 ACTIVAR TRASPASO (HANDOFF) INMEDIATO:
-        // "esta bien el mensaje de entrada pero no, no respondas porque no tenemos acceso a esa informacion,
-        // en este caso avisa urgente a robert para que en futuro responda el... listo esperamos a que el humano responda"
-        setLeadHandoff(currentLeadId);
-        if (currentTalkId) setTalkHandoff(currentTalkId);
-        if (messageObj.contact_id) setContactHandoff(messageObj.contact_id);
-      } else if (result.action === 'LIMITE_ALCANZADO') {
-        const robertAlertText = buildRobertAlertText({
-          type: 'LIMITE_ALCANZADO',
-          clientName,
-          clientPhone,
-          channel,
-          matchedProperty: result.matchedProperty,
-          userText,
-          leadId: currentLeadId
-        });
-
-        console.log(`[Limit Alert] Despachando alerta ejecutiva de límite a Robert...`);
-        await dispatchDirectWhatsAppToRobert(robertAlertText);
-        setLeadHandoff(currentLeadId);
-      }
-
-      // Si alcanzó el límite de 4 respuestas en esta misma interacción: pausar para que continúe un humano
-      if (responseNum >= MAX_AI_RESPONSES_PER_LEAD && result.action !== 'AGENDAR_CITA' && result.action !== 'NO_EXISTE_EN_DESCRIPCION' && result.action !== 'LIMITE_ALCANZADO') {
-        console.log(`[Limit Met] Lead #${currentLeadId} completó sus ${MAX_AI_RESPONSES_PER_LEAD} respuestas permitidas. Activando handoff...`);
-        const limitReport = buildRobertAlertText({
-          type: 'LIMITE_ALCANZADO',
-          clientName,
-          clientPhone,
-          channel,
-          matchedProperty: result.matchedProperty,
-          userText,
-          leadId: currentLeadId
-        });
-        dispatchDirectWhatsAppToRobert(limitReport).catch(() => {});
-        setLeadHandoff(currentLeadId);
-      }
 
       console.log(`[Success] Message strictly processed 1 single time for Lead #${currentLeadId}!\n`);
 
@@ -4435,7 +4362,9 @@ app.get('/health', async (req, res) => {
 
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v4.1 Anti-Substitution & Anti-Duplicate Shield Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v5.0 Deterministic Central Pipeline Edition',
+    observation_mode: OBSERVATION_MODE,
+    pipeline_controller: 'pipeline_decision.js',
     claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
     claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
     credits_remaining_usd: remainingCredits,
@@ -4519,6 +4448,10 @@ if (require.main === module) {
 
 module.exports = {
   app,
+  centralHandoffManager,
+  centralContextManager,
+  OBSERVATION_MODE,
+  evaluateCentralDecisionPipeline,
   getAvailableProperties,
   matchWasiOrProperty,
   isStandaloneLinkWithoutQuestion,

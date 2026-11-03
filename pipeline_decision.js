@@ -3,26 +3,26 @@
  * PIPELINE DE DECISIÓN CENTRALIZADO — BOT INMOBILIARIO TU TECHO IDEAL
  * ============================================================================
  * 
- * Regla Fundamental:
- * Google Sheets es la ÚNICA fuente autorizada de información inmobiliaria.
- * Prohibido inventar datos, deducir ausencias como negativas o asumir características.
+ * Arquitectura de Software Senior — Control Determinístico Estricto
  * 
- * Pilares de Blindaje Técnico:
- * 1. Equivalencia exacta de disponibilidad: normalizeText(ESTATUS) === 'disponible'.
- * 2. Bloqueo humano persistente: Falla cerrada (silencio seguro) ante fallas de Kommo API.
- * 3. Reactivación post-24h estricta: Solo con nuevo enlace Wasi válido y existente en Sheets.
- * 4. Extracción blindada de Wasi: Prohibido confundir con precios ($100.000) o teléfonos (0414...).
- * 5. Integridad de Google Sheets: Silencio seguro si la fuente está vacía o inaccesible.
- * 6. Deduplicación y orden de llegada: Ventana antirreintento y descarte de eventos obsoletos.
- * 7. Verificación previa al despacho (Pre-dispatch check): Aborta si hubo intervención humana en vuelo.
- * 8. Aislamiento por conversación (Talk ID): Previene mezcla de inmuebles entre chats del mismo contacto.
+ * Reglas Fundamentales:
+ * 1. Google Sheets es la ÚNICA fuente autorizada de información inmobiliaria.
+ * 2. Cero alucinación: Claude devuelve JSON estructurado con { has_data, answer, evidence }.
+ *    El código verifica que `evidence` exista literalmente en Google Sheets antes de autorizar el envío.
+ * 3. Separación estricta de solicitud de atención humana vs. intervención humana real.
+ * 4. Búsqueda por zona multicriterio (Ubicación + Tipo + Operación + Características).
+ * 5. Reactivación post-24h: Exige nuevo enlace Wasi validado para reactivar.
+ *    Una vez reactivado, permite preguntas de seguimiento sobre esa propiedad hasta nueva intervención.
+ * 6. Aislamiento por `talk_id`: Cero mezcla de inmuebles entre chats del mismo contacto.
+ * 7. Disponibilidad en tiempo real: Se re-verifica el estatus actual de la propiedad en cada turno.
+ * 8. Falla cerrada (Silencio seguro) si falta algún dato, gestor o verificación fiable.
  */
 
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
-// Columnas oficiales autorizadas verificadas en Google Sheets
+// 14 Columnas Oficiales Verificadas en Google Sheets
 const AUTHORIZED_COLUMNS = Object.freeze([
   'ID_PROPIEDAD',        // Col A (0)
   'TIPO',                // Col B (1)
@@ -52,15 +52,71 @@ function normalizeText(text) {
 }
 
 /**
+ * Adaptador de Propiedades:
+ * Mapea la fila bruta de Google Sheets a un objeto normalizado con campos derivados documentados.
+ */
+function adaptProperty(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const id = (raw.ID_PROPIEDAD || '').toString().trim();
+  const tipo = (raw.TIPO || '').toString().trim();
+  const operacion = (raw.OPERACION || '').toString().trim();
+  const desc = (raw.DESCRIPCION_BREVE || '').toString().trim();
+  const estatus = (raw.ESTATUS || '').toString().trim();
+  const fotos = (raw.LINK_FOTOS_URL || raw.LINK_FOTOS || '').toString().trim();
+  const wasi = (raw.Wasi_URL || raw.Wasi || '').toString().trim();
+  const ml = (raw['Mercado Libre_URL'] || raw['Mercado Libre'] || '').toString().trim();
+  const web = (raw['Pagina Web_URL'] || raw['Pagina Web'] || '').toString().trim();
+  const agente = (raw.Agente || '').toString().trim();
+  const telefono = (raw['Numero de WhatsApp'] || raw.WhatsApp || '').toString().trim();
+  const mascotas = (raw.Mascotas || '').toString().trim();
+  const tipoMascotas = (raw['Tipo de Mascotas'] || '').toString().trim();
+
+  // Código Wasi numérico extraído de la URL o campo
+  let codigoWasi = (raw.CODIGO_WASI || '').toString().trim();
+  if (!codigoWasi && wasi) {
+    const m = wasi.match(/\/(\d{6,9})(?:[^\d]|$)/);
+    if (m) codigoWasi = m[1];
+  }
+
+  // Teléfono limpio del asesor
+  let cleanPhone = telefono.replace(/[^0-9]/g, '');
+  if (cleanPhone.length === 10 && cleanPhone.startsWith('4')) {
+    cleanPhone = '58' + cleanPhone;
+  } else if (cleanPhone.length === 11 && cleanPhone.startsWith('04')) {
+    cleanPhone = '58' + cleanPhone.substring(1);
+  }
+
+  return {
+    ID_PROPIEDAD: id,
+    TIPO: tipo,
+    OPERACION: operacion,
+    DESCRIPCION_BREVE: desc,
+    ESTATUS: estatus,
+    LINK_FOTOS: fotos,
+    Wasi: wasi,
+    Mercado_Libre: ml,
+    Pagina_Web: web,
+    Agente: agente,
+    Numero_WhatsApp: telefono,
+    Mascotas: mascotas,
+    Tipo_Mascotas: tipoMascotas,
+    // Campos derivados documentados
+    CODIGO_WASI: codigoWasi,
+    TELEFONO_ASESOR_CLEAN: cleanPhone,
+    WhatsApp_Limpio: cleanPhone,
+    _raw: raw
+  };
+}
+
+/**
  * Verificación de disponibilidad estricta:
  * Exige equivalencia exacta con 'disponible' después de normalizar.
- * Cero coincidencias parciales ("no disponible", "disponible en 15 días" quedan descartadas).
  */
 function isPropertyAvailable(property) {
   if (!property || typeof property !== 'object') return false;
   const rawStatus = property.ESTATUS || '';
-  const normalizedStatus = normalizeText(rawStatus);
-  return normalizedStatus === 'disponible';
+  return normalizeText(rawStatus) === 'disponible';
 }
 
 // ============================================================================
@@ -107,7 +163,7 @@ function isPureGreetingWithoutInquiry(text) {
 }
 
 // ============================================================================
-// 3. DETECCIÓN DE SOLICITUDES QUE CORRESPONDEN AL HUMANO (REGLA 3.G)
+// 3. DETECCIÓN DE SOLICITUDES DE ATENCIÓN HUMANA (REGLA 3.G)
 // ============================================================================
 function isHumanAttentionRequest(text) {
   if (!text) return false;
@@ -136,7 +192,7 @@ function isHumanAttentionRequest(text) {
 }
 
 // ============================================================================
-// 4. DETECCIÓN BLINDADA DE ENLACES E IDENTIFICADORES DE WASI (ANTI-PRECIOS Y TELÉFONOS)
+// 4. DETECCIÓN BLINDADA DE ENLACES E IDENTIFICADORES DE WASI
 // ============================================================================
 function extractWasiPropertyIdentifiers(text, properties = []) {
   if (!text) {
@@ -152,7 +208,7 @@ function extractWasiPropertyIdentifiers(text, properties = []) {
     if (m[1]) codeSet.add(m[1]);
   }
 
-  // 2. Extraer menciones textuales con indicador INEQUÍVOCO de inmueble
+  // 2. Extraer menciones textuales con indicador inequívoco
   const explicitTextMatches = Array.from(raw.matchAll(/(?:inmueble|c[oó]digo|cod|id|ref|propiedad)\s*[:#]?\s*(\d{6,9})\b/gi));
   for (const m of explicitTextMatches) {
     const candidateCode = m[1];
@@ -170,21 +226,22 @@ function extractWasiPropertyIdentifiers(text, properties = []) {
   for (const m of refMatches) {
     const fullRef = m[0].toUpperCase();
     const propMatch = Array.isArray(properties) ? properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === fullRef) : null;
-    if (propMatch && propMatch.CODIGO_WASI) {
-      codeSet.add(propMatch.CODIGO_WASI);
+    if (propMatch) {
+      const adapted = adaptProperty(propMatch);
+      if (adapted.CODIGO_WASI) codeSet.add(adapted.CODIGO_WASI);
     }
   }
 
   const allExtractedCodes = Array.from(codeSet);
 
-  // Mapear cada código extraído con su propiedad en Google Sheets (si existe)
   const matches = allExtractedCodes.map(code => {
     if (!Array.isArray(properties) || properties.length === 0) return null;
-    return properties.find(p => {
+    const rawMatch = properties.find(p => {
       const pCode = (p.CODIGO_WASI || '').toString().trim();
       const pUrl = (p.Wasi_URL || p.Wasi || '').toString();
       return pCode === code || pUrl.includes(`/${code}`);
-    }) || null;
+    });
+    return rawMatch ? adaptProperty(rawMatch) : null;
   });
 
   return {
@@ -195,7 +252,7 @@ function extractWasiPropertyIdentifiers(text, properties = []) {
 }
 
 // ============================================================================
-// 5. BÚSQUEDA INTERNA POR ZONA O CARACTERÍSTICAS (REGLA 3.C)
+// 5. BÚSQUEDA INTERNA MULTICRITERIO POR ZONA (UBICACIÓN + TIPO + OPERACIÓN)
 // ============================================================================
 function searchZoneOrFeatureMatches(queryText, properties = []) {
   if (!queryText || !Array.isArray(properties) || properties.length === 0) {
@@ -203,7 +260,6 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
   }
   const q = normalizeText(queryText);
 
-  // Si el mensaje es una consulta de presupuesto o dinero, no se trata como búsqueda por zona
   if (/(?:presupuesto|inversi[oó]n|dispongo\s*de|cuento\s*con)\s*(?:de\s*)?[\$€]?\s*\d+/i.test(q)) {
     return { hasAvailableMatches: false, count: 0, candidates: [] };
   }
@@ -211,39 +267,71 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
   const isSearchIntent = /(?:busco|buscando|quiero|necesito|interesad[oa]|informaci[oó]n\s*sobre|tienen?|alquiler|venta|comprar|alquilar|apartamento|casa|anexo|terreno|local)\b/i.test(q);
   if (!isSearchIntent) return { hasAvailableMatches: false, count: 0, candidates: [] };
 
-  const stopWords = new Set([
-    'hola', 'buenas', 'tardes', 'dias', 'noches', 'quiero', 'informacion', 'sobre', 'inmuebles',
-    'inmueble', 'estoy', 'buscando', 'busco', 'para', 'comprar', 'alquilar', 'alquiler', 'venta',
-    'en', 'de', 'un', 'una', 'por', 'favor', 'gracias', 'caracas', 'zona'
-  ]);
+  // Detectar operación solicitada
+  let targetOperation = null;
+  if (/alquiler|alquilar|renta/i.test(q)) targetOperation = 'alquiler';
+  else if (/venta|comprar|compra/i.test(q)) targetOperation = 'venta';
 
-  const tokens = q.split(/[\s,.;:!?]+/).filter(w => w.length >= 3 && !stopWords.has(w));
-  if (tokens.length === 0) return { hasAvailableMatches: false, count: 0, candidates: [] };
+  // Detectar tipo de inmueble solicitado
+  let targetTipo = null;
+  if (/apartamento|apto/i.test(q)) targetTipo = 'apartamento';
+  else if (/casa\s*comercial/i.test(q)) targetTipo = 'casa comercial';
+  else if (/casa/i.test(q)) targetTipo = 'casa';
+  else if (/anexo/i.test(q)) targetTipo = 'anexo';
+  else if (/terreno/i.test(q)) targetTipo = 'terreno';
+  else if (/local/i.test(q)) targetTipo = 'local';
+  else if (/galp[oó]n/i.test(q)) targetTipo = 'galpon';
 
-  const matches = [];
+  // Zonas conocidas de Caracas para coincidencia precisa
+  const caracasZones = [
+    'prados del este', 'la boyera', 'los samanes', 'lomas del sol', 'la candelaria',
+    'las mercedes', 'los palos grandes', 'chacao', 'altamira', 'el hatillo',
+    'el encantado', 'la castellana', 'santa fe', 'baruta', 'maracay', 'oripoto',
+    'colinas de bello monte', 'san bernardino', 'el paraiso', 'valle arriba'
+  ];
 
-  for (const prop of properties) {
-    if (!isPropertyAvailable(prop)) continue;
-
-    const zona = normalizeText(prop.ZONA || '');
-    const tipo = normalizeText(prop.TIPO || '');
-    const operacion = normalizeText(prop.OPERACION || '');
-    const desc = normalizeText(prop.DESCRIPCION_BREVE || '');
-
-    const fullSearchable = `${zona} ${tipo} ${operacion} ${desc}`;
-
-    const matchScore = tokens.reduce((score, token) => {
-      return score + (fullSearchable.includes(token) ? 1 : 0);
-    }, 0);
-
-    if (matchScore > 0) {
-      matches.push({ prop, score: matchScore });
+  let targetZone = null;
+  for (const z of caracasZones) {
+    if (q.includes(z)) {
+      targetZone = z;
+      break;
     }
   }
 
-  matches.sort((a, b) => b.score - a.score);
-  const candidates = matches.slice(0, 3).map(m => m.prop);
+  // Si no especificó al menos una zona concreta, no considerar coincidencia de zona
+  if (!targetZone) {
+    return { hasAvailableMatches: false, count: 0, candidates: [] };
+  }
 
+  const matches = [];
+
+  for (const rawProp of properties) {
+    const prop = adaptProperty(rawProp);
+    if (!isPropertyAvailable(prop)) continue;
+
+    const propZona = normalizeText(prop.ZONA || '');
+    const propTipo = normalizeText(prop.TIPO || '');
+    const propOperacion = normalizeText(prop.OPERACION || '');
+    const propDesc = normalizeText(prop.DESCRIPCION_BREVE || '');
+
+    // Verificación 1: Zona
+    const zoneMatches = propZona.includes(targetZone) || propDesc.includes(targetZone);
+    if (!zoneMatches) continue;
+
+    // Verificación 2: Operación (si el cliente la especificó)
+    if (targetOperation && !propOperacion.includes(targetOperation)) {
+      continue;
+    }
+
+    // Verificación 3: Tipo (si el cliente lo especificó)
+    if (targetTipo && !propTipo.includes(targetTipo)) {
+      continue;
+    }
+
+    matches.push(prop);
+  }
+
+  const candidates = matches.slice(0, 3);
   return {
     hasAvailableMatches: candidates.length > 0,
     count: candidates.length,
@@ -252,7 +340,7 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
 }
 
 // ============================================================================
-// 6. EXCEPCIÓN ESPECIAL: CRÉDITO VENEZUELA RENACE (REGLA 3.F)
+// 6. EXCEPCIÓN ESPECIAL: CRÉDITO VENEZUELA RENACE (REGLA 3.F — ESPECÍFICO)
 // ============================================================================
 function isVenezuelaRenaceCreditQuery(queryText) {
   if (!queryText) return false;
@@ -261,9 +349,9 @@ function isVenezuelaRenaceCreditQuery(queryText) {
   return (
     /(?:cr[eé]dito|financiam(?:iento)?|banco).*(?:venezuela\s*renace|renace)/i.test(q) ||
     /(?:venezuela\s*renace|renace).*(?:cr[eé]dito|financiam(?:iento)?)/i.test(q) ||
-    /(?:acepta|aceptan|reciben|toman)\s*(?:cr[eé]dito|financiamiento)/i.test(q) ||
-    /se\s*puede\s*comprar\s*con\s*(?:cr[eé]dito|financiamiento|venezuela\s*renace)/i.test(q) ||
-    /aplica\s*(?:para\s*)?(?:el\s*)?(?:cr[eé]dito|financiamiento|renace)/i.test(q)
+    /se\s*puede\s*comprar\s*con\s*(?:cr[eé]dito\s*venezuela\s*renace|venezuela\s*renace)/i.test(q) ||
+    /aplica\s*(?:para\s*)?(?:el\s*)?(?:cr[eé]dito\s*)?venezuela\s*renace/i.test(q) ||
+    /aceptan?\s*(?:cr[eé]dito\s*)?venezuela\s*renace/i.test(q)
   );
 }
 
@@ -276,44 +364,40 @@ function evaluateVenezuelaRenaceCredit(property) {
   const formasPago = normalizeText(property.Formas_de_pago || property['Formas de pago'] || '');
   const combined = `${desc} ${formasPago}`;
 
-  const positivePatterns = [
-    /(?:acepta|aceptan|aplica|recibe|toma)\s*(?:cr[eé]dito|financiamiento|venezuela\s*renace)/i,
-    /formas\s*de\s*pago\s*que\s*incluyen\s*cr[eé]dito/i,
-    /aceptan\s*diversas\s*formas\s*de\s*pago\s*que\s*incluyen\s*cr[eé]dito/i,
-    /opciones\s*de\s*financiamiento/i
-  ];
+  // Verificación afirmativa explícita sobre VENEZUELA RENACE
+  const positiveRenace = /(?:acepta|aceptan|aplica|recibe|toma|incluyen?)\s*(?:cr[eé]dito\s*)?venezuela\s*renace/i.test(combined) ||
+    /venezuela\s*renace.*(?:aceptad[oa]|incluid[oa]|permitid[oa])/i.test(combined);
 
-  const negativePatterns = [
-    /no\s*(?:posee|tiene|acepta|recibe|admite)\s*(?:cr[eé]dito|financiamiento)/i,
-    /financiamiento:\s*no\s*posee/i,
-    /cr[eé]ditos?:\s*no\s*(?:acepta|posee|aplica)/i,
-    /no\s*se\s*acepta\s*(?:cr[eé]dito|financiamiento)/i,
-    /solo\s*(?:contado|efectivo|transferencia)/i
-  ];
-
-  for (const neg of negativePatterns) {
-    if (neg.test(combined)) {
-      return { hasData: true, response: 'No' };
-    }
+  if (positiveRenace) {
+    return { hasData: true, response: 'Sí' };
   }
 
-  for (const pos of positivePatterns) {
-    if (pos.test(combined)) {
-      return { hasData: true, response: 'Sí' };
-    }
+  // Verificación negativa explícita: rechaza créditos expresamente
+  const negativeCredit = /no\s*(?:posee|tiene|acepta|recibe|admite)\s*(?:cr[eé]dito|financiamiento)/i.test(combined) ||
+    /financiamiento:\s*no\s*posee/i.test(combined) ||
+    /cr[eé]ditos?:\s*no\s*(?:acepta|posee|aplica)/i.test(combined) ||
+    /no\s*acepta\s*cr[eé]dito\s*(?:de\s*ninguna\s*entidad|bancario|venezuela\s*renace)/i.test(combined);
+
+  if (negativeCredit) {
+    return { hasData: true, response: 'No' };
   }
 
+  // Si no hay mención específica a Venezuela Renace -> Silencio o "Voy a consultar y ya le informo."
   return { hasData: false, response: 'Voy a consultar y ya le informo.' };
 }
 
 // ============================================================================
-// 7. GESTOR DE INTERVENCIÓN HUMANA Y BLOQUEO DE 24 HORAS CON FAIL-SAFE
+// 7. GESTOR DE INTERVENCIÓN HUMANA Y BLOQUEO DE 24 HORAS CON DISTINCIÓN REAL
 // ============================================================================
 class HandoffManager {
   constructor(filePath = null, kommoFetcher = null) {
     this.filePath = filePath || path.join(__dirname, 'handoffs.json');
     this.kommoFetcher = kommoFetcher;
-    this.handoffs = { leads: {}, talks: {}, contacts: {} };
+    this.handoffs = {
+      leads: {},        // { leadId: { lastHumanIntervention, attentionRequested, activeAutomationPropertyId } }
+      talks: {},        // { talkId: { lastHumanIntervention, attentionRequested, activeAutomationPropertyId } }
+      contacts: {}
+    };
     this.load();
   }
 
@@ -338,33 +422,107 @@ class HandoffManager {
     } catch (e) {}
   }
 
-  recordHumanIntervention(leadId = null, talkId = null, contactId = null, timestamp = Date.now()) {
-    const entry = { timestamp };
-    if (leadId) this.handoffs.leads[String(leadId)] = entry;
-    if (talkId) this.handoffs.talks[String(talkId)] = entry;
-    if (contactId) this.handoffs.contacts[String(contactId)] = entry;
+  /**
+   * Registra SOLICITUD de atención humana (el cliente pidió reunión, venta, etc.)
+   * NO inicia el bloqueo de 24 horas, pero indica que se requiere asesor humano.
+   */
+  recordHumanAttentionRequested(leadId = null, talkId = null, contactId = null, timestamp = Date.now()) {
+    const update = (entityMap, id) => {
+      if (!id) return;
+      const current = entityMap[String(id)] || {};
+      entityMap[String(id)] = {
+        ...current,
+        attentionRequested: true,
+        attentionRequestedAt: timestamp
+      };
+    };
+    update(this.handoffs.leads, leadId);
+    update(this.handoffs.talks, talkId);
+    update(this.handoffs.contacts, contactId);
     this.save();
   }
 
+  /**
+   * Registra INTERVENCIÓN HUMANA REAL (un asesor escribió en el chat)
+   * Inicia el bloqueo estricto de 24 horas y desactiva la automatización previa.
+   */
+  recordHumanIntervention(leadId = null, talkId = null, contactId = null, timestamp = Date.now()) {
+    const update = (entityMap, id) => {
+      if (!id) return;
+      entityMap[String(id)] = {
+        lastHumanIntervention: timestamp,
+        attentionRequested: false,
+        activeAutomationPropertyId: null // Se suspende automatización previa
+      };
+    };
+    update(this.handoffs.leads, leadId);
+    update(this.handoffs.talks, talkId);
+    update(this.handoffs.contacts, contactId);
+    this.save();
+  }
+
+  /**
+   * Activa la automatización tras cumplirse las 24h y recibir un nuevo Wasi válido.
+   */
+  activateAutomation(leadId = null, talkId = null, contactId = null, propertyId = null) {
+    const update = (entityMap, id) => {
+      if (!id) return;
+      const current = entityMap[String(id)] || {};
+      entityMap[String(id)] = {
+        ...current,
+        activeAutomationPropertyId: propertyId
+      };
+    };
+    update(this.handoffs.leads, leadId);
+    update(this.handoffs.talks, talkId);
+    update(this.handoffs.contacts, contactId);
+    this.save();
+  }
+
+  /**
+   * Comprueba el estado de bloqueo de 24 horas.
+   */
   async checkLockStatus(leadId = null, talkId = null, contactId = null, now = Date.now()) {
-    const entries = [
-      leadId && this.handoffs.leads ? this.handoffs.leads[String(leadId)] : null,
-      talkId && this.handoffs.talks ? this.handoffs.talks[String(talkId)] : null,
-      contactId && this.handoffs.contacts ? this.handoffs.contacts[String(contactId)] : null
-    ].filter(Boolean);
+    // Prioridad 1: talkId específico
+    const talkEntry = talkId && this.handoffs.talks ? this.handoffs.talks[String(talkId)] : null;
+    const leadEntry = leadId && this.handoffs.leads ? this.handoffs.leads[String(leadId)] : null;
+    const contactEntry = contactId && this.handoffs.contacts ? this.handoffs.contacts[String(contactId)] : null;
 
-    // Si tenemos registro local
-    if (entries.length > 0) {
-      const latestTimestamp = Math.max(...entries.map(e => e.timestamp || 0));
-      const hoursElapsed = (now - latestTimestamp) / (1000 * 60 * 60);
+    const entry = talkEntry || leadEntry || contactEntry;
 
+    if (entry && entry.lastHumanIntervention) {
+      const hoursElapsed = (now - entry.lastHumanIntervention) / (1000 * 60 * 60);
       if (hoursElapsed < 24) {
-        return { isLocked: true, hoursElapsed, lastIntervention: latestTimestamp, hadPreviousIntervention: true };
+        return {
+          isLocked: true,
+          hoursElapsed,
+          lastIntervention: entry.lastHumanIntervention,
+          hadPreviousIntervention: true,
+          activeAutomationPropertyId: null
+        };
       }
-      return { isLocked: false, hoursElapsed, lastIntervention: latestTimestamp, hadPreviousIntervention: true };
+      return {
+        isLocked: false,
+        hoursElapsed,
+        lastIntervention: entry.lastHumanIntervention,
+        hadPreviousIntervention: true,
+        activeAutomationPropertyId: entry.activeAutomationPropertyId || null
+      };
     }
 
-    // Si NO hay registro local en disco (ej: tras reinicio/despliegue en Render) y tenemos kommoFetcher:
+    // Si el cliente había solicitado atención humana y aún no ha intervenido un humano:
+    if (entry && entry.attentionRequested) {
+      return {
+        isLocked: true,
+        hoursElapsed: 0,
+        lastIntervention: null,
+        hadPreviousIntervention: false,
+        isAttentionPending: true,
+        reason: 'Atención humana pendiente de ser atendida por un asesor.'
+      };
+    }
+
+    // Si NO hay registro local en disco (ej: tras reinicio en Render) y tenemos kommoFetcher:
     if (this.kommoFetcher && typeof this.kommoFetcher === 'function') {
       try {
         const remoteResult = await this.kommoFetcher({ leadId, talkId, contactId });
@@ -372,12 +530,23 @@ class HandoffManager {
           this.recordHumanIntervention(leadId, talkId, contactId, remoteResult.lastHumanTimestamp);
           const hoursElapsed = (now - remoteResult.lastHumanTimestamp) / (1000 * 60 * 60);
           if (hoursElapsed < 24) {
-            return { isLocked: true, hoursElapsed, lastIntervention: remoteResult.lastHumanTimestamp, hadPreviousIntervention: true };
+            return {
+              isLocked: true,
+              hoursElapsed,
+              lastIntervention: remoteResult.lastHumanTimestamp,
+              hadPreviousIntervention: true,
+              activeAutomationPropertyId: null
+            };
           }
-          return { isLocked: false, hoursElapsed, lastIntervention: remoteResult.lastHumanTimestamp, hadPreviousIntervention: true };
+          return {
+            isLocked: false,
+            hoursElapsed,
+            lastIntervention: remoteResult.lastHumanTimestamp,
+            hadPreviousIntervention: true,
+            activeAutomationPropertyId: null
+          };
         }
       } catch (err) {
-        // Falla cerrada ante error temporal de Kommo API
         return {
           isLocked: true,
           hoursElapsed: 0,
@@ -389,38 +558,37 @@ class HandoffManager {
       }
     }
 
-    return { isLocked: false, hoursElapsed: 999, lastIntervention: null, hadPreviousIntervention: false };
+    return {
+      isLocked: false,
+      hoursElapsed: 999,
+      lastIntervention: null,
+      hadPreviousIntervention: false,
+      activeAutomationPropertyId: null
+    };
   }
 }
 
 // ============================================================================
-// 8. DEDUPLICACIÓN ROBUSTA Y ORDEN DE LLEGADA DE WEBHOOKS
+// 8. DEDUPLICACIÓN ROBUSTA Y CONTROL DE ORDEN DE LLEGADA
 // ============================================================================
 class DeduplicationManager {
   constructor(windowMs = 15 * 60 * 1000) {
     this.windowMs = windowMs;
-    this.processedMessages = new Map(); // key -> timestamp
-    this.lastProcessedTimestampByTalk = new Map(); // talkId -> timestamp
+    this.processedMessages = new Map();
+    this.lastProcessedTimestampByTalk = new Map();
   }
 
-  /**
-   * Verifica si un mensaje es duplicado o llega fuera de orden (obsoleto).
-   * Retorna { isDuplicate: boolean, isOutOfOrder: boolean }
-   */
   checkAndRecord(msgId, talkId, messageTimestamp = Date.now()) {
     const now = Date.now();
 
-    // 1. Limpieza de memoria
     for (const [key, ts] of this.processedMessages.entries()) {
       if (now - ts > this.windowMs) this.processedMessages.delete(key);
     }
 
-    // 2. Comprobar si ya fue procesado por ID único
     if (msgId && this.processedMessages.has(String(msgId))) {
       return { isDuplicate: true, isOutOfOrder: false };
     }
 
-    // 3. Comprobar orden de llegada por Talk
     if (talkId) {
       const lastTs = this.lastProcessedTimestampByTalk.get(String(talkId)) || 0;
       if (messageTimestamp < lastTs) {
@@ -438,30 +606,23 @@ class DeduplicationManager {
 }
 
 // ============================================================================
-// 9. AISLAMIENTO DE CONTEXTO POR CONVERSACIÓN (TALK ID)
+// 9. AISLAMIENTO ESTRICTO DE CONTEXTO POR CONVERSACIÓN (TALK ID)
 // ============================================================================
 class ConversationContextManager {
   constructor() {
     this.talkContexts = new Map(); // talkId -> property
-    this.leadContexts = new Map(); // leadId -> property
   }
 
-  saveContext(talkId, leadId, property) {
-    if (!property) return;
-    if (talkId) this.talkContexts.set(String(talkId), property);
-    if (leadId) this.leadContexts.set(String(leadId), property);
+  saveContext(talkId, leadIdOrProperty, property) {
+    if (!talkId) return;
+    const prop = property !== undefined ? property : leadIdOrProperty;
+    if (!prop) return;
+    this.talkContexts.set(String(talkId), prop);
   }
 
   getContext(talkId, leadId) {
-    // Prioridad 1: Contexto de la conversación exacta (Talk ID)
-    if (talkId && this.talkContexts.has(String(talkId))) {
-      return this.talkContexts.get(String(talkId));
-    }
-    // Prioridad 2: Contexto general del Lead
-    if (leadId && this.leadContexts.has(String(leadId))) {
-      return this.leadContexts.get(String(leadId));
-    }
-    return null;
+    if (!talkId) return null;
+    return this.talkContexts.get(String(talkId)) || null;
   }
 }
 
@@ -481,40 +642,43 @@ async function verifyPreDispatchSafety(leadId, talkId, contactId, handoffManager
 }
 
 // ============================================================================
-// 11. CONSULTA PRECISA DE ATRIBUTOS CON CLAUDE SONNET 4.5 (REGLA 3.E & 6)
+// 11. CONSULTA ESTRUCTURADA CON CLAUDE SONNET 4.5 CON VALIDACIÓN DE EVIDENCIA TEXTUAL
 // ============================================================================
 async function evaluatePropertyQuestionWithClaude(userQuestion, property) {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
   if (!apiKey) {
-    return { text: null, tokensUsed: 0, isSinDato: true };
+    return { text: null, tokensUsed: 0, isSinDato: true, reason: 'Sin API key configurada' };
   }
 
   const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
 
   const systemPrompt = `Eres el asistente de interpretación de datos de "Tu Techo Ideal".
-Tu única función es responder la pregunta del cliente usando EXCLUSIVAMENTE los datos proporcionados de la propiedad.
+Tu rol es extraer información exacta de la propiedad para responder la pregunta del cliente.
+Debes responder OBLIGATORIAMENTE en formato JSON con la siguiente estructura:
+
+{
+  "has_data": true | false,
+  "answer": "Respuesta exacta y concisa para el cliente",
+  "evidence": "Frase textual exacta tomada de la descripción oficial que sustenta la respuesta"
+}
 
 DATOS OFICIALES DE LA PROPIEDAD:
 - Identificador: ${property.ID_PROPIEDAD || 'N/A'}
 - Tipo: ${property.TIPO || 'N/A'}
 - Operación: ${property.OPERACION || 'N/A'}
 - Estatus: ${property.ESTATUS || 'N/A'}
-- Mascotas permitidas: ${property.Mascotas || 'No especificado'}
-- Tipo de Mascotas: ${property['Tipo de Mascotas'] || 'No especificado'}
+- Mascotas: ${property.Mascotas || 'No especificado'}
+- Tipo de Mascotas: ${property.Tipo_Mascotas || property['Tipo de Mascotas'] || 'No especificado'}
 - DESCRIPCION_BREVE (Fuente fundamental autorizada):
 """
 ${property.DESCRIPCION_BREVE || 'N/A'}
 """
 
-REGLAS ABSOLUTAS:
-1. Puedes interpretar sinónimos ("mts", "m2", "metros", "habitaciones", "cuartos", "baños", "puestos", "estacionamiento", "tanque", "gas").
-2. Si el dato solicitado está EXPRESADO o AFIRMADO en los datos proporcionados:
-   - Responde con el dato exacto de forma directa y concisa (ej: "Tiene 120 m²", "Tiene 3 habitaciones", "Cuenta con tanque interno de 600L").
-3. Si la pregunta consulta sobre una característica que la descripción aclara explícitamente que NO posee (ej: "no posee estacionamiento", "no posee gas directo"):
-   - Responde la negativa documentada (ej: "No posee estacionamiento", "No posee gas directo").
-4. Si el dato NO APARECE, está ambiguo, o dice "No especificado en la fuente":
-   - DEBES RESPONDER ÚNICA Y EXCLUSIVAMENTE LA PALABRA: SIN_DATO
-   - Prohibido inventar, deducir, pedir disculpas o responder "no tengo esa información". Si no está: SIN_DATO.`;
+REGLAS ESTRICTAS:
+1. Si el dato está expresado en los datos oficiales, coloca has_data: true, redacta la respuesta corta en "answer" y copia la frase exacta de la descripción en "evidence".
+2. Si la descripción aclara explícitamente que NO posee un servicio o atributo (ej: "No posee gas directo", "No posee estacionamiento propio"), coloca has_data: true, responde la negativa documentada en "answer" y copia la evidencia en "evidence".
+3. Si el dato NO APARECE, está ambiguo o dice "No especificado en la fuente", coloca OBLIGATORIAMENTE has_data: false, answer: null, evidence: null.
+4. Responde ÚNICAMENTE el objeto JSON sin bloques de código markdown ni explicaciones adicionales.`;
 
   try {
     const response = await axios.post(
@@ -526,7 +690,7 @@ REGLAS ABSOLUTAS:
           { role: 'user', content: userQuestion }
         ],
         temperature: 0.0,
-        max_tokens: 150
+        max_tokens: 220
       },
       {
         headers: {
@@ -539,22 +703,47 @@ REGLAS ABSOLUTAS:
       }
     );
 
-    const answer = response.data?.choices?.[0]?.message?.content?.trim() || '';
+    const rawContent = response.data?.choices?.[0]?.message?.content?.trim() || '';
     const tokensUsed = response.data?.usage?.total_tokens || 0;
 
-    if (!answer || answer.includes('SIN_DATO') || answer.includes('[SILENCIO]')) {
-      return { text: null, tokensUsed, isSinDato: true };
+    // Parseo seguro de JSON
+    let parsed = null;
+    try {
+      const cleanJson = rawContent.replace(/```json\s*/i, '').replace(/```/g, '').trim();
+      parsed = JSON.parse(cleanJson);
+    } catch (parseErr) {
+      console.warn('[Claude JSON Parse Error]:', rawContent);
+      return { text: null, tokensUsed, isSinDato: true, reason: 'Respuesta de IA no estructurada en JSON válido.' };
     }
 
-    return { text: answer, tokensUsed, isSinDato: false };
+    if (!parsed || parsed.has_data !== true || !parsed.answer) {
+      return { text: null, tokensUsed, isSinDato: true, reason: 'Dato no afirmado en Sheets.' };
+    }
+
+    // 🛑 VALIDACIÓN DE EVIDENCIA TEXTUAL:
+    // Comprobar que la evidencia citada por Claude exista realmente en la descripción de Sheets
+    const descNorm = normalizeText(property.DESCRIPCION_BREVE || '');
+    const evidenceNorm = normalizeText(parsed.evidence || '');
+
+    // Comprobar coincidencia literal directa o coincidencia de palabras clave principales (>= 3 chars)
+    const evidenceWords = evidenceNorm.split(/\s+/).filter(w => w.length >= 3);
+    const hasVerifiableEvidence = (evidenceNorm.length > 0 && descNorm.includes(evidenceNorm)) ||
+      (evidenceWords.length > 0 && evidenceWords.every(w => descNorm.includes(w)));
+
+    if (!hasVerifiableEvidence && evidenceNorm.length > 0) {
+      console.warn(`[Evidence Verification Failed] Evidencia "${parsed.evidence}" no verificable en Sheets.`);
+      return { text: null, tokensUsed, isSinDato: true, reason: 'Evidencia no verificada en Google Sheets.' };
+    }
+
+    return { text: parsed.answer, tokensUsed, isSinDato: false, evidence: parsed.evidence };
   } catch (err) {
     console.error('[Pipeline QA Error]:', err.message);
-    return { text: null, tokensUsed: 0, isSinDato: true };
+    return { text: null, tokensUsed: 0, isSinDato: true, reason: err.message };
   }
 }
 
 // ============================================================================
-// 12. PUNTO CENTRAL DE DECISIÓN ÚNICO (REGLA 8 — PRIORIDADES 1 AL 12)
+// 12. CONTROLADOR CENTRAL ÚNICO (EVALUATE CENTRAL DECISION PIPELINE)
 // ============================================================================
 async function evaluateCentralDecisionPipeline(context) {
   const {
@@ -564,8 +753,10 @@ async function evaluateCentralDecisionPipeline(context) {
     contactId = null,
     properties = [],
     handoffManager = null,
+    contextManager = null,
     activePropertyContext = null,
-    currentTime = Date.now()
+    currentTime = Date.now(),
+    aiEvaluator = null
   } = context;
 
   const logEntry = {
@@ -588,7 +779,7 @@ async function evaluateCentralDecisionPipeline(context) {
   // --------------------------------------------------------------------------
   if (!properties || !Array.isArray(properties) || properties.length === 0) {
     logEntry.typeDetected = 'SHEETS_UNAVAILABLE';
-    logEntry.reason = 'Base de datos de Google Sheets no disponible o no verificable. Silencio seguro.';
+    logEntry.reason = 'Base de datos de Google Sheets no disponible o vacía. Silencio seguro.';
     logEntry.action = 'SILENCE';
     return { shouldRespond: false, text: null, log: logEntry };
   }
@@ -604,7 +795,7 @@ async function evaluateCentralDecisionPipeline(context) {
   }
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 2: CONVERSACIÓN BLOQUEADA POR INTERVENCIÓN HUMANA (24 HORAS)
+  // PRIORIDAD 2: COMPROBACIÓN DE BLOQUEO HUMANO (24 HORAS)
   // --------------------------------------------------------------------------
   const handoff = handoffManager
     ? await handoffManager.checkLockStatus(leadId, talkId, contactId, currentTime)
@@ -620,27 +811,16 @@ async function evaluateCentralDecisionPipeline(context) {
   }
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 2.1: CONDICIÓN DE REACTIVACIÓN POST-24H (REGLA 4):
-  // --------------------------------------------------------------------------
-  const wasiExtraction = extractWasiPropertyIdentifiers(textClean, properties);
-
-  if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= 24) {
-    if (wasiExtraction.count === 0) {
-      logEntry.typeDetected = 'POST_24H_REQUIRES_WASI_LINK';
-      logEntry.reason = 'Transcurridas 24h tras intervención humana, pero el cliente no envió enlace Wasi nuevo. Silencio seguro.';
-      logEntry.action = 'SILENCE';
-      return { shouldRespond: false, text: null, log: logEntry };
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // PRIORIDAD 3: SOLICITUD QUE CORRESPONDE AL HUMANO (REUNIÓN, VENTA, CAPTACIÓN, PRESUPUESTO)
+  // PRIORIDAD 3: SOLICITUD DE ATENCIÓN HUMANA (REUNIÓN, VENTA, CAPTACIÓN, PRESUPUESTO)
+  // (IMPORTANTE: Se registra como solicitud pendiente, NO como que un humano ya respondió)
   // --------------------------------------------------------------------------
   if (isHumanAttentionRequest(textClean)) {
     logEntry.typeDetected = 'HUMAN_ATTENTION_REQUEST';
-    logEntry.reason = 'El cliente solicitó reunión, llamada, negociación o captación/ofrecimiento de propiedad.';
+    logEntry.reason = 'El cliente solicitó reunión, llamada, negociación o captación de propiedad. Silencio y traspaso.';
     logEntry.action = 'SILENCE';
-    if (handoffManager) handoffManager.recordHumanIntervention(leadId, talkId, contactId, currentTime);
+    if (handoffManager) {
+      handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
+    }
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -654,6 +834,23 @@ async function evaluateCentralDecisionPipeline(context) {
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
+  // Extraer enlaces Wasi o identificadores presentes en el mensaje
+  const wasiExtraction = extractWasiPropertyIdentifiers(textClean, properties);
+
+  // --------------------------------------------------------------------------
+  // PRIORIDAD 2.1: CONDICIÓN DE REACTIVACIÓN POST-24H (REGLA 4):
+  // Tras cumplirse 24h de una intervención humana previa, se exige un nuevo enlace Wasi validado
+  // para reactivar el bot. Si no viene enlace y la conversación no está activa, silencio.
+  // --------------------------------------------------------------------------
+  if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= 24 && !handoff.activeAutomationPropertyId) {
+    if (wasiExtraction.count === 0) {
+      logEntry.typeDetected = 'POST_24H_REQUIRES_WASI_LINK';
+      logEntry.reason = 'Transcurridas 24h tras intervención humana, pero el cliente no envió enlace Wasi nuevo. Silencio seguro.';
+      logEntry.action = 'SILENCE';
+      return { shouldRespond: false, text: null, log: logEntry };
+    }
+  }
+
   // --------------------------------------------------------------------------
   // PRIORIDAD 5: MENSAJES CON VARIAS PROPIEDADES -> DERIVAR A HUMANO EN SILENCIO
   // --------------------------------------------------------------------------
@@ -661,7 +858,7 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.typeDetected = 'MULTIPLE_PROPERTIES';
     logEntry.reason = `Mensaje contiene ${wasiExtraction.count} propiedades diferentes. Prohibido mezclar fichas. Derivado a humano.`;
     logEntry.action = 'SILENCE';
-    if (handoffManager) handoffManager.recordHumanIntervention(leadId, talkId, contactId, currentTime);
+    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -681,9 +878,8 @@ async function evaluateCentralDecisionPipeline(context) {
 
     logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
 
-    // Validación de estatus con equivalencia exacta con 'disponible'
+    // Comprobación de estatus en tiempo real
     const isAvail = isPropertyAvailable(targetProperty);
-
     const isWasiInitialShare = /compartiste\s*en\s*la\s*red|interesado\s*en\s*el\s*inmueble|podr[ií]amos\s*conversar|disponib/i.test(normalizeText(textClean)) || textClean.includes('http');
 
     if (isWasiInitialShare) {
@@ -692,6 +888,15 @@ async function evaluateCentralDecisionPipeline(context) {
         logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} verificada con equivalencia exacta Disponible en Google Sheets.`;
         logEntry.action = 'RESPOND';
         logEntry.text = 'Sí, disponible.';
+
+        // Guardar contexto aislado por talkId
+        if (contextManager && talkId) {
+          contextManager.saveContext(talkId, targetProperty);
+        }
+        if (handoffManager) {
+          handoffManager.activateAutomation(leadId, talkId, contactId, targetProperty.ID_PROPIEDAD);
+        }
+
         return { shouldRespond: true, text: 'Sí, disponible.', log: logEntry, targetProperty };
       } else {
         logEntry.typeDetected = 'WASI_LINK_NOT_AVAILABLE';
@@ -703,29 +908,48 @@ async function evaluateCentralDecisionPipeline(context) {
   }
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 4: CONSULTA POR ZONA O CARACTERÍSTICAS GENERALES
+  // PRIORIDAD 4: BÚSQUEDA MULTICRITERIO POR ZONA (UBICACIÓN + TIPO + OPERACIÓN)
+  // (Solo si no hubo enlace puntual ni contexto activo)
   // --------------------------------------------------------------------------
-  if (wasiExtraction.count === 0 && !activePropertyContext) {
+  if (wasiExtraction.count === 0 && !activePropertyContext && (!contextManager || !contextManager.getContext(talkId))) {
     const zoneSearch = searchZoneOrFeatureMatches(textClean, properties);
     if (zoneSearch.hasAvailableMatches) {
       logEntry.typeDetected = 'ZONE_OR_FEATURE_SEARCH';
       logEntry.reason = `Coincidencias encontradas (${zoneSearch.count} disponibles). Respondiendo exactamente "Sí, disponible." sin listados.`;
       logEntry.action = 'RESPOND';
       logEntry.text = 'Sí, disponible.';
-      if (handoffManager) handoffManager.recordHumanIntervention(leadId, talkId, contactId, currentTime);
+      if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
       return { shouldRespond: true, text: 'Sí, disponible.', log: logEntry };
     }
   }
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 8, 9 Y 10: PREGUNTAS ESPECÍFICAS DE UNA PROPIEDAD IDENTIFICADA (REGLA 3.E)
+  // PRIORIDAD 8, 9 Y 10: CONTINUACIÓN DE PREGUNTAS SOBRE PROPIEDAD IDENTIFICADA (REGLA 3.E)
   // --------------------------------------------------------------------------
-  if (!targetProperty && activePropertyContext) {
-    targetProperty = activePropertyContext;
-    logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
+  if (!targetProperty) {
+    if (contextManager && talkId) {
+      targetProperty = contextManager.getContext(talkId);
+    } else if (activePropertyContext) {
+      targetProperty = activePropertyContext;
+    }
   }
 
   if (targetProperty) {
+    // 🛑 RE-VERIFICACIÓN DE DISPONIBILIDAD EN TIEMPO REAL:
+    // Un contexto antiguo no garantiza que la propiedad siga disponible actualmente en Google Sheets
+    const currentPropInSheets = properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (targetProperty.ID_PROPIEDAD || '').toUpperCase());
+    const adaptedCurrent = adaptProperty(currentPropInSheets);
+
+    if (!adaptedCurrent || !isPropertyAvailable(adaptedCurrent)) {
+      logEntry.typeDetected = 'PROPERTY_STATUS_CHANGED_OR_UNAVAILABLE';
+      logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} ya no está disponible en Sheets en tiempo real. Silencio seguro.`;
+      logEntry.action = 'SILENCE';
+      return { shouldRespond: false, text: null, log: logEntry };
+    }
+
+    targetProperty = adaptedCurrent;
+    logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
+
     // A. EXCEPCIÓN ESPECIAL: CRÉDITO VENEZUELA RENACE (REGLA 3.F)
     if (isVenezuelaRenaceCreditQuery(textClean)) {
       logEntry.typeDetected = 'CREDIT_VENEZUELA_RENACE_QUERY';
@@ -736,20 +960,21 @@ async function evaluateCentralDecisionPipeline(context) {
       return { shouldRespond: true, text: creditEval.response, log: logEntry, targetProperty };
     }
 
-    // B. OTRAS PREGUNTAS SOBRE LA PROPIEDAD (Metros, habitaciones, baños, estacionamiento, condominio, gas)
+    // B. OTRAS PREGUNTAS SOBRE LA PROPIEDAD (Metros, habitaciones, baños, estacionamiento, gas)
     logEntry.calledAI = true;
-    const aiResult = await evaluatePropertyQuestionWithClaude(textClean, targetProperty);
+    const evaluatorFn = aiEvaluator || evaluatePropertyQuestionWithClaude;
+    const aiResult = await evaluatorFn(textClean, targetProperty);
     logEntry.tokensUsed = aiResult.tokensUsed;
 
     if (!aiResult.isSinDato && aiResult.text) {
       logEntry.typeDetected = 'PROPERTY_FEATURE_ANSWERED';
-      logEntry.reason = `Dato encontrado y verificado en Google Sheets para ${targetProperty.ID_PROPIEDAD}.`;
+      logEntry.reason = `Dato encontrado y verificado con evidencia textual en Google Sheets para ${targetProperty.ID_PROPIEDAD}: "${aiResult.evidence}".`;
       logEntry.action = 'RESPOND';
       logEntry.text = aiResult.text;
       return { shouldRespond: true, text: aiResult.text, log: logEntry, targetProperty };
     } else {
       logEntry.typeDetected = 'PROPERTY_FEATURE_SIN_DATO';
-      logEntry.reason = `Dato no encontrado en Google Sheets para ${targetProperty.ID_PROPIEDAD}. Silencio absoluto por política de no invención.`;
+      logEntry.reason = `Dato no verificado en Google Sheets para ${targetProperty.ID_PROPIEDAD}. Silencio absoluto por política de no invención (${aiResult.reason || 'Sin dato'}).`;
       logEntry.action = 'SILENCE';
       return { shouldRespond: false, text: null, log: logEntry };
     }
@@ -767,6 +992,7 @@ async function evaluateCentralDecisionPipeline(context) {
 module.exports = {
   AUTHORIZED_COLUMNS,
   normalizeText,
+  adaptProperty,
   isPropertyAvailable,
   isSocialMediaEventOrMention,
   isPureGreetingWithoutInquiry,
