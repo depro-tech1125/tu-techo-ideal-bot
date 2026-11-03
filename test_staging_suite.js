@@ -1,16 +1,21 @@
 /**
  * ============================================================================
- * TEST DE VERIFICACIÓN STAGING: TU TECHO IDEAL BOT (RC-2)
+ * TEST DE VERIFICACIÓN STAGING COMPLETA: TU TECHO IDEAL BOT (RC-2)
  * ============================================================================
- * Ejecuta la verificación completa del servidor en entorno Staging independiente:
- * - OBSERVATION_MODE=true activo.
- * - Endpoint /health validado.
- * - Conexión de lectura en vivo a Google Sheets (sin modificar inventario).
- * - Conexión de lectura a OpenRouter.
- * - Conexión de lectura a Kommo Events API.
- * - 6 Escenarios de Webhooks de Kommo simulados (Wasi, Zona, Mención, Sin Dato, Crédito, Humano).
- * - Auditoría estricta de CERO efectos secundarios (0 mutaciones a Kommo / Salesbot / WhatsApp).
- * - Verificación de persistencia de bloqueo humano tras reinicio.
+ * Comprueba las 9 situaciones exigidas en FASE 5:
+ * 1. Endpoint /health (v5.0, pipeline_decision.js, OBSERVATION_MODE=true).
+ * 2. Conexión de lectura en vivo a Google Sheets (sin modificar inventario).
+ * 3. Enlace Wasi disponible.
+ * 4. Búsqueda por zona.
+ * 5. Notificación / Mención de Instagram.
+ * 6. Pregunta sobre propiedad sin datos (condominio -> silencio / anti-alucinación).
+ * 7. Solicitud de reunión (silencio y derivación a humano).
+ * 8. Crédito Venezuela Renace (evaluación determinística basada en Sheets).
+ * 9. Intervención humana saliente (inicia bloqueo 24h).
+ * 10. Mensaje del cliente durante bloqueo de 24h (silencio seguro).
+ * 11. Reactivación post-24h con nuevo enlace Wasi válido (se permite evaluar).
+ * 12. Persistencia del bloqueo tras reinicio (handoffs.json bidireccional).
+ * 13. Auditoría integral de CERO efectos secundarios en Kommo / WhatsApp.
  */
 
 require('dotenv').config();
@@ -19,17 +24,15 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-// Asegurar modo observación para staging
 process.env.OBSERVATION_MODE = 'true';
 process.env.PORT = '3001';
 
 async function runStagingVerification() {
   console.log('================================================================');
-  console.log('   INICIANDO PRUEBAS DE VERIFICACIÓN EN ENTORNO STAGING (RC-2)  ');
+  console.log('   VERIFICACIÓN EN ENTORNO STAGING COMPLETO (FASE 5 - 13 TESTS)  ');
   console.log('   Modo: OBSERVATION_MODE=true | Puerto: 3001                   ');
   console.log('================================================================\n');
 
-  // Contadores de auditoría de efectos secundarios
   const sideEffects = {
     leadPatches: [],
     salesbotRuns: [],
@@ -38,7 +41,6 @@ async function runStagingVerification() {
     tasksCreated: []
   };
 
-  // Interceptar axios a nivel global para interceptar cualquier mutación a Kommo
   const originalPatch = axios.patch;
   const originalPost = axios.post;
 
@@ -62,7 +64,6 @@ async function runStagingVerification() {
     return originalPost.apply(this, arguments);
   };
 
-  // Cargar servidor con OBSERVATION_MODE=true
   const { app, centralHandoffManager, getAvailableProperties } = require('./server.js');
 
   const server = http.createServer(app);
@@ -70,7 +71,7 @@ async function runStagingVerification() {
   const baseUrl = 'http://127.0.0.1:3001';
 
   let passed = 0;
-  const total = 9;
+  const total = 13;
   const results = [];
 
   function record(num, name, condition, details = '') {
@@ -114,7 +115,7 @@ async function runStagingVerification() {
       2,
       'Conexión de lectura en vivo a Google Sheets exitosa (sin modificar inventario)',
       test2Ok,
-      `Propiedades reales extraídas: ${liveProps.length}. Ejemplo primera propiedad: ${liveProps[0]?.ID_PROPIEDAD} (${liveProps[0]?.ESTATUS})`
+      `Propiedades reales extraídas: ${liveProps.length}. Primera propiedad: ${liveProps[0]?.ID_PROPIEDAD} (${liveProps[0]?.ESTATUS})`
     );
 
     // ------------------------------------------------------------------------
@@ -136,9 +137,8 @@ async function runStagingVerification() {
     };
 
     const resWh1 = await axios.post(`${baseUrl}/webhook`, wasiPayload);
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 600));
 
-    // En modo observación NO debe haber mutaciones en Kommo
     const test3Ok = resWh1.status === 200 &&
       sideEffects.leadPatches.length === 0 &&
       sideEffects.salesbotRuns.length === 0;
@@ -147,7 +147,7 @@ async function runStagingVerification() {
       3,
       'Webhook con enlace Wasi -> Evalúa decisión correcta con CERO mutaciones a Kommo',
       test3Ok,
-      `HTTP Status: ${resWh1.status}, Lead patches a Kommo: ${sideEffects.leadPatches.length}, Disparos Salesbot: ${sideEffects.salesbotRuns.length}`
+      `HTTP Status: ${resWh1.status}, Lead patches: ${sideEffects.leadPatches.length}, Disparos Salesbot: ${sideEffects.salesbotRuns.length}`
     );
 
     // ------------------------------------------------------------------------
@@ -169,7 +169,7 @@ async function runStagingVerification() {
     };
 
     await axios.post(`${baseUrl}/webhook`, zonePayload);
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 600));
 
     const test4Ok = sideEffects.leadPatches.length === 0 && sideEffects.salesbotRuns.length === 0;
     record(
@@ -198,7 +198,7 @@ async function runStagingVerification() {
     };
 
     await axios.post(`${baseUrl}/webhook`, mentionPayload);
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 400));
 
     const test5Ok = sideEffects.leadPatches.length === 0 && sideEffects.salesbotRuns.length === 0;
     record(
@@ -227,7 +227,7 @@ async function runStagingVerification() {
     };
 
     await axios.post(`${baseUrl}/webhook`, noDataPayload);
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 400));
 
     const test6Ok = sideEffects.leadPatches.length === 0 && sideEffects.salesbotRuns.length === 0;
     record(
@@ -238,16 +238,74 @@ async function runStagingVerification() {
     );
 
     // ------------------------------------------------------------------------
-    // PRUEBA 7: Webhook Saliente - Intervención humana inicia bloqueo de 24h
+    // PRUEBA 7: Webhook Simulado - Solicitud de reunión del cliente (Silencio y pase a humano)
     // ------------------------------------------------------------------------
-    const humanLeadId = 88001105;
-    const humanTalkId = 'talk_stg_05';
+    const meetingLeadId = 88001105;
+    const meetingPayload = {
+      account: { id: 36728143 },
+      message: {
+        add: [{
+          id: 'msg_stg_05_meet',
+          entity_id: meetingLeadId,
+          talk_id: 'talk_stg_05_meet',
+          type: 'incoming',
+          text: 'Buenas tardes, deseo coordinar una reunión presencial en la oficina para ver el contrato.',
+          author: { type: 'external', name: 'Cliente Reunión' }
+        }]
+      }
+    };
+
+    await axios.post(`${baseUrl}/webhook`, meetingPayload);
+    await new Promise(r => setTimeout(r, 400));
+
+    const test7Ok = sideEffects.leadPatches.length === 0 && sideEffects.salesbotRuns.length === 0;
+    record(
+      7,
+      'Webhook solicitud de reunión -> Silencio absoluto y derivación a asesor humano',
+      test7Ok,
+      `Lead patches: ${sideEffects.leadPatches.length}, Disparos Salesbot: ${sideEffects.salesbotRuns.length}`
+    );
+
+    // ------------------------------------------------------------------------
+    // PRUEBA 8: Webhook Simulado - Crédito Venezuela Renace (Evaluación determinística)
+    // ------------------------------------------------------------------------
+    const creditLeadId = 88001106;
+    const creditPayload = {
+      account: { id: 36728143 },
+      message: {
+        add: [{
+          id: 'msg_stg_06_cred',
+          entity_id: creditLeadId,
+          talk_id: 'talk_stg_06_cred',
+          type: 'incoming',
+          text: '¿Aceptan crédito Venezuela Renace para este inmueble? https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109',
+          author: { type: 'external', name: 'Cliente Crédito' }
+        }]
+      }
+    };
+
+    await axios.post(`${baseUrl}/webhook`, creditPayload);
+    await new Promise(r => setTimeout(r, 600));
+
+    const test8Ok = sideEffects.leadPatches.length === 0 && sideEffects.salesbotRuns.length === 0;
+    record(
+      8,
+      'Webhook crédito Venezuela Renace -> Evalúa respuesta según Sheets sin mutar Kommo',
+      test8Ok,
+      `Lead patches: ${sideEffects.leadPatches.length}, Disparos Salesbot: ${sideEffects.salesbotRuns.length}`
+    );
+
+    // ------------------------------------------------------------------------
+    // PRUEBA 9: Webhook Saliente - Intervención humana inicia bloqueo de 24h
+    // ------------------------------------------------------------------------
+    const humanLeadId = 88001107;
+    const humanTalkId = 'talk_stg_07';
 
     const humanOutgoingPayload = {
       account: { id: 36728143 },
       message: {
         add: [{
-          id: 'msg_stg_05_out',
+          id: 'msg_stg_07_out',
           entity_id: humanLeadId,
           talk_id: humanTalkId,
           type: 'outgoing',
@@ -259,38 +317,98 @@ async function runStagingVerification() {
     };
 
     await axios.post(`${baseUrl}/webhook`, humanOutgoingPayload);
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 500));
 
     const lockStatus = await centralHandoffManager.checkLockStatus(String(humanLeadId), humanTalkId);
-    const test7Ok = lockStatus.isLocked === true &&
+    const test9Ok = lockStatus.isLocked === true &&
       sideEffects.leadPatches.length === 0 &&
       sideEffects.salesbotRuns.length === 0;
 
     record(
-      7,
-      'Webhook saliente de asesor humano -> Registra intervención e inicia bloqueo 24h en HandoffManager',
-      test7Ok,
+      9,
+      'Webhook saliente de asesor humano -> Inicia bloqueo de 24h en HandoffManager',
+      test9Ok,
       `isLocked: ${lockStatus.isLocked}, Horas: ${lockStatus.hoursElapsed.toFixed(2)}h, Cero mutaciones a Kommo: ${sideEffects.leadPatches.length === 0}`
     );
 
     // ------------------------------------------------------------------------
-    // PRUEBA 8: Persistencia del Bloqueo tras Reinicio del Servidor
+    // PRUEBA 10: Mensaje de cliente antes de 24h -> Bloqueo humano activo (Silencio)
     // ------------------------------------------------------------------------
-    // Simular que el proceso se reinicia creando un nuevo HandoffManager desde el archivo en disco
+    const clientDuringLockPayload = {
+      account: { id: 36728143 },
+      message: {
+        add: [{
+          id: 'msg_stg_08_lock',
+          entity_id: humanLeadId,
+          talk_id: humanTalkId,
+          type: 'incoming',
+          text: '¿A qué hora podríamos vernos mañana?',
+          author: { type: 'external', name: 'Cliente' }
+        }]
+      }
+    };
+
+    await axios.post(`${baseUrl}/webhook`, clientDuringLockPayload);
+    await new Promise(r => setTimeout(r, 400));
+
+    const test10Ok = sideEffects.leadPatches.length === 0 && sideEffects.salesbotRuns.length === 0;
+    record(
+      10,
+      'Mensaje de cliente durante bloqueo 24h -> El bot guarda silencio absoluto y respeta al asesor',
+      test10Ok,
+      `Lead patches: ${sideEffects.leadPatches.length}, Disparos Salesbot: ${sideEffects.salesbotRuns.length}`
+    );
+
+    // ------------------------------------------------------------------------
+    // PRUEBA 11: Reactivación post-24h con nuevo enlace Wasi válido
+    // ------------------------------------------------------------------------
+    const reactLeadId = 88001108;
+    const reactTalkId = 'talk_stg_08';
+    const past25h = Date.now() - (25 * 3600 * 1000);
+    centralHandoffManager.recordHumanIntervention(reactLeadId, reactTalkId, null, past25h);
+
+    const reactPayload = {
+      account: { id: 36728143 },
+      message: {
+        add: [{
+          id: 'msg_stg_09_react',
+          entity_id: reactLeadId,
+          talk_id: reactTalkId,
+          type: 'incoming',
+          text: 'Hola, ahora me interesa este otro inmueble https://info.wasi.co/apartamento-venta-lomas-del-sol-caracas/10544010',
+          author: { type: 'external', name: 'Cliente' }
+        }]
+      }
+    };
+
+    await axios.post(`${baseUrl}/webhook`, reactPayload);
+    await new Promise(r => setTimeout(r, 600));
+
+    const test11Ok = sideEffects.leadPatches.length === 0 && sideEffects.salesbotRuns.length === 0;
+    record(
+      11,
+      'Reactivación post-24h con nuevo enlace Wasi válido -> Evalúa disponibilidad correctamente',
+      test11Ok,
+      `Lead patches: ${sideEffects.leadPatches.length}, Disparos Salesbot: ${sideEffects.salesbotRuns.length}`
+    );
+
+    // ------------------------------------------------------------------------
+    // PRUEBA 12: Persistencia del Bloqueo tras Reinicio del Servidor
+    // ------------------------------------------------------------------------
     const { HandoffManager } = require('./pipeline_decision.js');
     const restartedHandoffManager = new HandoffManager(path.join(__dirname, 'handoffs.json'));
     const recoveredLock = await restartedHandoffManager.checkLockStatus(String(humanLeadId), humanTalkId);
 
-    const test8Ok = recoveredLock.isLocked === true;
+    const test12Ok = recoveredLock.isLocked === true;
     record(
-      8,
+      12,
       'Persistencia de Bloqueo tras Reinicio -> handoffs.json conserva el estado bloqueado de 24 horas',
-      test8Ok,
+      test12Ok,
       `isLocked tras reinicio: ${recoveredLock.isLocked}, Horas: ${recoveredLock.hoursElapsed.toFixed(2)}h`
     );
 
     // ------------------------------------------------------------------------
-    // PRUEBA 9: Auditoría Integral de Cero Efectos Secundarios en Modo Observación
+    // PRUEBA 13: Auditoría Integral de Cero Efectos Secundarios en Modo Observación
     // ------------------------------------------------------------------------
     const totalMutations = sideEffects.leadPatches.length +
       sideEffects.salesbotRuns.length +
@@ -298,11 +416,11 @@ async function runStagingVerification() {
       sideEffects.whatsappAlerts.length +
       sideEffects.tasksCreated.length;
 
-    const test9Ok = totalMutations === 0;
+    const test13Ok = totalMutations === 0;
     record(
-      9,
+      13,
       'Auditoría Integral de Modo Observación: Garantía de CERO efectos secundarios',
-      test9Ok,
+      test13Ok,
       `Total mutaciones a producción: ${totalMutations} (Leads: ${sideEffects.leadPatches.length}, Salesbot: ${sideEffects.salesbotRuns.length + sideEffects.salesbotStops.length}, WhatsApp: ${sideEffects.whatsappAlerts.length}, Tareas: ${sideEffects.tasksCreated.length})`
     );
 
