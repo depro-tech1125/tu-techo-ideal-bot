@@ -22,7 +22,9 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
-// 14 Columnas Oficiales Verificadas en Google Sheets
+// 13 Columnas Oficiales Verificadas en Google Sheets (Indices 0 a 12)
+// NOTA: La columna 'ZONA' NO existe físicamente en Google Sheets.
+// La ubicación se extrae exclusivamente de la DESCRIPCION_BREVE o de la URL oficial de Wasi.
 const AUTHORIZED_COLUMNS = Object.freeze([
   'ID_PROPIEDAD',        // Col A (0)
   'TIPO',                // Col B (1)
@@ -36,8 +38,7 @@ const AUTHORIZED_COLUMNS = Object.freeze([
   'Numero de WhatsApp',  // Col J (9)
   'ESTATUS',             // Col K (10)
   'Mascotas',            // Col L (11)
-  'Tipo de Mascotas',    // Col M (12)
-  'col_13'               // Col N (13)
+  'Tipo de Mascotas'     // Col M (12)
 ]);
 
 // Normalización de texto uniforme y determinística
@@ -169,14 +170,26 @@ function isHumanAttentionRequest(text) {
   if (!text) return false;
   const norm = normalizeText(text);
 
+  // Excepción Wasi: Plantilla predeterminada de Wasi al compartir por WhatsApp:
+  // "Hola, ¿podríamos conversar? Estoy interesado en este inmueble https://info.wasi.co/..."
+  // La frase "¿podríamos conversar?" es el saludo por defecto del botón de Wasi, no una solicitud de reunión.
+  const hasWasiLink = /(?:wasi\.(?:co|com)\/|\b\d{6,9}\b)/i.test(text);
+  const isWasiShareTemplate = hasWasiLink &&
+    /podr[ií]amos\s*conversar|interesad[oa]\s*en\s*(?:este|el)\s*inmueble/i.test(norm) &&
+    !/(?:reuni[oó]n|videollamada|oficina|agendar|cita|firmar|contrato)/i.test(norm);
+
+  if (isWasiShareTemplate) {
+    return false;
+  }
+
   const humanPatterns = [
     // Presupuestos monetarios, capacidad de inversión o condiciones comerciales abiertas
     /(?:presupuesto|inversi[oó]n|dispongo\s*de|cuento\s*con)\s*(?:de\s*)?[\$€]?\s*\d+/i,
 
     // Reuniones, videollamadas, llamadas, citas comerciales
     /(?:agendar|coordinar|hacer|programar|tener)\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|cita|encuentro|zoom|meet)/i,
-    /quiero\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|conversar|hablar\s*con\s*ustedes)/i,
-    /podemos\s*(?:reunirnos|hacer\s*una\s*llamada|hacer\s*una\s*videollamada|conversar)/i,
+    /quiero\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|hablar\s*con\s*(?:el\s*)?(?:asesor|agente|ustedes))/i,
+    /podemos\s*(?:reunirnos|hacer\s*una\s*llamada|hacer\s*una\s*videollamada)/i,
 
     // Ofrecimiento de inmuebles para captación (vender o alquilar su propiedad)
     /quiero\s*(?:vender|ofrecer|publicar|promocionar|captar)\s*(?:mi|un)\s*(?:inmueble|apartamento|casa|terreno|propiedad|local)/i,
@@ -309,13 +322,14 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
     const prop = adaptProperty(rawProp);
     if (!isPropertyAvailable(prop)) continue;
 
-    const propZona = normalizeText(prop.ZONA || '');
+    const propDesc = normalizeText(prop.DESCRIPCION_BREVE || '');
+    const propWasi = normalizeText(prop.Wasi || '');
     const propTipo = normalizeText(prop.TIPO || '');
     const propOperacion = normalizeText(prop.OPERACION || '');
-    const propDesc = normalizeText(prop.DESCRIPCION_BREVE || '');
 
-    // Verificación 1: Zona
-    const zoneMatches = propZona.includes(targetZone) || propDesc.includes(targetZone);
+    // Verificación 1: Zona buscada exclusivamente en la descripción oficial autorizada o en la URL de Wasi
+    const zoneSlug = targetZone.replace(/\s+/g, '-');
+    const zoneMatches = propDesc.includes(targetZone) || propWasi.includes(targetZone) || propWasi.includes(zoneSlug);
     if (!zoneMatches) continue;
 
     // Verificación 2: Operación (si el cliente la especificó)
@@ -720,19 +734,58 @@ REGLAS ESTRICTAS:
       return { text: null, tokensUsed, isSinDato: true, reason: 'Dato no afirmado en Sheets.' };
     }
 
-    // 🛑 VALIDACIÓN DE EVIDENCIA TEXTUAL:
-    // Comprobar que la evidencia citada por Claude exista realmente en la descripción de Sheets
+    // 🛑 1. OBLIGATORIEDAD DE EVIDENCIA:
+    // El campo evidence debe ser obligatorio, tipo string y no vacío para toda respuesta basada en descripción
+    if (!parsed.evidence || typeof parsed.evidence !== 'string' || parsed.evidence.trim().length === 0) {
+      console.warn('[Claude Validation Failed] El campo evidence es obligatorio y no puede estar vacío.');
+      return { text: null, tokensUsed, isSinDato: true, reason: 'Evidencia ausente o vacía.' };
+    }
+
+    // 🛑 2. VERIFICACIÓN TEXTUAL EXACTA EN LA DESCRIPCIÓN OFICIAL:
+    // Se elimina la validación permisiva de palabras sueltas.
+    // La cita textual normalizada debe existir de forma literal y continua dentro de la descripción autorizada.
     const descNorm = normalizeText(property.DESCRIPCION_BREVE || '');
-    const evidenceNorm = normalizeText(parsed.evidence || '');
+    const evidenceNorm = normalizeText(parsed.evidence);
 
-    // Comprobar coincidencia literal directa o coincidencia de palabras clave principales (>= 3 chars)
-    const evidenceWords = evidenceNorm.split(/\s+/).filter(w => w.length >= 3);
-    const hasVerifiableEvidence = (evidenceNorm.length > 0 && descNorm.includes(evidenceNorm)) ||
-      (evidenceWords.length > 0 && evidenceWords.every(w => descNorm.includes(w)));
+    if (!descNorm.includes(evidenceNorm)) {
+      console.warn(`[Evidence Verification Failed] Evidencia "${parsed.evidence}" no existe textualmente en la descripción de Sheets.`);
+      return { text: null, tokensUsed, isSinDato: true, reason: 'Evidencia no encontrada textualmente en Google Sheets.' };
+    }
 
-    if (!hasVerifiableEvidence && evidenceNorm.length > 0) {
-      console.warn(`[Evidence Verification Failed] Evidencia "${parsed.evidence}" no verificable en Sheets.`);
-      return { text: null, tokensUsed, isSinDato: true, reason: 'Evidencia no verificada en Google Sheets.' };
+    // 🛑 3. COMPROBACIÓN DE COHERENCIA ENTRE RESPUESTA Y EVIDENCIA:
+    const answerNorm = normalizeText(parsed.answer);
+
+    // A. Coherencia de Números:
+    // Todo número relevante en la respuesta debe estar explícitamente respaldado por los números de la evidencia
+    const answerNumbers = answerNorm.match(/\b\d+(?:[.,]\d+)?\b/g) || [];
+    const evidenceNumbers = evidenceNorm.match(/\b\d+(?:[.,]\d+)?\b/g) || [];
+
+    for (const num of answerNumbers) {
+      if (!evidenceNumbers.includes(num)) {
+        console.warn(`[Coherence Failed] Número "${num}" en la respuesta no está respaldado por la evidencia: "${parsed.evidence}".`);
+        return { text: null, tokensUsed, isSinDato: true, reason: `Número "${num}" no respaldado en la evidencia textual.` };
+      }
+    }
+
+    // B. Coherencia de Negaciones y Polaridad:
+    // Si la evidencia contiene negación explícita ("no posee", "no cuenta", "no tiene", "no acepta", "no incluye"),
+    // la respuesta DEBE ser negativa y no puede afirmar existencia
+    const evidenceHasNegative = /\bno\s*(?:posee|cuenta|tiene|acepta|incluye|hay)\b/i.test(evidenceNorm);
+    const answerHasAffirmative = /\b(?:si|posee|cuenta\s*con|dispone|incluye|tiene)\b/i.test(answerNorm) &&
+      !/\b(?:no|tampoco|carece|sin)\b/i.test(answerNorm);
+
+    if (evidenceHasNegative && answerHasAffirmative) {
+      console.warn(`[Coherence Failed] Evidencia es negativa ("${parsed.evidence}"), pero la respuesta afirma existencia.`);
+      return { text: null, tokensUsed, isSinDato: true, reason: 'Contradicción de polaridad: evidencia negativa y respuesta afirmativa.' };
+    }
+
+    // Si la evidencia es afirmativa explícita ("cuenta con", "posee", "dispone de"), la respuesta no puede negar sin fundamento
+    const evidenceIsStrictlyAffirmative = /\b(?:cuenta\s*con|posee|dispone\s*de|incluye)\b/i.test(evidenceNorm) && !evidenceHasNegative;
+    const answerHasStrictNegative = /\bno\s*(?:posee|cuenta|tiene|dispone)\b/i.test(answerNorm);
+
+    if (evidenceIsStrictlyAffirmative && answerHasStrictNegative) {
+      console.warn(`[Coherence Failed] Evidencia es afirmativa ("${parsed.evidence}"), pero la respuesta niega existencia.`);
+      return { text: null, tokensUsed, isSinDato: true, reason: 'Contradicción de polaridad: evidencia afirmativa y respuesta negativa.' };
     }
 
     return { text: parsed.answer, tokensUsed, isSinDato: false, evidence: parsed.evidence };
@@ -918,7 +971,6 @@ async function evaluateCentralDecisionPipeline(context) {
       logEntry.reason = `Coincidencias encontradas (${zoneSearch.count} disponibles). Respondiendo exactamente "Sí, disponible." sin listados.`;
       logEntry.action = 'RESPOND';
       logEntry.text = 'Sí, disponible.';
-      if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
       return { shouldRespond: true, text: 'Sí, disponible.', log: logEntry };
     }
   }
@@ -986,7 +1038,44 @@ async function evaluateCentralDecisionPipeline(context) {
   logEntry.typeDetected = 'UNMATCHED_INQUIRY';
   logEntry.reason = 'Consulta sin propiedad identificada ni coincidencias verificables en Google Sheets. Dejado a atención humana.';
   logEntry.action = 'SILENCE';
-  return { shouldRespond: false, text: null, log: logEntry };
+  return { shouldRespond: false, text: null, tokensUsed: 0, log: logEntry };
+}
+
+// ============================================================================
+// 13. CLASIFICACIÓN RIGUROSA DE MENSAJES SALIENTES (OUTGOING MESSAGES)
+// ============================================================================
+function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
+  if (!messageObj) return { isBot: false, isHuman: false, isUncertain: true, reason: 'Mensaje nulo' };
+
+  const outText = (messageObj.text || messageObj.value || '').trim();
+  const authorType = (messageObj.author?.type || '').toLowerCase();
+  const authorName = (messageObj.author?.name || '').toLowerCase();
+  const createdBy = messageObj.created_by !== undefined && messageObj.created_by !== null ? Number(messageObj.created_by) : null;
+  const botId = process.env.KOMMO_BOT_ID || '100766';
+
+  // 1. Detección segura de Bot / Salesbot / App:
+  if (['bot', 'salesbot', 'app', 'system'].includes(authorType)) {
+    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_AUTHOR_TYPE', reason: 'KOMMO_AUTHOR_BOT' };
+  }
+  if (authorName === 'salesbot' || authorName.includes('bot') || String(messageObj.author?.id) === String(botId)) {
+    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_ID_OR_NAME', reason: 'KOMMO_BOT_ID_OR_NAME' };
+  }
+  if (recentBotDispatchedFn && typeof recentBotDispatchedFn === 'function' && recentBotDispatchedFn(outText, messageObj.entity_id)) {
+    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_DISPATCHED_ECHO', reason: 'BOT_DISPATCHED_ECHO' };
+  }
+
+  // 2. Detección de Asesor Humano desde Kommo Web UI:
+  if (authorType === 'user' && createdBy !== null && createdBy > 0) {
+    return { isBot: false, isHuman: true, isHumanAdvisor: true, isUncertain: false, source: 'KOMMO_WEB', reason: 'KOMMO_WEB', userId: createdBy };
+  }
+
+  // 3. Detección de Asesor Humano desde WhatsApp Móvil:
+  if ((authorType === 'user' || createdBy === 0) && outText.length > 0) {
+    return { isBot: false, isHuman: true, isHumanAdvisor: true, isUncertain: false, source: 'WHATSAPP_MOBILE', reason: 'WHATSAPP_MOBILE' };
+  }
+
+  // 4. Incierto: Falla cerrada (silencio preventivo)
+  return { isBot: false, isHuman: false, isHumanAdvisor: false, isUncertain: true, source: 'UNKNOWN', reason: 'UNKNOWN' };
 }
 
 module.exports = {
@@ -1001,6 +1090,7 @@ module.exports = {
   searchZoneOrFeatureMatches,
   isVenezuelaRenaceCreditQuery,
   evaluateVenezuelaRenaceCredit,
+  classifyOutgoingMessage,
   HandoffManager,
   DeduplicationManager,
   ConversationContextManager,

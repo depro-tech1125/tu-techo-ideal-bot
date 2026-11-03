@@ -14,6 +14,8 @@
 require('dotenv').config();
 const axios = require('axios');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 async function runServerIntegrationTests() {
   console.log('================================================================');
@@ -64,7 +66,7 @@ async function runServerIntegrationTests() {
   const baseUrl = `http://127.0.0.1:${port}`;
 
   let passed = 0;
-  const total = 4;
+  const total = 6;
 
   try {
     // ------------------------------------------------------------------------
@@ -76,10 +78,10 @@ async function runServerIntegrationTests() {
       healthRes.data?.service?.includes('v5.0');
 
     if (isHealthOk) {
-      console.log('✅ [Int Test 1/4] PASÓ: Health check reporta controlador pipeline_decision.js y versión v5.0');
+      console.log('✅ [Int Test 1/6] PASÓ: Health check reporta controlador pipeline_decision.js y versión v5.0');
       passed++;
     } else {
-      console.error('❌ [Int Test 1/4] FALLÓ: Health check no reporta pipeline_decision.js:', healthRes.data);
+      console.error('❌ [Int Test 1/6] FALLÓ: Health check no reporta pipeline_decision.js:', healthRes.data);
     }
 
     // ------------------------------------------------------------------------
@@ -123,11 +125,11 @@ async function runServerIntegrationTests() {
       triggeredSalesbots.length > 0;
 
     if (test2Passed) {
-      console.log('✅ [Int Test 2/4] PASÓ: Webhook procesa enlace Wasi -> Guarda "Sí, disponible." en campo 2103996 y dispara Salesbot');
+      console.log('✅ [Int Test 2/6] PASÓ: Webhook procesa enlace Wasi -> Guarda "Sí, disponible." en campo 2103996 y dispara Salesbot');
       console.log(`   Detalle: Campo=${fieldId}, Valor="${fieldValue}", Salesbot disparado=${triggeredSalesbots.length > 0}`);
       passed++;
     } else {
-      console.error('❌ [Int Test 2/4] FALLÓ: Despacho a Kommo incorrecto:', { fieldValue, fieldId, triggeredSalesbots });
+      console.error('❌ [Int Test 2/6] FALLÓ: Despacho a Kommo incorrecto:', { fieldValue, fieldId, triggeredSalesbots });
     }
 
     // ------------------------------------------------------------------------
@@ -162,10 +164,10 @@ async function runServerIntegrationTests() {
     const test3Passed = meaningfulDispatches.length === 0 && triggeredSalesbots.length === 0;
 
     if (test3Passed) {
-      console.log('✅ [Int Test 3/4] PASÓ: Solicitud de reunión genera silencio total y detiene Salesbot (0 mensajes despachados)');
+      console.log('✅ [Int Test 3/6] PASÓ: Solicitud de reunión genera silencio total y detiene Salesbot (0 mensajes despachados)');
       passed++;
     } else {
-      console.error('❌ [Int Test 3/4] FALLÓ: Se envió mensaje indebido a Kommo ante solicitud de reunión');
+      console.error('❌ [Int Test 3/6] FALLÓ: Se envió mensaje indebido a Kommo ante solicitud de reunión');
     }
 
     // ------------------------------------------------------------------------
@@ -191,11 +193,79 @@ async function runServerIntegrationTests() {
     const lockStatus = await centralHandoffManager.checkLockStatus('25685886', 'talk_int_03');
 
     if (lockStatus.isLocked) {
-      console.log('✅ [Int Test 4/4] PASÓ: Webhook saliente de asesor humano activa bloqueo estricto de 24h en HandoffManager');
+      console.log('✅ [Int Test 4/6] PASÓ: Webhook saliente de asesor humano activa bloqueo estricto de 24h en HandoffManager');
       console.log(`   Detalle: isLocked=${lockStatus.isLocked}, Horas transcurridas=${lockStatus.hoursElapsed.toFixed(2)}h`);
       passed++;
     } else {
-      console.error('❌ [Int Test 4/4] FALLÓ: Bloqueo de 24h no activado:', lockStatus);
+      console.error('❌ [Int Test 4/6] FALLÓ: Bloqueo de 24h no activado:', lockStatus);
+    }
+
+    // ------------------------------------------------------------------------
+    // TEST 5: MODO OBSERVACIÓN (OBSERVATION_MODE=true) garantiza cero mutaciones
+    // ------------------------------------------------------------------------
+    let observationModeVerified = true;
+    let observationDetails = '';
+
+    const { execSync } = require('child_process');
+    try {
+      const observationOutput = execSync(
+        `node "${path.join(__dirname, 'test_obs_worker.js')}"`,
+        { encoding: 'utf8', timeout: 10000 }
+      );
+      const obsLine = observationOutput.split('\n').find(l => l.startsWith('OBS_RESULT:'));
+      if (obsLine) {
+        const jsonStr = obsLine.replace('OBS_RESULT:', '').trim();
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.r1?.observation_mode === true &&
+            parsed.r2?.observation_mode === true &&
+            parsed.r3?.observation_mode === true &&
+            parsed.r4 === null &&
+            parsed.r5 === null) {
+          observationModeVerified = true;
+          observationDetails = 'Todas las funciones mutadoras abortan inmediatamente en OBSERVATION_MODE=true';
+        } else {
+          observationModeVerified = false;
+          observationDetails = 'Alguna función no retornó el flag de observation_mode: ' + jsonStr;
+        }
+      } else {
+        observationModeVerified = false;
+        observationDetails = 'No se encontró línea OBS_RESULT en la salida';
+      }
+    } catch (e) {
+      observationModeVerified = false;
+      observationDetails = 'Error ejecutando prueba de observation mode: ' + e.message;
+    }
+
+    if (observationModeVerified) {
+      console.log('✅ [Int Test 5/6] PASÓ: OBSERVATION_MODE=true garantiza CERO mutaciones a Kommo, Salesbot y WhatsApp');
+      console.log(`   Detalle: ${observationDetails}`);
+      passed++;
+    } else {
+      console.error('❌ [Int Test 5/6] FALLÓ: MODO OBSERVACIÓN permitió mutaciones:', observationDetails);
+    }
+
+    // ------------------------------------------------------------------------
+    // TEST 6: Desconexión total de motores antiguos en server.js
+    // ------------------------------------------------------------------------
+    const serverSource = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+    
+    // Verificamos que el webhook principal ya no delega a generateResponseRaw ni searchInventoryWithClaude
+    const hasPipelineCentralInWebhook = serverSource.includes('evaluateCentralDecisionPipeline({');
+    const webhookCallsGenerateResponseRaw = /app\.post\(['"]\/webhook['"][\s\S]*?generateResponseRaw\(/i.test(serverSource);
+    const webhookCallsSearchInventory = /app\.post\(['"]\/webhook['"][\s\S]*?searchInventoryWithClaude\(/i.test(serverSource);
+    const webhookUsesFichasManager = /app\.post\(['"]\/webhook['"][\s\S]*?fichas_manager/i.test(serverSource);
+
+    const test6Passed = hasPipelineCentralInWebhook &&
+      !webhookCallsGenerateResponseRaw &&
+      !webhookCallsSearchInventory &&
+      !webhookUsesFichasManager;
+
+    if (test6Passed) {
+      console.log('✅ [Int Test 6/6] PASÓ: Motores antiguos (fichas_manager, generateResponseRaw, searchInventoryWithClaude) 100% desconectados del flujo webhook');
+      console.log('   Detalle: pipeline_decision.js es el único motor de decisión activo en /webhook');
+      passed++;
+    } else {
+      console.error('❌ [Int Test 6/6] FALLÓ: Se detectaron llamadas residuales a motores antiguos en /webhook');
     }
 
   } finally {

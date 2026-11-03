@@ -24,6 +24,60 @@ axios.post = async function(url, data, config) {
     const messages = data?.messages || [];
     const userMsg = (messages.find(m => m.role === 'user')?.content || '').toLowerCase();
     
+    if (userMsg.includes('evidencia_vacia')) {
+      // Simular intento de Claude con evidencia vacía
+      return {
+        data: {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                has_data: true,
+                answer: "Tiene 3 habitaciones",
+                evidence: ""
+              })
+            }
+          }],
+          usage: { total_tokens: 120 }
+        }
+      };
+    }
+
+    if (userMsg.includes('numero_contradictorio')) {
+      // Simular cita correcta pero número contradictorio en la respuesta
+      return {
+        data: {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                has_data: true,
+                answer: "Tiene 180 m²",
+                evidence: "Apartamento de 120 m²"
+              })
+            }
+          }],
+          usage: { total_tokens: 125 }
+        }
+      };
+    }
+
+    if (userMsg.includes('polaridad_contradictoria')) {
+      // Simular evidencia negativa pero respuesta afirmativa
+      return {
+        data: {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                has_data: true,
+                answer: "Sí posee puesto de estacionamiento propio",
+                evidence: "No posee puesto de estacionamiento propio"
+              })
+            }
+          }],
+          usage: { total_tokens: 135 }
+        }
+      };
+    }
+
     if (userMsg.includes('metro') || userMsg.includes('m2') || userMsg.includes('tamaño')) {
       return {
         data: {
@@ -122,6 +176,8 @@ const {
   searchZoneOrFeatureMatches,
   isVenezuelaRenaceCreditQuery,
   evaluateVenezuelaRenaceCredit,
+  classifyOutgoingMessage,
+  AUTHORIZED_COLUMNS,
   normalizeText,
   extractWasiPropertyIdentifiers
 } = require('./pipeline_decision.js');
@@ -192,13 +248,13 @@ const mockProperties = [
 
 async function runTests() {
   console.log('================================================================');
-  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (37 ESCENARIOS) ');
+  console.log(' INICIANDO SUITE DE PRUEBAS DE LA NUEVA LÓGICA (44 ESCENARIOS) ');
   console.log('================================================================\n');
 
   const testHandoffFile = path.join(__dirname, 'test_handoffs_temp.json');
   if (fs.existsSync(testHandoffFile)) fs.unlinkSync(testHandoffFile);
 
-  const TOTAL_TESTS = 37;
+  const TOTAL_TESTS = 44;
   const handoffManager = new HandoffManager(testHandoffFile);
   let passedCount = 0;
   const results = [];
@@ -1005,15 +1061,151 @@ async function runTests() {
     `Primera petición: ${firstCall.reason}, Segunda petición concurrente: ${secondCall.reason}`
   );
 
+  // --------------------------------------------------------------------------
+  // TEST 38: Claude devuelve evidence vacía -> PROPERTY_FEATURE_SIN_DATO (Silencio)
+  // --------------------------------------------------------------------------
+  const res38 = await evaluateCentralDecisionPipeline({
+    userText: '¿Cuántas habitaciones tiene? (evidencia_vacia)',
+    leadId: 'lead_t38',
+    properties: mockProperties,
+    activePropertyContext: targetProp1,
+    handoffManager
+  });
+  recordResult(
+    38,
+    'Claude devuelve evidence vacía -> Rechazado por validación estricta y genera SILENCIO',
+    res38.shouldRespond === false && res38.log.typeDetected === 'PROPERTY_FEATURE_SIN_DATO',
+    `Respondió: ${res38.shouldRespond}, Tipo: ${res38.log.typeDetected}, Motivo: ${res38.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 39: Claude devuelve respuesta con número contradictorio con la evidencia
+  // --------------------------------------------------------------------------
+  const res39 = await evaluateCentralDecisionPipeline({
+    userText: '¿Cuántos metros tiene? (numero_contradictorio)',
+    leadId: 'lead_t39',
+    properties: mockProperties,
+    activePropertyContext: targetProp1,
+    handoffManager
+  });
+  recordResult(
+    39,
+    'Claude con respuesta numérica contradictoria con la cita -> Rechazado y genera SILENCIO',
+    res39.shouldRespond === false && res39.log.typeDetected === 'PROPERTY_FEATURE_SIN_DATO',
+    `Respondió: ${res39.shouldRespond}, Tipo: ${res39.log.typeDetected}, Motivo: ${res39.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 40: Claude devuelve polaridad contradictoria (afirma lo que la cita niega)
+  // --------------------------------------------------------------------------
+  const res40 = await evaluateCentralDecisionPipeline({
+    userText: '¿Tiene puesto de estacionamiento? (polaridad_contradictoria)',
+    leadId: 'lead_t40',
+    properties: mockProperties,
+    activePropertyContext: targetProp1,
+    handoffManager
+  });
+  recordResult(
+    40,
+    'Claude con polaridad contradictoria (afirma negación de cita) -> Rechazado y genera SILENCIO',
+    res40.shouldRespond === false && res40.log.typeDetected === 'PROPERTY_FEATURE_SIN_DATO',
+    `Respondió: ${res40.shouldRespond}, Tipo: ${res40.log.typeDetected}, Motivo: ${res40.log.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 41: Texto estándar de botón compartir Wasi ("Hola, ¿podríamos conversar? Estoy interesado en este inmueble...")
+  // --------------------------------------------------------------------------
+  const res41 = await evaluateCentralDecisionPipeline({
+    userText: 'Hola, ¿podríamos conversar? Estoy interesado en este inmueble https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109',
+    leadId: 'lead_t41',
+    properties: mockProperties,
+    handoffManager
+  });
+  recordResult(
+    41,
+    'Plantilla Wasi "¿podríamos conversar?" con enlace válido -> Exenta de bloqueo por reunión, responde "Sí, disponible."',
+    res41.shouldRespond === true && res41.text === 'Sí, disponible.',
+    `Respondió: "${res41.text}", Acción: ${res41.log.action}, Tipo: ${res41.log.typeDetected}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 42: Búsqueda general por zona seguida de pregunta específica sin link -> Silencio (0 tokens)
+  // --------------------------------------------------------------------------
+  // Turno 1: Búsqueda por zona
+  const res42a = await evaluateCentralDecisionPipeline({
+    userText: 'Hola, busco apartamento en venta en Los Samanes',
+    leadId: 'lead_t42',
+    properties: mockProperties,
+    handoffManager
+  });
+  // Turno 2: Pregunta específica sin enlace ni contexto de propiedad individual
+  const res42b = await evaluateCentralDecisionPipeline({
+    userText: '¿Cuántos metros cuadrados tiene?',
+    leadId: 'lead_t42',
+    properties: mockProperties,
+    handoffManager
+    // Sin activePropertyContext
+  });
+  recordResult(
+    42,
+    'Pregunta específica posterior a búsqueda por zona sin link -> Guarda SILENCIO (0 tokens)',
+    res42a.shouldRespond === true && res42b.shouldRespond === false && res42b.tokensUsed === 0 && res42b.log.typeDetected === 'UNMATCHED_INQUIRY',
+    `Turno 1: ${res42a.shouldRespond}, Turno 2: ${res42b.shouldRespond} (Tokens: ${res42b.tokensUsed}, Tipo: ${res42b.log.typeDetected})`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 43: Clasificación de mensaje saliente del Bot (`author.type === 'bot'`)
+  // --------------------------------------------------------------------------
+  const mockMsgBot = {
+    author: { type: 'bot', id: 'bot_system_1' },
+    text: 'Sí, disponible.'
+  };
+  const classificationBot = classifyOutgoingMessage(mockMsgBot, () => true);
+  recordResult(
+    43,
+    'Clasificación de mensaje saliente con author.type === "bot" -> Identificado como Bot (isBot: true, NO bloquea)',
+    classificationBot.isBot === true && classificationBot.isHumanAdvisor === false,
+    `isBot: ${classificationBot.isBot}, isHumanAdvisor: ${classificationBot.isHumanAdvisor}, Razón: ${classificationBot.reason}`
+  );
+
+  // --------------------------------------------------------------------------
+  // TEST 44: Validación física de 13 columnas autorizadas de Google Sheets (ZONA no existe como columna física)
+  // --------------------------------------------------------------------------
+  const expectedCols = [
+    'ID_PROPIEDAD',
+    'TIPO',
+    'OPERACION',
+    'DESCRIPCION_BREVE',
+    'LINK_FOTOS',
+    'Wasi',
+    'Mercado Libre',
+    'Pagina Web',
+    'Agente',
+    'Numero de WhatsApp',
+    'ESTATUS',
+    'Mascotas',
+    'Tipo de Mascotas'
+  ];
+  const allColsMatch = expectedCols.length === AUTHORIZED_COLUMNS.length &&
+    expectedCols.every(c => AUTHORIZED_COLUMNS.includes(c)) &&
+    !AUTHORIZED_COLUMNS.includes('ZONA');
+
+  recordResult(
+    44,
+    'Validación física de 13 columnas de Sheets -> AUTHORIZED_COLUMNS contiene exactamente las 13 oficiales (sin ZONA)',
+    allColsMatch === true,
+    `Columnas autorizadas: ${AUTHORIZED_COLUMNS.length} (ZONA incluida: ${AUTHORIZED_COLUMNS.includes('ZONA')})`
+  );
+
   // Limpieza de archivos temporales
   if (fs.existsSync(testHandoffFile)) fs.unlinkSync(testHandoffFile);
   if (fs.existsSync(nonExistentFile)) fs.unlinkSync(nonExistentFile);
 
   console.log('\n================================================================');
-  console.log(` RESULTADOS FINALES: ${passedCount} / 37 PRUEBAS SUPERADAS (${Math.round((passedCount / 37) * 100)}%) `);
+  console.log(` RESULTADOS FINALES: ${passedCount} / 44 PRUEBAS SUPERADAS (${Math.round((passedCount / 44) * 100)}%) `);
   console.log('================================================================');
 
-  if (passedCount !== 37) {
+  if (passedCount !== 44) {
     process.exit(1);
   }
 }

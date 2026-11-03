@@ -18,6 +18,7 @@ const {
   DeduplicationManager,
   ConversationContextManager,
   verifyPreDispatchSafety,
+  classifyOutgoingMessage,
   adaptProperty,
   isPropertyAvailable
 } = require('./pipeline_decision.js');
@@ -1535,6 +1536,11 @@ function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedP
 // 📲 DISPATCH DIRECTO DE ALERTA WHATSAPP A ROBERT
 // ==========================================
 async function dispatchDirectWhatsAppToRobert(messageText) {
+  if (OBSERVATION_MODE) {
+    console.log(`[OBSERVATION MODE] dispatchDirectWhatsAppToRobert interceptado. Cero alertas enviadas.`);
+    return null;
+  }
+
   const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || '7882504';
   const robertPhone = (process.env.ROBERT_WHATSAPP || '+584143115105').replace(/[^0-9]/g, '');
 
@@ -3635,6 +3641,10 @@ async function generateResponse(userMessage, allProperties, imageUrl = null, lea
 // ==========================================
 async function ensureLeadInActivePipeline(leadId) {
   if (!leadId) return;
+  if (OBSERVATION_MODE) {
+    console.log(`[OBSERVATION MODE] ensureLeadInActivePipeline(Lead #${leadId}) interceptado. Cero llamadas a Kommo.`);
+    return null;
+  }
   try {
     const token = process.env.KOMMO_TOKEN;
     const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
@@ -3666,6 +3676,10 @@ async function ensureLeadInActivePipeline(leadId) {
 }
 
 async function updateKommoLead(leadId, aiText) {
+  if (OBSERVATION_MODE) {
+    console.log(`[OBSERVATION MODE] updateKommoLead(Lead #${leadId}, "${(aiText || '').substring(0, 30)}...") interceptado. Cero actualizaciones a Kommo.`);
+    return { id: leadId, observation_mode: true };
+  }
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN;
   const fieldId = parseInt(process.env.KOMMO_FIELD_ID, 10);
@@ -3694,6 +3708,10 @@ async function updateKommoLead(leadId, aiText) {
 }
 
 async function triggerKommoSalesbot(leadId) {
+  if (OBSERVATION_MODE) {
+    console.log(`[OBSERVATION MODE] triggerKommoSalesbot(Lead #${leadId}) interceptado. Cero disparos a Salesbot.`);
+    return { success: true, observation_mode: true };
+  }
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN;
   const botId = parseInt(process.env.KOMMO_BOT_ID, 10);
@@ -3719,6 +3737,10 @@ async function triggerKommoSalesbot(leadId) {
 // 🛑 DETENER SALESBOT EN KOMMO PARA EVITAR SECUENCIAS O TIMERS NO DESEADOS
 async function stopKommoSalesbot(leadId) {
   if (!leadId) return;
+  if (OBSERVATION_MODE) {
+    console.log(`[OBSERVATION MODE] stopKommoSalesbot(Lead #${leadId}) interceptado. Cero llamadas a Kommo.`);
+    return { success: true, observation_mode: true };
+  }
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN;
   const botId = parseInt(process.env.KOMMO_BOT_ID || '100766', 10);
@@ -3991,45 +4013,51 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     // Se procesa inmediatamente antes de cualquier filtro para que NINGÚN mensaje humano pase desapercibido.
     if (messageObj.type === 'outgoing') {
       const outText = (messageObj.text || messageObj.value || '').trim();
-      const isFromBot = isRecentBotDispatchedMessage(outText, messageObj.entity_id);
+      const outClassification = classifyOutgoingMessage(messageObj, (text, id) => isRecentBotDispatchedMessage(text, id));
 
-      if (!isFromBot) {
-        let outLeadId = messageObj.entity_id || messageObj.element_id;
-        const outTalkId = messageObj.talk_id;
-        const outContactId = messageObj.contact_id;
-
-        if (!outLeadId && outTalkId) {
-          try {
-            const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${outTalkId}`, {
-              headers: { Authorization: process.env.KOMMO_TOKEN },
-              timeout: 4000
-            });
-            outLeadId = talkRes.data?.entity_id;
-          } catch (e) {}
-        }
-
-        console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] El asesor humano escribió en el chat (Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas y deteniendo Salesbot.`);
-
-        // Registrar en ambos gestores (nuevo pipeline central y compatibilidad)
-        centralHandoffManager.recordHumanIntervention(outLeadId, outTalkId, outContactId, Date.now());
-        if (outLeadId) setLeadHandoff(outLeadId);
-        if (outTalkId) setTalkHandoff(outTalkId);
-        if (outContactId) setContactHandoff(outContactId);
-
-        // Cancelar inmediatamente Salesbot y cualquier Respuesta_IA residual para evitar colisiones
-        if (outLeadId) {
-          await stopKommoSalesbot(outLeadId);
-          try {
-            await updateKommoLead(outLeadId, ' ');
-            console.log(`[Anti-Collision] Respuesta_IA vaciada y Salesbot detenido para Lead #${outLeadId}`);
-          } catch (e) {}
-        }
-
-        return;
-      } else {
-        console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado ("${outText.substring(0, 40)}..."). Skipping echo.`);
+      if (outClassification.isBot) {
+        console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado (${outClassification.source}, "${outText.substring(0, 40)}..."). Skipping echo.`);
         return;
       }
+
+      let outLeadId = messageObj.entity_id || messageObj.element_id;
+      const outTalkId = messageObj.talk_id;
+      const outContactId = messageObj.contact_id;
+
+      if (!outLeadId && outTalkId) {
+        try {
+          const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${outTalkId}`, {
+            headers: { Authorization: process.env.KOMMO_TOKEN },
+            timeout: 4000
+          });
+          outLeadId = talkRes.data?.entity_id;
+        } catch (e) {}
+      }
+
+      console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] Intervención saliente detectada (${outClassification.source}, Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas y deteniendo Salesbot.`);
+
+      // Registrar en ambos gestores (nuevo pipeline central y compatibilidad)
+      centralHandoffManager.recordHumanIntervention(outLeadId, outTalkId, outContactId, Date.now());
+      if (outLeadId) setLeadHandoff(outLeadId);
+      if (outTalkId) setTalkHandoff(outTalkId);
+      if (outContactId) setContactHandoff(outContactId);
+
+      // En MODO OBSERVACIÓN: Cero efectos secundarios en Kommo
+      if (OBSERVATION_MODE) {
+        console.log(`[OBSERVATION MODE] Intervención registrada internamente. Cero mutaciones a Kommo.`);
+        return;
+      }
+
+      // Cancelar inmediatamente Salesbot y cualquier Respuesta_IA residual para evitar colisiones
+      if (outLeadId) {
+        await stopKommoSalesbot(outLeadId);
+        try {
+          await updateKommoLead(outLeadId, ' ');
+          console.log(`[Anti-Collision] Respuesta_IA vaciada y Salesbot detenido para Lead #${outLeadId}`);
+        } catch (e) {}
+      }
+
+      return;
     }
 
     const imageUrl = extractImageUrl(body, messageObj);
@@ -4251,7 +4279,19 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
 
-      // Si el pipeline determinó silencio absoluto
+      // ======================================================================
+      // 3. MODO OBSERVACIÓN (SHADOW MODE ESTRICTO - CERO EFECTOS SECUNDARIOS)
+      // ======================================================================
+      if (OBSERVATION_MODE) {
+        if (pipelineResult.shouldRespond && pipelineResult.text) {
+          console.log(`[OBSERVATION MODE ACTIVE] Decisión: RESPONDER con "${pipelineResult.text}". Cero modificaciones a Kommo, cero disparos a Salesbot.`);
+        } else {
+          console.log(`[OBSERVATION MODE ACTIVE] Decisión: SILENCIO (${pipelineResult.log.reason || 'Sin respuesta'}). Cero modificaciones a Kommo, cero alertas a WhatsApp.`);
+        }
+        return;
+      }
+
+      // Si el pipeline determinó silencio absoluto en modo normal
       if (!pipelineResult.shouldRespond || !pipelineResult.text) {
         console.log(`[Pipeline Silence] El bot guarda silencio absoluto y cede el control.`);
         await stopKommoSalesbot(currentLeadId);
@@ -4278,14 +4318,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       const responseText = pipelineResult.text;
       console.log(`[Pipeline Approved Response] Text: "${responseText}"`);
-
-      // ======================================================================
-      // 3. MODO OBSERVACIÓN (SHADOW MODE)
-      // ======================================================================
-      if (OBSERVATION_MODE) {
-        console.log(`[OBSERVATION MODE ACTIVE] El bot respondería: "${responseText}". No se despacha a Kommo ni se dispara Salesbot.`);
-        return;
-      }
 
       // ======================================================================
       // 4. COMPROBACIÓN PREVIA AL DESPACHO (PRE-DISPATCH CHECK)
@@ -4452,6 +4484,11 @@ module.exports = {
   centralContextManager,
   OBSERVATION_MODE,
   evaluateCentralDecisionPipeline,
+  updateKommoLead,
+  triggerKommoSalesbot,
+  stopKommoSalesbot,
+  ensureLeadInActivePipeline,
+  dispatchDirectWhatsAppToRobert,
   getAvailableProperties,
   matchWasiOrProperty,
   isStandaloneLinkWithoutQuestion,
