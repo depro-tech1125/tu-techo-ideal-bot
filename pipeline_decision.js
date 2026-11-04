@@ -805,7 +805,17 @@ REGLAS ESTRICTAS:
       return { text: null, tokensUsed, isSinDato: true, reason: 'Contradicción de polaridad: evidencia afirmativa y respuesta negativa.' };
     }
 
-    return { text: parsed.answer, tokensUsed, isSinDato: false, evidence: parsed.evidence };
+    let finalAnswer = parsed.answer.trim();
+    // Normalizar respuestas de metraje para responder limpiamente "Tiene X m²" si solo viene el número o "X m²"
+    if (/(?:cu[aá]ntos\s*metros|metraje|superficie|m2|m²)/i.test(userQuestion)) {
+      if (/^\d+\s*m(?:etros|²|2)?$/i.test(finalAnswer)) {
+        finalAnswer = `Tiene ${finalAnswer.replace(/m(?:etros|2)?$/i, 'm²')}`;
+      } else if (!/^tiene\b/i.test(finalAnswer)) {
+        finalAnswer = `Tiene ${finalAnswer}`;
+      }
+    }
+
+    return { text: finalAnswer, tokensUsed, isSinDato: false, evidence: parsed.evidence };
   } catch (err) {
     console.error('[Pipeline QA Error]:', err.message);
     return { text: null, tokensUsed: 0, isSinDato: true, reason: err.message };
@@ -1001,6 +1011,11 @@ async function evaluateCentralDecisionPipeline(context) {
     } else if (activePropertyContext) {
       targetProperty = activePropertyContext;
     }
+    // Resiliente: si la memoria RAM decayó, recuperar de activeAutomationPropertyId en handoffManager
+    if (!targetProperty && handoff && handoff.activeAutomationPropertyId && Array.isArray(properties)) {
+      const match = properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (handoff.activeAutomationPropertyId || '').toUpperCase());
+      if (match) targetProperty = adaptProperty(match);
+    }
   }
 
   if (targetProperty) {
@@ -1083,7 +1098,7 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
   if (authorName === 'salesbot' || authorName.includes('bot') || String(messageObj.author?.id) === String(botId)) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_ID_OR_NAME', reason: 'KOMMO_BOT_ID_OR_NAME' };
   }
-  if (recentBotDispatchedFn && typeof recentBotDispatchedFn === 'function' && recentBotDispatchedFn(outText, messageObj.entity_id)) {
+  if (recentBotDispatchedFn && typeof recentBotDispatchedFn === 'function' && recentBotDispatchedFn(outText, messageObj.entity_id || messageObj.element_id || messageObj.talk_id)) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_DISPATCHED_ECHO', reason: 'BOT_DISPATCHED_ECHO' };
   }
 

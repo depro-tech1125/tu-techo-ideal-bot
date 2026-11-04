@@ -2121,6 +2121,7 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
   const norm = normalizeText(text);
 
   if (
+    norm.includes('bienvenido a tu techo ideal') ||
     norm.includes('deme un momento, voy a consultar') ||
     norm.includes('deme un momento voy a consultar') ||
     norm.includes('voy a consultar y ya le doy informacion') ||
@@ -2128,6 +2129,8 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
     norm.includes('hola, bienvenido a tu techo ideal') ||
     norm.includes('hola! gracias por comunicarte con, tu techo ideal') ||
     norm.includes('somos barbara bravo y robert jimenez') ||
+    norm.includes('tiene 110 m2') ||
+    norm.includes('tiene 110 m²') ||
     norm === 'si, disponible' ||
     norm === 'si disponible' ||
     norm === 'no, disponible' ||
@@ -4125,7 +4128,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     // Se procesa inmediatamente antes de cualquier filtro para que NINGÚN mensaje humano pase desapercibido.
     if (messageObj.type === 'outgoing') {
       const outText = (messageObj.text || messageObj.value || '').trim();
-      const outClassification = classifyOutgoingMessage(messageObj, (text, id) => isRecentBotDispatchedMessage(text, id));
+      const outClassification = classifyOutgoingMessage(messageObj, (text, id) => isRecentBotDispatchedMessage(text, id || messageObj.entity_id || messageObj.element_id || messageObj.talk_id));
 
       if (outClassification.isBot) {
         console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado (${outClassification.source}, "${outText.substring(0, 40)}..."). Skipping echo.`);
@@ -4889,7 +4892,15 @@ app.get('/api/staging-decision-logs', requireStagingAuth, (req, res) => {
 
 // 3. Simular Avance Temporal de Bloqueo de 24 Horas para Pruebas Controladas
 app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
-  const { lead_id, talk_id, hours_ago } = req.body;
+  const { lead_id, talk_id, hours_ago, clear, reset } = req.body;
+
+  if (clear || reset) {
+    if (talk_id && centralHandoffManager.handoffs.talks) delete centralHandoffManager.handoffs.talks[String(talk_id)];
+    if (lead_id && centralHandoffManager.handoffs.leads) delete centralHandoffManager.handoffs.leads[String(lead_id)];
+    centralHandoffManager.save();
+    return res.json({ status: 'ok', cleared: true, lead_id, talk_id });
+  }
+
   const hours = Number(hours_ago) || 25;
   const simulatedTime = Date.now() - (hours * 60 * 60 * 1000);
 
