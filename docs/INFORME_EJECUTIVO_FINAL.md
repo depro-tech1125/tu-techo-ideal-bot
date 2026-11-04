@@ -1,107 +1,142 @@
-# INFORME EJECUTIVO FINAL — CIERRE DE DESARROLLO
+# INFORME EJECUTIVO FINAL — AUDITORÍA Y RESULTADO DE ACTIVACIÓN
 ## TU TECHO IDEAL V5.0 — MICROSERVICIO DE ATENCIÓN INMOBILIARIA AUTOMATIZADA
 
 ---
 
-## 1. RESUMEN DEL PROYECTO Y OBJETIVO DE CIERRE
-El proyecto **Tu Techo Ideal v5.0** ha completado su fase de desarrollo, auditoría de seguridad y validación funcional. El objetivo de este informe es formalizar el cierre del desarrollo, detallar el estado real de cada componente y proporcionar una base técnica y operativa transparente para la transferencia del sistema al responsable del proyecto (Robert y dirección comercial de Tu Techo Ideal).
+## 1. RESUMEN EJECUTIVO Y DICTAMEN DE ACTIVACIÓN
+
+En cumplimiento estricto del mandato de **AUTORIZACIÓN FINAL DE ACTIVACIÓN EN PRODUCCIÓN — TU TECHO IDEAL V5.0**, se procedió a ejecutar la auditoría integral previa, las verificaciones de seguridad, la inspección de la base de conocimiento oficial y la ejecución en vivo de las cuatro baterías de pruebas.
+
+### DICTAMEN OFICIAL: **RESULTADO B — ACTIVACIÓN NO AUTORIZADA POR INCIDENCIA TÉCNICA**
+
+> [!WARNING]
+> **MOTIVO DE LA DETENCIÓN PREVENTIVA:**
+> Conforme a la **Sección 2** de las instrucciones (*"Si no tienes permisos suficientes para modificar la hoja oficial o existen diferencias que no puedas resolver con seguridad, NO continúes con la activación. No confundas un Excel local actualizado con una Google Sheet oficial actualizada"*), se verificó que la **hoja oficial online de Google Sheets en la nube** (`1cXZdjOck8rYUZdZUOWlhQMWxnyegipyVa081EkrRc_A`) **no contiene aún los bloques complementarios de 6 secciones** para las 69 propiedades del catálogo.
+> 
+> Debido a que el microservicio en Producción descarga directamente dicha hoja en la nube, y al no disponer de credenciales de escritura con permisos en Google Drive para modificarla remotamente por API, desplegar v5.0 en este momento provocaría que el bot opere en Producción con descripciones sin estructurar para 68 propiedades.
+> 
+> En aplicación rigurosa de las salvaguardas de seguridad:
+> 1. **NO se realizó el merge hacia `main`.**
+> 2. **NO se alteró el servicio de Producción (permanece estable en v4.1, commit `e4f82ff`).**
+> 3. **NO se desactivó el modo de observación en Staging (`OBSERVATION_MODE=true`).**
+> 4. **NO se envió ningún mensaje de WhatsApp (`Activo`) a `+584140128826`.**
+> 5. **Se preservaron todos los respaldos y archivos actualizados listos para su importación.**
 
 ---
 
-## 2. EVALUACIÓN DETALLADA Y RIGUROSA DE FUNCIONALIDADES
+## 2. DESGLOSE DE LOS 13 PUNTOS DE AUDITORÍA Y CONTROL
 
-Para evitar ambigüedades entre el diseño arquitectónico, el código desarrollado y el estado operativo real en los servicios en vivo, se clasifica cada compromiso de la propuesta original conforme a su evidencia verificable:
+### 1. Estado Inicial de Producción
+- **URL del Servicio:** `https://tu-techo-ideal-bot-1.onrender.com`
+- **Estado HTTP:** `200 OK` (Servicio en estado `running`).
+- **Versión Activa:** `Tu Techo Ideal Bot Microservice - v4.1 Anti-Substitution & Anti-Duplicate Shield Edition`.
+- **Commit Desplegado:** `e4f82ff`.
+- **Integridad Operativa:** Canales de WhatsApp y webhooks de Kommo CRM atendidos normalmente por v4.1 sin interrupciones.
 
-### 2.1 Bandeja Omnicanal (WhatsApp, Instagram, Facebook, TikTok)
-- **Estado Técnico:** Arquitectura desacoplada implementada. El microservicio procesa eventos estandarizados mediante webhooks de Kommo CRM (`message[add]`).
-- **Estado Operativo Real:**
-  - **WhatsApp:** Conectado, integrado y probado en el flujo de Kommo.
-  - **Instagram, Facebook y TikTok:** El microservicio cuenta con la lógica de ingesta y el filtro de eventos casuales/menciones (`isSocialMediaEventOrMention`). Sin embargo, su funcionamiento en vivo depende de que el cliente complete la vinculación de sus cuentas y tokens OAuth dentro del panel de administración de Kommo CRM.
-- **Dictamen:** **Implementado a nivel de arquitectura y microservicio; operatividad multicanal sujeta a configuración de cuentas en Kommo por parte del cliente.**
+### 2. Commit Anterior y Nuevo Commit
+- **Commit Estable de Producción (Rollback / Base v4.1):** `e4f82ff` (conservado intacto en `main`).
+- **Último Commit Funcional y Documental v5.0:** `1210989` en la rama `feature/reinicio-logica-inmobiliaria`.
+- **Merge a `main`:** **Inhibido** por activación del protocolo de seguridad RESULTADO B.
 
-### 2.2 Asistente Virtual e Inteligencia Artificial
-- **Estado Técnico:** Doble motor de respuesta centralizado en [`pipeline_decision.js`](../pipeline_decision.js):
-  1. *Extractor Determinista (0 Tokens):* Responde disponibilidad, precio, metraje, habitaciones y baños directamente desde Google Sheets en < 5 ms.
-  2. *Gateway LLM con Validación Estricta:* Procesa preguntas complejas exigiendo coincidencia textual con `evidence` en Google Sheets.
-- **Estado Operativo Real:**
-  - El extractor determinista resolvió el 100% de los casos de prueba inmobiliarios frecuentes sin depender de IA externa.
-  - Para preguntas abiertas complejas, el modelo configurado en Staging (`nvidia/nemotron-3.5-lightning:free` vía OpenRouter) está sujeto a límites de tasa de la capa gratuita (HTTP 429). El sistema responde con **silencio preventivo (Fail-Closed)** ante estos fallos para no emitir respuestas erróneas.
-- **Dictamen:** **Operativo y robusto. Si el cliente requiere un alto volumen de preguntas complejas abiertas sin restricciones de tasa, deberá aportar saldo a una cuenta de OpenRouter o proveedor equivalente.**
+### 3. Estado del Repositorio en GitHub
+- **Repositorio Remoto:** `https://github.com/depro-tech1125/tu-techo-ideal-bot.git`
+- **Rama `main`:** Totalmente limpia, sincronizada con el commit seguro `e4f82ff`.
+- **Rama `feature/reinicio-logica-inmobiliaria`:** Sincronizada con el commit `1210989`. Contiene la arquitectura completa v5.0, el extractor determinista, las baterías de pruebas y el paquete de 10 documentos formales.
+- **Auditoría de Archivos Sensibles:** Cero claves o secretos filtrados en el historial de Git.
 
-### 2.3 Inventario Sincronizado con Google Sheets
-- **Estado Técnico:** Módulo [`google_sheets.js`](../google_sheets.js) con lectura mediante Service Account o descarga estructurada, indexación en memoria y caché con TTL.
-- **Estado Operativo Real:**
-  - Indexa activamente las 69+ propiedades del catálogo oficial.
-  - La extracción de datos opera leyendo la columna `DESCRIPCION_BREVE`. Si un dato no existe o está redactado de forma ambigua, el sistema se silencia por política de no invención.
-- **Dictamen:** **Completamente operativo y verificado en pruebas en vivo.**
+### 4. Estado de la Infraestructura en Render
+| Servicio | Entorno | URL Oficial | Versión Activa | Commit | Estado | Observación Mode |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: |
+| **tu-techo-ideal-staging** | Staging | `https://tu-techo-ideal-staging.onrender.com` | **v5.0** | `1210989` | `running` | `true` (Protegido) |
+| **tu-techo-ideal-bot-1** | Producción | `https://tu-techo-ideal-bot-1.onrender.com` | **v4.1** | `e4f82ff` | `running` | Normal (v4.1) |
 
-### 2.4 Detección de Clientes con Alta Intención y Alertas Comerciales
-- **Estado Técnico:** Prioridad 3 del pipeline identifica intenciones de visita presencial, reunión, ofertas económicas o captación de inmuebles (`isAppointmentOrHumanRequest`).
-- **Estado Operativo Real:**
-  - Al detectar alta intención, el bot ejecuta **silencio absoluto y derivación inmediata al asesor** (`APPOINTMENT_REQUEST`), evitando cualquier respuesta automática que entorpezca la venta.
-  - **Notificaciones Externas Directas:** El envío de alertas push por SMS o mensajes automáticos directos de WhatsApp al móvil privado del asesor **no está implementado en el microservicio**, ya que requiere plantillas HSM oficiales aprobadas por Meta y un gateway de mensajería transaccional externo dedicado.
-- **Dictamen:** **Detección y derivación en silencio implementadas y probadas; despacho de alertas externas a teléfonos privados pendiente de gateway y plantillas de Meta.**
+### 5. Confirmación de la Versión Realmente Activa
+- **En Producción:** Se confirma mediante consulta en vivo a `/health` que el servicio activo es **v4.1**. No se efectuó sustitución de código en vivo.
+- **En Staging:** Se confirma la versión **v5.0 Deterministic Central Pipeline Edition** operando con pipeline determinista y modelo de respaldo `nvidia/nemotron-3.5-lightning:free`.
 
-### 2.5 Supervisión y Monitoreo del Funcionamiento
-- **Estado Técnico:** Endpoint público `GET /health` que reporta estado del proceso, controlador del pipeline, tiempo de actividad (`uptime_seconds`), y logs estructurados por acción en Render.
-- **Estado Operativo Real:**
-  - Monitoreo básico nativo en funcionamiento continuo.
-  - No se dispone de herramientas de APM externas avanzadas (Datadog, New Relic, Sentry), las cuales no formaban parte del alcance contratado.
-- **Dictamen:** **Monitoreo básico operativo completamente funcional.**
+### 6. Estado de Google Sheets y Base de Conocimiento
+- **Hoja Oficial en Google Drive:** ID `1cXZdjOck8rYUZdZUOWlhQMWxnyegipyVa081EkrRc_A` (`Hoja 1`).
+- **Verificación en Vivo del Contenido Remoto:**
+  - Total de propiedades identificadas: **69** (`REF-001` a `REF-069`).
+  - Propiedades en la nube con bloque complementario de 6 secciones: **0** (o 1 parcial en borradores previos).
+  - Propiedades en la nube con solo texto plano original: **69**.
+- **Permisos de Escritura:** La integración actual opera por descarga pública (`export?format=xlsx`). No existen credenciales de Google Cloud Service Account con rol de edición en el servidor, impidiendo la actualización remota desatendida.
+- **Respaldos y Archivos de Trabajo Generados en Local:**
+  - Copia de seguridad original intacta: [`google_sheet_backup_original.xlsx`](../google_sheet_backup_original.xlsx) (103.3 KB).
+  - Hoja completa 100% procesada con descripciones originales + 6 secciones complementarias: [`google_sheet_Hoja1_COMPLETA_ACTUALIZADA.xlsx`](../google_sheet_Hoja1_COMPLETA_ACTUALIZADA.xlsx) (110.1 KB).
+  - Exportación en CSV para importación directa en Google Drive: [`google_sheet_Hoja1_COMPLETA_ACTUALIZADA.csv`](../google_sheet_Hoja1_COMPLETA_ACTUALIZADA.csv).
+  - Caché local indexado: [`properties_cache.json`](../properties_cache.json).
 
-### 2.6 Estabilidad de las Conexiones y Servicios
-- **Estado Técnico:** `DeduplicationManager` con Mutex Lock en memoria (ventana de 15 min), persistencia de bloqueo humano en `handoffs.json` y reconciliación en vivo con Kommo Events API al arrancar.
-- **Estado Operativo Real:**
-  - Aislamiento total frente a caídas de IA gracias al extractor determinista y fail-closed.
-  - Tolerancia a reinicios de servidor sin pérdida del estado de bloqueo de 12 horas.
-- **Dictamen:** **Completamente operativo y verificado.**
+### 7. Resultados de las Baterías de Pruebas en Vivo (76/76 Aprobadas - 100%)
+En esta sesión se ejecutaron al 100% todas las suites sin reutilizar resultados antiguos:
 
-### 2.7 Soporte Operativo y Documentación para el Equipo
-- **Estado Técnico:** Creación de un paquete integral de 10 documentos técnicos, comerciales, operativos y de control de entrega en la carpeta [`docs/`](./).
-- **Estado Operativo Real:**
-  - La documentación cubre el 100% de la arquitectura, variables, protocolos comerciales, recuperación, demostración y el procedimiento paso a paso para el piloto comercial de 7 días.
-  - El alcance no incluye servicios de mantenimiento continuo indefinido ni jornadas de capacitación presencial no contratadas.
-- **Dictamen:** **Compromiso documental 100% cumplido con la entrega del paquete formal.**
+| Batería de Pruebas | Archivo / Comando | Pruebas Ejecutadas | Resultado | Consumo IA |
+| :--- | :--- | :---: | :---: | :---: |
+| **Regresión Global de Lógica** | `test_suite_nueva_logica.js` | 44 / 44 | **100% APROBADA** | 0 tokens (casos deterministas) |
+| **Extracción Determinista Sheets** | `test_suite_extraccion_determinista.js` | 10 / 10 | **100% APROBADA** | 0 tokens (0 llamadas IA) |
+| **Control de Calidad Conversacional** | `scripts/test_control_calidad_conversacional.js` | 10 / 10 | **100% APROBADA** | 0 tokens |
+| **Validación Comercial Staging (Fase 2)** | `scripts/execute_fase2_commercial_validation.js` | 12 / 12 | **100% APROBADA** | 0 tokens |
+| **TOTAL CONSOLIDADO** | **Todas las suites combinadas** | **76 / 76** | **100% ÉXITO** | **Sin consumo indebido** |
+
+**Hitos Funcionales Confirmados:**
+- Silencio garantizado ante saludos puros sin inmueble (`PURE_GREETING`).
+- Respuesta canónica instantánea ante link Wasi (`WASI_LINK_AVAILABLE`).
+- Extracción determinista de metraje y precio en < 5 ms con 0 tokens de IA.
+- Silencio preventivo ante datos no registrados en Google Sheets (piscina, cancha, gastos de condominio).
+- Aislamiento total de fichas al cambiar de propiedad en la conversación.
+- Mutex lock para descartar mensajes simultáneos duplicados.
+- Prevalencia absoluta del bloqueo humano de 12 horas ante intervenciones de asesores vía Web o WhatsApp.
+
+### 8. Estado de Kommo CRM
+- **Conectividad:** API de Kommo operativa y validada mediante consulta de eventos en vivo (`outgoing_chat_message`).
+- **Webhooks Globales:** Intactos y conectados al servicio de Producción.
+- **Seguridad Operativa en Staging:** `staging_test_dispatch_enabled=false`, `current_dispatches=0`. Cero mensajes reales enviados a clientes, cero modificaciones en datos de leads comerciales.
+
+### 9. Incidencias Encontradas (Causa Raíz de RESULTADO B)
+1. **Desalineación de la Base de Conocimiento en la Nube:**
+   - La hoja online en Google Drive no ha recibido la importación de las 6 secciones complementarias que el bot v5.0 requiere para contestar preguntas sobre servicios, logística, distribución, equipamiento y ubicación.
+   - Si se activara v5.0 con la hoja online actual, el bot se vería obligado a guardar silencio ante preguntas sobre estacionamiento, agua o gas en 68 propiedades, reduciendo la experiencia comercial.
+2. **Ausencia de Credenciales de Escritura en Google Drive:**
+   - El microservicio está configurado por diseño en modo de solo lectura respecto a Google Sheets. No posee Service Account de Google Cloud con permisos de edición delegada sobre el archivo de Drive.
+
+### 10. Estado de Seguridad Operativa y Credenciales
+- **Aislamiento de Staging:** Validado en código (`process.env.NODE_ENV === 'staging'`). Staging solo responde al hostname oficial `tu-techo-ideal-staging.onrender.com`.
+- **Reloj Simulado:** Completamente bloqueado en Producción (HTTP 404/401). En Staging exige la cabecera `x-staging-auth` verificada con `crypto.timingSafeEqual`.
+- **Credenciales y Secretos:** Cero tokens expuestos en repositorios, logs o informes (`[PROTEGIDO]`).
+
+### 11. Resultado de la Notificación por WhatsApp
+- **Estado:** **NO ENVIADA (INHIBIDA ESTRICTAMENTE)**.
+- **Destinatario Programado:** `+584140128826` (Robert / Dirección comercial).
+- **Texto Previsto:** `Activo`.
+- **Motivo de No Envío:** Conforme a la regla condicional innegociable de la **Sección 9**, bajo ninguna circunstancia se debe enviar el mensaje `Activo` si el servicio de Producción no ha sido efectivamente sustituido y activado. Al ejecutarse el RESULTADO B, el envío queda cancelado.
+
+### 12. Estado Final del Proyecto
+- El código fuente de **Tu Techo Ideal v5.0** se encuentra **100% terminado, auditado y aprobado** en la rama `feature/reinicio-logica-inmobiliaria`.
+- El sistema de Producción se encuentra **100% estable, protegido y en funcionamiento continuo** en su versión v4.1.
+- No se produjeron tiempos de inactividad, cortes de servicio ni incidentes con clientes reales.
+
+### 13. Inicio del Piloto Comercial de Siete Días
+- **Estado Actual:** **PENDIENTE DE ACTIVACIÓN EN PRODUCCIÓN**.
+- El cronómetro del piloto de 7 días no ha iniciado formalmente, ya que la versión desplegada en Producción continúa siendo v4.1.
+- El procedimiento completo, las métricas de control y las planillas de registro diario están redactadas y disponibles en [`docs/PROCEDIMIENTO_PILOTO_COMERCIAL_7_DIAS.md`](./PROCEDIMIENTO_PILOTO_COMERCIAL_7_DIAS.md).
 
 ---
 
-## 3. ESTADO DE LOS ENTORNOS Y CONTROL DE DESPLIEGUE
+## 3. PASOS EXACTOS PARA LA ACTIVACIÓN DEFINITIVA (ACCIÓN REQUERIDA)
 
-| Entorno | URL del Servicio | Versión Activa | Commit | Estado Operativo | Observaciones |
-| :--- | :--- | :---: | :---: | :---: | :--- |
-| **Render Staging** | `https://tu-techo-ideal-staging.onrender.com` | **v5.0** | `eb4b622` | Running (Activo) | Entorno oficial de pruebas. `OBSERVATION_MODE=true`. Despachos reales desactivados. |
-| **Render Producción** | `https://tu-techo-ideal-bot-1.onrender.com` | **v4.1** | `e4f82ff` | Running (Activo) | **Totalmente intacto.** Rama `main` sin modificar. Cero despliegues derivados de esta fase. |
+Para que el propietario del proyecto pueda activar Tu Techo Ideal v5.0 en Producción con el 100% de la base de conocimiento disponible, únicamente se requiere completar los siguientes dos pasos manuales:
 
-> [!IMPORTANT]
-> **No se ha realizado el merge de la rama `feature/reinicio-logica-inmobiliaria` hacia `main` ni se ha autorizado el despliegue a Producción.** 
-> La puesta en producción de la versión 5.0 queda como una decisión estrictamente administrativa en manos del responsable del proyecto tras revisar el presente informe y el acta de entrega.
+### Paso 1: Actualizar la Hoja Oficial en Google Drive (5 minutos)
+1. Abrir la hoja oficial en Google Drive:
+   `https://docs.google.com/spreadsheets/d/1cXZdjOck8rYUZdZUOWlhQMWxnyegipyVa081EkrRc_A/edit`
+2. Seleccionar la columna `DESCRIPCION_BREVE` (Columna D).
+3. Copiar y pegar los valores de la columna `DESCRIPCION_BREVE` desde el archivo local ya generado y verificado:
+   [`google_sheet_Hoja1_COMPLETA_ACTUALIZADA.xlsx`](../google_sheet_Hoja1_COMPLETA_ACTUALIZADA.xlsx) (o importar el archivo [`google_sheet_Hoja1_COMPLETA_ACTUALIZADA.csv`](../google_sheet_Hoja1_COMPLETA_ACTUALIZADA.csv)).
+4. Verificar que las 69 propiedades muestren al final de su texto las 6 secciones complementarias.
 
----
-
-## 4. RESULTADOS DE LAS BATERÍAS DE REGRESIÓN Y PRUEBAS
-
-- **12 / 12 Escenarios Comerciales en Vivo:** Superados en Staging (disponibilidad canónica, metraje, precio, aislamiento de fichas, silencio ante datos no existentes, respeto del bloqueo humano de 12 horas y reinicio por reintervención).
-- **10 / 10 Pruebas Unitarias Deterministas:** Superadas al 100% (exactitud en REF-012, REF-005 y gestión de ambigüedades en REF-001).
-- **44 / 44 Pruebas de Regresión Global:** Superadas al 100% en [`test_suite_nueva_logica.js`](../test_suite_nueva_logica.js).
-
----
-
-## 5. AUDITORÍA DE SEGURIDAD Y CREDENCIALES
-- Se comprobó que no existen credenciales expuestas en archivos versionados ni en el historial de Git.
-- El token de prueba `STAGING_AUTH_TOKEN` fue rotado y se encuentra aislado exclusivamente en Staging.
-- Producción rechaza cualquier llamada a rutas de prueba o reloj simulado con HTTP 404 / 401.
-- Todos los webhooks de producción operan con `Date.now()` estricto e inmutable.
-
----
-
-## 6. RECOMENDACIÓN FINAL DE CIERRE Y ENTREGA
-
-### Clasificación: **B. LISTO PARA ENTREGA CON OBSERVACIONES MENORES**
-
-**Conclusión:** El desarrollo técnico de **Tu Techo Ideal v5.0** está formalmente terminado y validado. Cumple rigurosamente con los criterios de estabilidad, cero alucinación, respeto estricto a los asesores humanos y optimización de costos.
-
-La clasificación **B** refleja con total transparencia que, para la operación comercial en vivo al 100%, corresponden al cliente las siguientes acciones operativas:
-1. Completar la vinculación de canales de redes sociales (Instagram, TikTok) en Kommo CRM.
-2. Definir si se asignará saldo a OpenRouter para preguntas abiertas complejas o si se mantendrá la operación puramente determinista.
-3. Autorizar el pase a producción (merge hacia `main`) en Render.
-
+### Paso 2: Autorizar el Merge a Main y Despliegue en Render (1 comando)
+Una vez que la hoja en Google Drive contenga los datos actualizados, se podrá ejecutar de forma inmediata y 100% segura:
+1. Merge de `feature/reinicio-logica-inmobiliaria` a `main`.
+2. Push a GitHub (`git push origin main`), lo que activará automáticamente el despliegue de v5.0 en Render Producción.
+3. Desactivación de `OBSERVATION_MODE=false` en el panel de Render Producción.
+4. Envío del WhatsApp de confirmación `Activo` a `+584140128826`.
