@@ -15,7 +15,7 @@ const axios = require('axios');
 require('dotenv').config();
 
 const BASE_URL = 'https://tu-techo-ideal-staging.onrender.com';
-const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN || process.env.STAGING_AUDIT_SECRET || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
+const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN;
 
 const TARGET_LEAD_ID = '25092108';
 const TARGET_TALK_ID = '1149';

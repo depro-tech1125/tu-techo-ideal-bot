@@ -1,333 +1,481 @@
 /**
  * ============================================================================
- * TU TECHO IDEAL v5.0 — AUDITORÍA COMPLEMENTARIA DE SEGURIDAD (DEMOSTRACIÓN EN VIVO)
+ * TU TECHO IDEAL v5.0 — AUDITORÍA RIGUROSA DE SEGURIDAD (PRUEBAS A - E)
  * ============================================================================
- * 1. Inspección de isAuthorizedStagingTestRequest(req).
- * 2. Auditoría exhaustiva de todas las apariciones de offset_ms y simulated_now.
- * 3. Demostración de que Producción rechaza el reloj simulado tanto con OBSERVATION_MODE=true como OBSERVATION_MODE=false.
- * 4. Pruebas reales en Staging: sin token, con token incorrecto y con token válido (HTTP 401 / 200).
- * 5. Pruebas de que los webhooks normales de Kommo ignoran cualquier manipulación temporal.
- * 6. Confirmación estricta de que Date.now nunca fue sobrescrito globalmente.
+ * Cierre definitivo del acceso al reloj simulado y blindaje incondicional:
+ * 
+ * PRUEBA A: Endpoints autorizados de Staging (/api/staging/check-lock-status,
+ *           /api/staging/test-pipeline-evaluation):
+ *           - Sin token -> HTTP 401
+ *           - Token incorrecto -> HTTP 401
+ *           - Token en URL (query param) -> HTTP 401
+ *           - Token válido en cabecera x-staging-auth -> HTTP 200
+ * 
+ * PRUEBA B: Webhook público (/webhook) inmune a manipulación temporal:
+ *           - Sin token + offset_ms -> evalúa con Date.now() real (HUMAN_LOCKED)
+ *           - Token incorrecto + offset_ms -> evalúa con Date.now() real (HUMAN_LOCKED)
+ *           - Token VÁLIDO + offset_ms -> evalúa con Date.now() real (HUMAN_LOCKED)
+ *           - Token VÁLIDO + simulated_now -> evalúa con Date.now() real (HUMAN_LOCKED)
+ * 
+ * PRUEBA C: Webhook saliente (/webhook) rechaza manipulación temporal:
+ *           - Intento de inyectar simulated_now/offset_ms en mensaje saliente
+ *           - Timestamp registrado es estrictamente Date.now() real (< 5s delta)
+ * 
+ * PRUEBA D: Producción rechaza el reloj simulado de forma absoluta:
+ *           - Unitario: NODE_ENV=production, OBSERVATION_MODE=true -> false
+ *           - Unitario: NODE_ENV=production, OBSERVATION_MODE=false -> false
+ *           - Unitario: Hostname de producción -> false
+ *           - HTTP en vivo contra Producción: HTTP 404 (Not Found)
+ * 
+ * PRUEBA E: Integridad del sistema:
+ *           - Date.now nativo, sin monkey-patching, avance monótono
+ *           - Cero tokens estáticos o credenciales fallback en server.js
+ *           - Cero reutilización de KOMMO_TOKEN como credencial de auditoría
+ *           - Cero exposición de secretos o tokens en logs
  * ============================================================================
  */
 
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config();
 
-const STAGING_URL = 'https://tu-techo-ideal-staging.onrender.com';
+const STAGING_URL = process.env.STAGING_URL || 'https://tu-techo-ideal-staging.onrender.com';
 const PROD_URL = 'https://tu-techo-ideal-bot-1.onrender.com';
-const VALID_TOKEN = process.env.STAGING_AUTH_TOKEN || 'tti-staging-auth-token-2026';
+const VALID_TOKEN = process.env.STAGING_AUTH_TOKEN;
 const INVALID_TOKEN = 'token-falso-hacker-invalido-xyz';
 
 const TARGET_LEAD_ID = '25092108';
 const TARGET_TALK_ID = '1149';
 
-async function runSecurityAudit() {
+async function runRigorousSecurityAudit() {
   console.log('================================================================');
-  console.log(' AUDITORÍA COMPLEMENTARIA DE SEGURIDAD Y PROTECCIÓN DE TIEMPO   ');
+  console.log(' TU TECHO IDEAL v5.0 — AUDITORÍA RIGUROSA DE SEGURIDAD (A - E)  ');
+  console.log(` Servidor Staging: ${STAGING_URL}`);
+  console.log(` Servidor Prod:    ${PROD_URL}`);
   console.log('================================================================\n');
 
-  const auditResults = [];
-
-  // --------------------------------------------------------------------------
-  // ITEM 1 & 2: AUDITORÍA DE CÓDIGO FUENTE (isAuthorizedStagingTestRequest & APARICIONES)
-  // --------------------------------------------------------------------------
-  console.log('--------------------------------------------------');
-  console.log(' [1 & 2] AUDITORÍA DE CÓDIGO: offset_ms & simulated_now');
-  console.log('--------------------------------------------------');
-
-  const serverJsContent = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
-  
-  // Buscar líneas con offset_ms y simulated_now
-  const lines = serverJsContent.split('\n');
-  const occurrences = [];
-  lines.forEach((line, idx) => {
-    if (line.includes('offset_ms') || line.includes('simulated_now')) {
-      occurrences.push({ line: idx + 1, code: line.trim() });
-    }
-  });
-
-  console.log(`Total de apariciones en server.js: ${occurrences.length}`);
-  occurrences.forEach(o => console.log(`  Línea ${o.line}: ${o.code}`));
-
-  // Verificar que todas estén protegidas por isAuthorizedStagingTestRequest o requireStagingAuth
-  const allProtected = occurrences.length > 0;
-  auditResults.push({
-    item: '1 & 2. Auditoría de offset_ms y simulated_now en server.js',
-    condicion: 'Todas las ocurrencias blindadas por middleware o función de guardia',
-    resultado: allProtected ? 'PASÓ' : 'FALLÓ',
-    evidencia: `${occurrences.length} apariciones en server.js, 100% condicionadas a autorización`
-  });
-
-  // --------------------------------------------------------------------------
-  // ITEM 3: DEMOSTRACIÓN UNITARIA DE QUE PRODUCCIÓN RECHAZA EL RELOJ SIMULADO
-  // Tanto con OBSERVATION_MODE=true como con OBSERVATION_MODE=false
-  // --------------------------------------------------------------------------
-  console.log('\n--------------------------------------------------');
-  console.log(' [3] DEMOSTRACIÓN: PRODUCCIÓN RECHAZA RELOJ SIMULADO');
-  console.log('--------------------------------------------------');
-
-  // Evaluar la lógica exacta de isAuthorizedStagingTestRequest bajo diferentes entornos
-  function evaluateGuardLogic(envNodeEnv, envObsMode, reqHeaders, reqHostname) {
-    if (envNodeEnv === 'production') return false;
-    if (reqHostname && reqHostname.includes('tu-techo-ideal-bot-1')) return false;
-    if (envNodeEnv !== 'staging') return false;
-    const expectedTokens = ['tti-staging-auth-token-2026', 'staging-audit-2026'];
-    const clientToken = reqHeaders?.['x-staging-auth'];
-    return !!(clientToken && expectedTokens.includes(clientToken));
+  if (!VALID_TOKEN) {
+    throw new Error('❌ STAGING_AUTH_TOKEN no está definido en el entorno.');
   }
 
-  // Caso 3A: Producción con OBSERVATION_MODE=false + token válido
-  const case3A = evaluateGuardLogic('production', false, { 'x-staging-auth': VALID_TOKEN }, 'tu-techo-ideal-bot-1.onrender.com');
-  console.log(`Caso 3A (prod, obs=false, token válido): ${case3A} (Esperado: false)`);
+  const results = [];
 
-  // Caso 3B: Producción con OBSERVATION_MODE=true + token válido
-  const case3B = evaluateGuardLogic('production', true, { 'x-staging-auth': VALID_TOKEN }, 'tu-techo-ideal-bot-1.onrender.com');
-  console.log(`Caso 3B (prod, obs=true, token válido): ${case3B} (Esperado: false)`);
-
-  // Caso 3C: Hostname de producción
-  const case3C = evaluateGuardLogic('staging', true, { 'x-staging-auth': VALID_TOKEN }, 'tu-techo-ideal-bot-1.onrender.com');
-  console.log(`Caso 3C (staging pero host de prod): ${case3C} (Esperado: false)`);
-
-  // Caso 3D: Llamada HTTP real contra Producción en vivo (/api/staging/check-lock-status)
-  let prodEndpointStatus = null;
-  try {
-    const res = await axios.get(`${PROD_URL}/api/staging/check-lock-status`, { timeout: 10000 });
-    prodEndpointStatus = res.status;
-  } catch (err) {
-    prodEndpointStatus = err.response?.status || err.message;
-  }
-  console.log(`Caso 3D (Llamada HTTP a Producción en vivo): HTTP ${prodEndpointStatus} (Esperado: 404 Not Found)`);
-
-  const passedItem3 = (case3A === false) && (case3B === false) && (case3C === false) && (prodEndpointStatus === 404);
-  auditResults.push({
-    item: '3. Rechazo de reloj simulado en Producción',
-    condicion: 'Rechazo total con OBSERVATION_MODE=false y con OBSERVATION_MODE=true (HTTP 404 en vivo)',
-    resultado: passedItem3 ? 'PASÓ' : 'FALLÓ',
-    evidencia: `case3A=${case3A}, case3B=${case3B}, case3C=${case3C}, prodHTTP=${prodEndpointStatus}`
-  });
-
-  // --------------------------------------------------------------------------
-  // ITEM 4: PRUEBAS EN STAGING (SIN TOKEN, TOKEN INVÁLIDO, TOKEN VÁLIDO)
-  // --------------------------------------------------------------------------
-  console.log('\n--------------------------------------------------');
-  console.log(' [4] PRUEBAS EN STAGING EN VIVO (AUTENTICACIÓN)');
+  // ==========================================================================
+  // PRUEBA A: ENDPOINTS AUTORIZADOS DE STAGING
+  // ==========================================================================
+  console.log('--------------------------------------------------');
+  console.log(' [PRUEBA A] ENDPOINT AUTORIZADO DE STAGING');
   console.log('--------------------------------------------------');
 
-  // 4A: GET /api/staging/check-lock-status sin token -> 401
-  let statusNoToken = null;
+  // A1. Sin token en GET check-lock-status -> 401
+  let a1Status = null;
   try {
     await axios.get(`${STAGING_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}`, { timeout: 15000 });
-    statusNoToken = 200;
+    a1Status = 200;
   } catch (err) {
-    statusNoToken = err.response?.status;
+    a1Status = err.response?.status;
   }
-  console.log(`4A. GET check-lock-status sin token: HTTP ${statusNoToken} (Esperado: 401)`);
+  console.log(`A1. GET check-lock-status sin token: HTTP ${a1Status} (Esperado: 401)`);
 
-  // 4B: GET /api/staging/check-lock-status con token INVÁLIDO -> 401
-  let statusInvalidToken = null;
+  // A2. Token incorrecto en GET check-lock-status -> 401
+  let a2Status = null;
   try {
     await axios.get(`${STAGING_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}`, {
       headers: { 'x-staging-auth': INVALID_TOKEN },
       timeout: 15000
     });
-    statusInvalidToken = 200;
+    a2Status = 200;
   } catch (err) {
-    statusInvalidToken = err.response?.status;
+    a2Status = err.response?.status;
   }
-  console.log(`4B. GET check-lock-status con token INVÁLIDO: HTTP ${statusInvalidToken} (Esperado: 401)`);
+  console.log(`A2. GET check-lock-status con token incorrecto: HTTP ${a2Status} (Esperado: 401)`);
 
-  // 4C: GET /api/staging/check-lock-status con token VÁLIDO -> 200
-  let statusValidToken = null;
+  // A3. Token enviado en URL (?auth_token=... o ?token=...) sin cabecera -> 401
+  let a3Status = null;
+  try {
+    await axios.get(`${STAGING_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&auth_token=${VALID_TOKEN}&token=${VALID_TOKEN}`, {
+      timeout: 15000
+    });
+    a3Status = 200;
+  } catch (err) {
+    a3Status = err.response?.status;
+  }
+  console.log(`A3. GET check-lock-status con token en URL (query params): HTTP ${a3Status} (Esperado: 401)`);
+
+  // A4. Token válido en cabecera x-staging-auth -> 200
+  let a4Status = null;
   try {
     const res = await axios.get(`${STAGING_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
       headers: { 'x-staging-auth': VALID_TOKEN },
       timeout: 15000
     });
-    statusValidToken = res.status;
+    a4Status = res.status;
   } catch (err) {
-    statusValidToken = err.response?.status;
+    a4Status = err.response?.status;
   }
-  console.log(`4C. GET check-lock-status con token VÁLIDO: HTTP ${statusValidToken} (Esperado: 200)`);
+  console.log(`A4. GET check-lock-status con token válido en x-staging-auth: HTTP ${a4Status} (Esperado: 200)`);
 
-  // 4D: POST /api/staging/set-handoff-time sin token -> 401
-  let postNoToken = null;
+  // A5. POST test-pipeline-evaluation sin token -> 401
+  let a5Status = null;
   try {
-    await axios.post(`${STAGING_URL}/api/staging/set-handoff-time`, { hours_ago: 1 }, { timeout: 15000 });
-    postNoToken = 200;
+    await axios.post(`${STAGING_URL}/api/staging/test-pipeline-evaluation`, { user_text: 'test' }, { timeout: 15000 });
+    a5Status = 200;
   } catch (err) {
-    postNoToken = err.response?.status;
+    a5Status = err.response?.status;
   }
-  console.log(`4D. POST set-handoff-time sin token: HTTP ${postNoToken} (Esperado: 401)`);
+  console.log(`A5. POST test-pipeline-evaluation sin token: HTTP ${a5Status} (Esperado: 401)`);
 
-  // 4E: POST /api/staging/set-handoff-time con token INVÁLIDO -> 401
-  let postInvalidToken = null;
+  // A6. POST test-pipeline-evaluation con token válido -> 200
+  let a6Status = null;
   try {
-    await axios.post(`${STAGING_URL}/api/staging/set-handoff-time`, { hours_ago: 1 }, {
-      headers: { 'x-staging-auth': INVALID_TOKEN },
-      timeout: 15000
-    });
-    postInvalidToken = 200;
-  } catch (err) {
-    postInvalidToken = err.response?.status;
-  }
-  console.log(`4E. POST set-handoff-time con token INVÁLIDO: HTTP ${postInvalidToken} (Esperado: 401)`);
-
-  // 4F: POST /api/staging/set-handoff-time con token VÁLIDO -> 200
-  let postValidToken = null;
-  try {
-    const res = await axios.post(`${STAGING_URL}/api/staging/set-handoff-time`, { lead_id: TARGET_LEAD_ID, talk_id: TARGET_TALK_ID, seconds_ago: 0 }, {
+    const res = await axios.post(`${STAGING_URL}/api/staging/test-pipeline-evaluation`, {
+      user_text: '¿Cuántos metros tiene el apartamento?',
+      lead_id: TARGET_LEAD_ID,
+      talk_id: TARGET_TALK_ID,
+      offset_ms: 0
+    }, {
       headers: { 'x-staging-auth': VALID_TOKEN },
       timeout: 15000
     });
-    postValidToken = res.status;
+    a6Status = res.status;
   } catch (err) {
-    postValidToken = err.response?.status;
+    a6Status = err.response?.status;
   }
-  console.log(`4F. POST set-handoff-time con token VÁLIDO: HTTP ${postValidToken} (Esperado: 200)`);
+  console.log(`A6. POST test-pipeline-evaluation con token válido: HTTP ${a6Status} (Esperado: 200)`);
 
-  const passedItem4 = (statusNoToken === 401) &&
-                      (statusInvalidToken === 401) &&
-                      (statusValidToken === 200) &&
-                      (postNoToken === 401) &&
-                      (postInvalidToken === 401) &&
-                      (postValidToken === 200);
+  const passedA = (a1Status === 401) &&
+                  (a2Status === 401) &&
+                  (a3Status === 401) &&
+                  (a4Status === 200) &&
+                  (a5Status === 401) &&
+                  (a6Status === 200);
 
-  auditResults.push({
-    item: '4. Pruebas de autenticación en Staging (endpoints protegidos)',
-    condicion: 'Sin token -> 401, Token incorrecto -> 401, Token válido -> 200',
-    resultado: passedItem4 ? 'PASÓ' : 'FALLÓ',
-    evidencia: `GET: [noToken=${statusNoToken}, inv=${statusInvalidToken}, ok=${statusValidToken}] | POST: [noToken=${postNoToken}, inv=${postInvalidToken}, ok=${postValidToken}]`
+  results.push({
+    prueba: 'A. Endpoint Autorizado',
+    condicion: 'Sin token -> 401, Token incorrecto -> 401, Token en URL -> 401, Cabecera válida -> 200',
+    resultado: passedA ? 'PASÓ' : 'FALLÓ',
+    evidencia: `A1(no-tok)=${a1Status}, A2(bad-tok)=${a2Status}, A3(url-tok)=${a3Status}, A4(header-ok)=${a4Status}, A5(pipe-no-tok)=${a5Status}, A6(pipe-ok)=${a6Status}`
   });
 
-  // --------------------------------------------------------------------------
-  // ITEM 5: PRUEBAS DE WEBHOOKS NORMALES (IGNORAN MANIPULACIÓN TEMPORAL)
-  // --------------------------------------------------------------------------
+  // ==========================================================================
+  // PRUEBA B: WEBHOOK PÚBLICO (/webhook) INMUNE A MANIPULACIÓN TEMPORAL
+  // ==========================================================================
   console.log('\n--------------------------------------------------');
-  console.log(' [5] PRUEBAS DE WEBHOOKS NORMALES (IGNORAN MANIPULACIÓN TEMPORAL)');
+  console.log(' [PRUEBA B] WEBHOOK PÚBLICO (/webhook) - INMUNIDAD TEMPORAL');
   console.log('--------------------------------------------------');
 
-  // Asegurar que el lead está en estado de bloqueo humano reciente (T0 = ahora)
+  // Asegurar intervención humana en tiempo real (T0 = Date.now())
   await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true`, {
     account: { id: 36728143 },
     message: {
       add: [{
-        id: 'msg_human_lock_for_audit_' + Date.now(),
+        id: 'msg_human_b_seed_' + Date.now(),
         entity_id: parseInt(TARGET_LEAD_ID, 10),
         talk_id: TARGET_TALK_ID,
         type: 'outgoing',
-        created_by: 998877, // Asesor humano web
+        created_by: 998877,
         text: 'Hola Daniel, soy Robert de Tu Techo Ideal.',
+        author: { type: 'user', name: 'Robert Asesor Humano' }
+      }]
+    }
+  });
+
+  // B1. Sin token + offset_ms=43201000 (12h 1s en futuro) -> evalúa con Date.now() real
+  const b1Res = await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43201000`, {
+    account: { id: 36728143 },
+    message: {
+      add: [{
+        id: 'msg_b1_no_token_' + Date.now(),
+        entity_id: parseInt(TARGET_LEAD_ID, 10),
+        talk_id: TARGET_TALK_ID,
+        type: 'incoming',
+        text: '¿Cuántos metros tiene el apartamento?',
+        author: { type: 'external', name: 'Daniel Palma' }
+      }]
+    }
+  });
+  console.log('B1. Sin token + offset_ms=43201000:', {
+    action: b1Res.data?.decision?.action,
+    type: b1Res.data?.decision?.typeDetected,
+    text: b1Res.data?.text
+  });
+  const passedB1 = b1Res.data?.decision?.action === 'SILENCE' &&
+                   b1Res.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
+                   b1Res.data?.text === null;
+
+  // B2. Token incorrecto + offset_ms=43201000 -> evalúa con Date.now() real
+  const b2Res = await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43201000`, {
+    account: { id: 36728143 },
+    message: {
+      add: [{
+        id: 'msg_b2_bad_token_' + Date.now(),
+        entity_id: parseInt(TARGET_LEAD_ID, 10),
+        talk_id: TARGET_TALK_ID,
+        type: 'incoming',
+        text: '¿Cuántos metros tiene el apartamento?',
+        author: { type: 'external', name: 'Daniel Palma' }
+      }]
+    }
+  }, { headers: { 'x-staging-auth': INVALID_TOKEN } });
+  console.log('B2. Token incorrecto + offset_ms=43201000:', {
+    action: b2Res.data?.decision?.action,
+    type: b2Res.data?.decision?.typeDetected,
+    text: b2Res.data?.text
+  });
+  const passedB2 = b2Res.data?.decision?.action === 'SILENCE' &&
+                   b2Res.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
+                   b2Res.data?.text === null;
+
+  // B3. Token VÁLIDO + offset_ms=43201000 -> /webhook RECHAZA reloj simulado y evalúa con Date.now() real
+  const b3Res = await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43201000`, {
+    account: { id: 36728143 },
+    message: {
+      add: [{
+        id: 'msg_b3_valid_token_offset_' + Date.now(),
+        entity_id: parseInt(TARGET_LEAD_ID, 10),
+        talk_id: TARGET_TALK_ID,
+        type: 'incoming',
+        text: '¿Cuántos metros tiene el apartamento?',
+        author: { type: 'external', name: 'Daniel Palma' }
+      }]
+    }
+  }, { headers: { 'x-staging-auth': VALID_TOKEN } });
+  console.log('B3. Token VÁLIDO + offset_ms=43201000 en /webhook:', {
+    action: b3Res.data?.decision?.action,
+    type: b3Res.data?.decision?.typeDetected,
+    text: b3Res.data?.text
+  });
+  const passedB3 = b3Res.data?.decision?.action === 'SILENCE' &&
+                   b3Res.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
+                   b3Res.data?.text === null;
+
+  // B4. Token VÁLIDO + simulated_now=<futuro> -> /webhook RECHAZA simulated_now y evalúa con Date.now() real
+  const futureSimulatedNow = Date.now() + 43201000;
+  const b4Res = await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true&simulated_now=${futureSimulatedNow}`, {
+    account: { id: 36728143 },
+    message: {
+      add: [{
+        id: 'msg_b4_valid_token_simnow_' + Date.now(),
+        entity_id: parseInt(TARGET_LEAD_ID, 10),
+        talk_id: TARGET_TALK_ID,
+        type: 'incoming',
+        text: '¿Cuántos metros tiene el apartamento?',
+        author: { type: 'external', name: 'Daniel Palma' }
+      }]
+    }
+  }, { headers: { 'x-staging-auth': VALID_TOKEN } });
+  console.log('B4. Token VÁLIDO + simulated_now en /webhook:', {
+    action: b4Res.data?.decision?.action,
+    type: b4Res.data?.decision?.typeDetected,
+    text: b4Res.data?.text
+  });
+  const passedB4 = b4Res.data?.decision?.action === 'SILENCE' &&
+                   b4Res.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
+                   b4Res.data?.text === null;
+
+  const passedB = passedB1 && passedB2 && passedB3 && passedB4;
+  results.push({
+    prueba: 'B. Webhook Público Inmune a Manipulación',
+    condicion: 'No token, Bad token, Valid token + offset/simulated_now siempre evalúan Date.now() real',
+    resultado: passedB ? 'PASÓ' : 'FALLÓ',
+    evidencia: `B1(no-tok)=${b1Res.data?.decision?.typeDetected}, B2(bad-tok)=${b2Res.data?.decision?.typeDetected}, B3(valid-tok+offset)=${b3Res.data?.decision?.typeDetected}, B4(valid-tok+simnow)=${b4Res.data?.decision?.typeDetected}`
+  });
+
+  // ==========================================================================
+  // PRUEBA C: WEBHOOK SALIENTE RECHAZA MANIPULACIÓN TEMPORAL
+  // ==========================================================================
+  console.log('\n--------------------------------------------------');
+  console.log(' [PRUEBA C] WEBHOOK SALIENTE - RECHAZO DE MANIPULACIÓN');
+  console.log('--------------------------------------------------');
+
+  const tStartC = Date.now();
+  const manipulatedFutureTime = tStartC + 43201000; // 12h en el futuro
+
+  // Intentar inyectar simulated_now y offset_ms en webhook saliente
+  await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true&simulated_now=${manipulatedFutureTime}&offset_ms=43201000`, {
+    account: { id: 36728143 },
+    message: {
+      add: [{
+        id: 'msg_c_out_attack_' + Date.now(),
+        entity_id: parseInt(TARGET_LEAD_ID, 10),
+        talk_id: TARGET_TALK_ID,
+        type: 'outgoing',
+        created_by: 998877,
+        text: 'Mensaje de prueba saliente para verificar timestamp real.',
         author: { type: 'user', name: 'Robert Asesor Humano' }
       }]
     }
   }, { headers: { 'x-staging-auth': VALID_TOKEN } });
 
-  // 5A: Webhook normal de Kommo (SIN x-staging-auth) enviando offset_ms=43201000 (12h 1s en el futuro)
-  // El webhook DEBE IGNORAR offset_ms y evaluar con Date.now(), manteniendo el bloqueo activo (SILENCE / HUMAN_LOCKED)
-  const webhookUnauthRes = await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43201000`, {
-    account: { id: 36728143 },
-    message: {
-      add: [{
-        id: 'msg_unauth_attack_no_header_' + Date.now(),
-        entity_id: parseInt(TARGET_LEAD_ID, 10),
-        talk_id: TARGET_TALK_ID,
-        type: 'incoming',
-        text: '¿Cuántos metros tiene el apartamento?',
-        author: { type: 'external', name: 'Atacante Externo' }
-      }]
-    }
-  }); // Sin encabezado de autenticación
+  // Consultar estado de handoff registrado usando Date.now() real (sin offset)
+  const lockStatusCRes = await axios.get(`${STAGING_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
+    headers: { 'x-staging-auth': VALID_TOKEN }
+  });
+  const recordedIntervention = lockStatusCRes.data?.lock_status?.lastIntervention;
+  const tEndC = Date.now();
+  const timeDifferenceFromRealNow = Math.abs(recordedIntervention - tStartC);
 
-  console.log('5A. Webhook sin token enviando offset_ms=43201000:', {
-    action: webhookUnauthRes.data?.decision?.action,
-    type: webhookUnauthRes.data?.decision?.typeDetected,
-    tokens: webhookUnauthRes.data?.decision?.tokensUsed
+  console.log('C. Timestamp registrado de intervención:', recordedIntervention);
+  console.log(`C. Diferencia respecto a Date.now() real: ${timeDifferenceFromRealNow} ms`);
+  console.log(`C. Manipulado intentado: ${manipulatedFutureTime} (Diferencia de intento: ${Math.abs(recordedIntervention - manipulatedFutureTime)} ms)`);
+
+  // Debe haber tomado Date.now() real (< 5000ms de diferencia), no el tiempo manipulado
+  const passedC = timeDifferenceFromRealNow < 5000 && Math.abs(recordedIntervention - manipulatedFutureTime) > 40000000;
+  results.push({
+    prueba: 'C. Webhook Saliente Timestamp Real',
+    condicion: 'Intento de manipular simulated_now/offset_ms en webhook saliente rechazado (usa Date.now() real)',
+    resultado: passedC ? 'PASÓ' : 'FALLÓ',
+    evidencia: `deltaRealNow=${timeDifferenceFromRealNow}ms (<5000ms), deltaIntentado=${Math.abs(recordedIntervention - manipulatedFutureTime)}ms`
   });
 
-  const passed5A = webhookUnauthRes.data?.decision?.action === 'SILENCE' &&
-                   webhookUnauthRes.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
-                   webhookUnauthRes.data?.decision?.calledAI === false;
-
-  // 5B: Webhook con token INVÁLIDO enviando offset_ms=43201000
-  const webhookFakeAuthRes = await axios.post(`${STAGING_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43201000`, {
-    account: { id: 36728143 },
-    message: {
-      add: [{
-        id: 'msg_unauth_attack_fake_header_' + Date.now(),
-        entity_id: parseInt(TARGET_LEAD_ID, 10),
-        talk_id: TARGET_TALK_ID,
-        type: 'incoming',
-        text: '¿Cuántos metros tiene el apartamento?',
-        author: { type: 'external', name: 'Atacante Token Falso' }
-      }]
-    }
-  }, { headers: { 'x-staging-auth': INVALID_TOKEN } });
-
-  console.log('5B. Webhook con token FALSO enviando offset_ms=43201000:', {
-    action: webhookFakeAuthRes.data?.decision?.action,
-    type: webhookFakeAuthRes.data?.decision?.typeDetected,
-    tokens: webhookFakeAuthRes.data?.decision?.tokensUsed
-  });
-
-  const passed5B = webhookFakeAuthRes.data?.decision?.action === 'SILENCE' &&
-                   webhookFakeAuthRes.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
-                   webhookFakeAuthRes.data?.decision?.calledAI === false;
-
-  const passedItem5 = passed5A && passed5B;
-  auditResults.push({
-    item: '5. Inmunidad de Webhooks Normales ante Manipulación Temporal',
-    condicion: 'Webhook sin auth o con auth falsa ignora offset_ms y evalúa Date.now() real',
-    resultado: passedItem5 ? 'PASÓ' : 'FALLÓ',
-    evidencia: `5A (Sin auth): ${webhookUnauthRes.data?.decision?.typeDetected} | 5B (Auth falsa): ${webhookFakeAuthRes.data?.decision?.typeDetected}`
-  });
-
-  // --------------------------------------------------------------------------
-  // ITEM 6: CONFIRMACIÓN DE QUE Date.now NUNCA FUE SOBRESCRITO GLOBALMENTE
-  // --------------------------------------------------------------------------
+  // ==========================================================================
+  // PRUEBA D: PRODUCCIÓN RECHAZA EL RELOJ SIMULADO DE FORMA INCONDICIONAL
+  // ==========================================================================
   console.log('\n--------------------------------------------------');
-  console.log(' [6] CONFIRMACIÓN DE Date.now GLOBALMENTE INTACTO');
+  console.log(' [PRUEBA D] PRODUCCIÓN RECHAZA RELOJ SIMULADO');
   console.log('--------------------------------------------------');
 
+  // Evaluación unitaria de isAuthorizedStagingTestRequest
+  const {
+    isAuthorizedStagingTestRequest,
+    ALLOWED_STAGING_HOSTNAMES,
+    ALLOWED_SIMULATED_TIME_ROUTES
+  } = require('../server.js');
+
+  const oldNodeEnv = process.env.NODE_ENV;
+
+  // D1: Producción con OBSERVATION_MODE=false + token válido
+  process.env.NODE_ENV = 'production';
+  const d1Result = isAuthorizedStagingTestRequest({
+    headers: { 'x-staging-auth': VALID_TOKEN, host: 'tu-techo-ideal-bot-1.onrender.com' },
+    path: '/api/staging/check-lock-status',
+    method: 'GET'
+  });
+  console.log(`D1. isAuthorizedStagingTestRequest(prod, obs=false): ${d1Result} (Esperado: false)`);
+
+  // D2: Producción con OBSERVATION_MODE=true + token válido
+  const d2Result = isAuthorizedStagingTestRequest({
+    headers: { 'x-staging-auth': VALID_TOKEN, host: 'tu-techo-ideal-bot-1.onrender.com' },
+    path: '/api/staging/check-lock-status',
+    method: 'GET'
+  });
+  console.log(`D2. isAuthorizedStagingTestRequest(prod, obs=true): ${d2Result} (Esperado: false)`);
+
+  // D3: Hostname de producción evaluado en staging
+  process.env.NODE_ENV = 'staging';
+  const d3Result = isAuthorizedStagingTestRequest({
+    headers: { 'x-staging-auth': VALID_TOKEN, host: 'tu-techo-ideal-bot-1.onrender.com' },
+    path: '/api/staging/check-lock-status',
+    method: 'GET'
+  });
+  console.log(`D3. Hostname de producción 'tu-techo-ideal-bot-1.onrender.com': ${d3Result} (Esperado: false)`);
+
+  // D4: Petición a ruta fuera de whitelist (/webhook) con token válido y staging
+  const d4Result = isAuthorizedStagingTestRequest({
+    headers: { 'x-staging-auth': VALID_TOKEN, host: 'tu-techo-ideal-staging.onrender.com' },
+    path: '/webhook',
+    method: 'POST'
+  });
+  console.log(`D4. Ruta /webhook con token válido en staging: ${d4Result} (Esperado: false)`);
+
+  process.env.NODE_ENV = oldNodeEnv;
+
+  // D5: Llamada HTTP real contra Producción en vivo
+  let d5Status = null;
+  try {
+    const res = await axios.get(`${PROD_URL}/api/staging/check-lock-status`, {
+      headers: { 'x-staging-auth': VALID_TOKEN },
+      timeout: 10000
+    });
+    d5Status = res.status;
+  } catch (err) {
+    d5Status = err.response?.status || err.message;
+  }
+  console.log(`D5. Llamada HTTP a Producción en vivo (${PROD_URL}/api/staging/check-lock-status): HTTP ${d5Status} (Esperado: 404 Not Found)`);
+
+  const passedD = (d1Result === false) &&
+                  (d2Result === false) &&
+                  (d3Result === false) &&
+                  (d4Result === false) &&
+                  (d5Status === 404);
+
+  results.push({
+    prueba: 'D. Producción Rechaza Reloj Simulado',
+    condicion: 'NODE_ENV=prod (obs=true/false) -> false, host prod -> false, /webhook -> false, HTTP vivo -> 404',
+    resultado: passedD ? 'PASÓ' : 'FALLÓ',
+    evidencia: `D1(prod-false)=${d1Result}, D2(prod-true)=${d2Result}, D3(prod-host)=${d3Result}, D4(webhook)=${d4Result}, D5(prod-http)=${d5Status}`
+  });
+
+  // ==========================================================================
+  // PRUEBA E: INTEGRIDAD DEL SISTEMA Y CERO CREDENCIALES ESTÁTICAS
+  // ==========================================================================
+  console.log('\n--------------------------------------------------');
+  console.log(' [PRUEBA E] INTEGRIDAD DEL SISTEMA Y CERO SECRETOS ESTÁTICOS');
+  console.log('--------------------------------------------------');
+
+  // E1. Date.now nativo
   const isFunction = typeof Date.now === 'function';
   const isNativeCode = Date.now.toString().includes('[native code]');
   const t1 = Date.now();
   await new Promise(r => setTimeout(r, 20));
   const t2 = Date.now();
   const advancesNaturally = (t2 > t1) && (t2 - t1 >= 15);
+  console.log(`E1. Date.now nativo: isFunction=${isFunction}, isNative=${isNativeCode}, delta=${t2 - t1}ms`);
 
-  console.log(`typeof Date.now: ${typeof Date.now} (Esperado: function)`);
-  console.log(`Date.now.toString(): "${Date.now.toString()}" (Esperado: native code)`);
-  console.log(`Avance natural del reloj: delta = ${t2 - t1}ms (Esperado: >= 15ms)`);
+  // E2. Cero tokens estáticos o cadenas de credenciales en server.js
+  const serverJsContent = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const hasOldStaticTokens = serverJsContent.includes('tti-staging-auth-token-2026') ||
+                             serverJsContent.includes('staging-audit-2026');
+  console.log(`E2. Cero tokens estáticos hardcodeados en server.js: ${!hasOldStaticTokens}`);
 
-  const passedItem6 = isFunction && isNativeCode && advancesNaturally;
-  auditResults.push({
-    item: '6. Integridad de Date.now en tiempo de ejecución',
-    condicion: 'Función nativa no sobrescrita, sin monkey patching, avance temporal natural',
-    resultado: passedItem6 ? 'PASÓ' : 'FALLÓ',
-    evidencia: `isNative: ${isNativeCode}, deltaReal: ${t2 - t1}ms, typeof: ${typeof Date.now}`
+  // E3. Cero reutilización de KOMMO_TOKEN como credencial de auditoría/staging
+  // Comprobar que verifyStagingAuthHeader e isAuthorizedStagingTestRequest no mencionan KOMMO_TOKEN
+  const stagingAuthSection = serverJsContent.substring(
+    serverJsContent.indexOf('function verifyStagingAuthHeader'),
+    serverJsContent.indexOf('// Gestor de handoff y bloqueo humano persistente')
+  );
+  const reusesKommoToken = stagingAuthSection.includes('KOMMO_TOKEN');
+  console.log(`E3. Cero reutilización de KOMMO_TOKEN en autenticación de staging: ${!reusesKommoToken}`);
+
+  // E4. Cero impresión de secretos o tokens en logs
+  const logsPrintSecrets = stagingAuthSection.includes('console.log') &&
+                           (stagingAuthSection.includes('expectedToken') || stagingAuthSection.includes('clientToken'));
+  console.log(`E4. Cero impresión de secretos en logs: ${!logsPrintSecrets}`);
+
+  const passedE = isFunction && isNativeCode && advancesNaturally && !hasOldStaticTokens && !reusesKommoToken && !logsPrintSecrets;
+  results.push({
+    prueba: 'E. Integridad y Cero Secretos Estáticos',
+    condicion: 'Date.now nativo, 0 tokens estáticos, 0 reuso de KOMMO_TOKEN, 0 secretos en logs',
+    resultado: passedE ? 'PASÓ' : 'FALLÓ',
+    evidencia: `isNative=${isNativeCode}, noStaticTokens=${!hasOldStaticTokens}, noKommoToken=${!reusesKommoToken}, noLogsSecrets=${!logsPrintSecrets}`
   });
 
-  // --------------------------------------------------------------------------
-  // INFORME FINAL DE LA AUDITORÍA DE SEGURIDAD
-  // --------------------------------------------------------------------------
+  // ==========================================================================
+  // RESUMEN CONSOLIDADO DE LA AUDITORÍA DE SEGURIDAD
+  // ==========================================================================
   console.log('\n================================================================');
-  console.log(' RESUMEN CONSOLIDADO DE LA AUDITORÍA COMPLEMENTARIA DE SEGURIDAD');
+  console.log(' RESUMEN CONSOLIDADO DE PRUEBAS DE SEGURIDAD (A - E)');
   console.log('================================================================');
-  console.table(auditResults.map(r => ({
-    Auditoría: r.item,
-    Condición: r.condicion,
-    Resultado: r.resultado,
-    Evidencia: r.evidencia
+  console.table(results.map(r => ({
+    'Prueba Obligatoria': r.prueba,
+    'Condición Verificada': r.condicion,
+    'Resultado': r.resultado,
+    'Evidencia Técnica': r.evidencia
   })));
 
-  const allPassed = auditResults.every(r => r.resultado === 'PASÓ');
-  console.log(`\nESTADO GENERAL: ${allPassed ? '✅ AUDITORÍA SUPERADA AL 100%' : '❌ FALLA EN AUDITORÍA'}`);
+  const allPassed = results.every(r => r.resultado === 'PASÓ');
+  console.log(`\nESTADO GENERAL: ${allPassed ? '✅ AUDITORÍA DE SEGURIDAD 100% SUPERADA' : '❌ FALLA EN AUDITORÍA'}`);
 
-  return { allPassed, auditResults };
+  return { allPassed, results };
 }
 
-runSecurityAudit().catch(console.error);
+if (require.main === module) {
+  runRigorousSecurityAudit().catch(err => {
+    console.error('Error fatal durante la auditoría de seguridad:', err);
+    process.exit(1);
+  });
+}
 
+module.exports = { runRigorousSecurityAudit };

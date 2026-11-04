@@ -8,7 +8,7 @@ const axios = require('axios');
 require('dotenv').config();
 
 const BASE_URL = process.env.STAGING_BASE_URL || 'https://tu-techo-ideal-staging.onrender.com';
-const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN || process.env.STAGING_AUDIT_SECRET || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
+const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN;
 
 async function testEndpointProtection() {
   console.log('================================================================');

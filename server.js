@@ -1,4 +1,5 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
@@ -28,38 +29,65 @@ const {
 
 const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
 
-// Verificación de seguridad estricta para uso de reloj simulado (offset_ms / simulated_now)
+// ============================================================================
+// VERIFICACIÓN DE SEGURIDAD ESTRICTA PARA USO DE RELOJ SIMULADO EN STAGING
+// ============================================================================
+
+const ALLOWED_STAGING_HOSTNAMES = Object.freeze([
+  'tu-techo-ideal-staging.onrender.com',
+  'localhost',
+  '127.0.0.1'
+]);
+
+const ALLOWED_SIMULATED_TIME_ROUTES = Object.freeze([
+  { method: 'GET', path: '/api/staging/check-lock-status' },
+  { method: 'POST', path: '/api/staging/set-handoff-time' },
+  { method: 'POST', path: '/api/staging/test-pipeline-evaluation' }
+]);
+
+function verifyStagingAuthHeader(req) {
+  const expectedToken = process.env.STAGING_AUTH_TOKEN;
+  if (!expectedToken || typeof expectedToken !== 'string') {
+    return false;
+  }
+  // Exigir exclusivamente la cabecera x-staging-auth
+  const clientToken = req?.headers?.['x-staging-auth'];
+  if (!clientToken || typeof clientToken !== 'string') {
+    return false;
+  }
+  const expectedBuf = Buffer.from(expectedToken, 'utf8');
+  const clientBuf = Buffer.from(clientToken, 'utf8');
+  if (expectedBuf.length !== clientBuf.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(expectedBuf, clientBuf);
+}
+
 function isAuthorizedStagingTestRequest(req) {
   // 1. En producción: RECHAZO TOTAL e INCONDICIONAL del reloj simulado,
   //    tanto con OBSERVATION_MODE=true como con OBSERVATION_MODE=false.
   if (process.env.NODE_ENV === 'production') {
     return false;
   }
-  const hostname = req?.hostname || req?.headers?.host || '';
-  if (hostname.includes('tu-techo-ideal-bot-1')) {
+
+  // 2. Validación exacta de hostname (sin includes)
+  const rawHost = (req?.hostname || req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+  if (!ALLOWED_STAGING_HOSTNAMES.includes(rawHost)) {
     return false;
   }
 
-  // 2. Solo permitido en entorno Staging explícito
-  if (process.env.NODE_ENV !== 'staging') {
+  // 3. Restricción estricta de rutas (solo lista blanca cerrada para reloj simulado)
+  const reqMethod = (req?.method || '').toUpperCase();
+  const reqPath = (req?.baseUrl || '') + (req?.path || req?._parsedUrl?.pathname || '');
+  const isAllowedRoute = ALLOWED_SIMULATED_TIME_ROUTES.some(r =>
+    r.method === reqMethod && r.path === reqPath
+  );
+  if (!isAllowedRoute) {
     return false;
   }
 
-  // 3. Exigir autenticación estricta con token válido
-  const expectedTokens = [
-    process.env.STAGING_AUTH_TOKEN,
-    process.env.STAGING_AUDIT_SECRET,
-    process.env.KOMMO_TOKEN,
-    'tti-staging-auth-token-2026',
-    'staging-audit-2026'
-  ].filter(Boolean);
-
-  const clientToken = req?.headers?.['x-staging-auth'] ||
-    req?.headers?.['authorization']?.replace(/^Bearer\s+/i, '') ||
-    req?.query?.auth_token ||
-    req?.query?.token;
-
-  return !!(clientToken && expectedTokens.includes(clientToken));
+  // 4. Verificación criptográfica segura de la cabecera x-staging-auth
+  return verifyStagingAuthHeader(req);
 }
 
 // Gestor de handoff y bloqueo humano persistente
@@ -4192,10 +4220,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] Intervención saliente detectada (${outClassification.source}, Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por ${HANDOFF_LOCK_HOURS} horas y deteniendo Salesbot.`);
 
-      const canUseSimulatedTime = isAuthorizedStagingTestRequest(req);
-      const simulatedNowOut = (canUseSimulatedTime && (req.query.simulated_now || req.body?.simulated_now))
-        ? Number(req.query.simulated_now || req.body?.simulated_now)
-        : Date.now();
+      // En el webhook público el tiempo siempre es estrictamente el reloj real Date.now()
+      const simulatedNowOut = Date.now();
 
       // Registrar en ambos gestores (nuevo pipeline central y compatibilidad)
       centralHandoffManager.recordHumanIntervention(outLeadId, outTalkId, outContactId, simulatedNowOut);
@@ -4470,21 +4496,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 2. NUEVO CONTROLADOR CENTRAL DETERMINÍSTICO ÚNICO (REGLAS 1 A 10)
       // ======================================================================
       console.log('[Processing] Evaluando decisión central con pipeline_decision.js...');
-      const canUseSimulatedTime = isAuthorizedStagingTestRequest(req);
-      let simulatedNow = Date.now();
-      if (canUseSimulatedTime) {
-        if (req.query.simulated_now || req.body?.simulated_now) {
-          simulatedNow = Number(req.query.simulated_now || req.body?.simulated_now);
-        } else if (req.query.offset_ms !== undefined || req.body?.offset_ms !== undefined) {
-          const offsetMs = Number(req.query.offset_ms !== undefined ? req.query.offset_ms : req.body.offset_ms);
-          const entry = (currentTalkId && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(currentTalkId)] : null) ||
-                        (currentLeadId && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(currentLeadId)] : null);
-          const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
-          if (humanTime) {
-            simulatedNow = humanTime + offsetMs;
-          }
-        }
-      }
+      // En el webhook público el tiempo siempre es estrictamente el reloj real Date.now()
+      const currentTime = Date.now();
 
       const pipelineResult = await evaluateCentralDecisionPipeline({
         userText,
@@ -4494,7 +4507,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         properties,
         handoffManager: centralHandoffManager,
         contextManager: centralContextManager,
-        currentTime: simulatedNow
+        currentTime
       });
 
       console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
@@ -4775,33 +4788,22 @@ function requireStagingAuth(req, res, next) {
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({ error: 'Not Found' });
   }
-  const hostname = req?.hostname || req?.headers?.host || '';
-  if (hostname.includes('tu-techo-ideal-bot-1')) {
+
+  // Validación exacta de hostname (sin includes)
+  const rawHost = (req?.hostname || req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+  if (!ALLOWED_STAGING_HOSTNAMES.includes(rawHost)) {
     return res.status(404).json({ error: 'Not Found' });
   }
 
-  // 2. En staging / observación: Exigir autenticación para evitar accesos externos no autorizados
-  const expectedTokens = [
-    process.env.STAGING_AUTH_TOKEN,
-    process.env.STAGING_AUDIT_SECRET,
-    process.env.KOMMO_TOKEN,
-    'tti-staging-auth-token-2026',
-    'staging-audit-2026'
-  ].filter(Boolean);
-
-  const clientToken = req.headers['x-staging-auth'] ||
-    req.headers['authorization']?.replace(/^Bearer\s+/i, '') ||
-    req.query.auth_token ||
-    req.query.token;
-
-  if (clientToken && expectedTokens.includes(clientToken)) {
-    return next();
+  // 2. Exigir autenticación estricta con token dedicado mediante cabecera x-staging-auth
+  if (!verifyStagingAuthHeader(req)) {
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Este endpoint de diagnóstico requiere el header de autenticación x-staging-auth con token válido.'
+    });
   }
 
-  return res.status(401).json({
-    error: 'Unauthorized',
-    message: 'Este endpoint de diagnóstico requiere el header de autenticación x-staging-auth.'
-  });
+  next();
 }
 
 // 1. Inferencia Real en Vivo con Nemotron 3.5 Lightning (Ficha Sintética, 0 Datos Personales)
@@ -5021,14 +5023,16 @@ app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
 app.get('/api/staging/check-lock-status', requireStagingAuth, async (req, res) => {
   const { lead_id, talk_id, simulated_now, offset_ms } = req.query;
   let now = Date.now();
-  if (simulated_now) {
-    now = Number(simulated_now);
-  } else if (offset_ms !== undefined) {
-    const entry = (talk_id && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(talk_id)] : null) ||
-                  (lead_id && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(lead_id)] : null);
-    const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
-    if (humanTime) {
-      now = humanTime + Number(offset_ms);
+  if (isAuthorizedStagingTestRequest(req)) {
+    if (simulated_now) {
+      now = Number(simulated_now);
+    } else if (offset_ms !== undefined) {
+      const entry = (talk_id && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(talk_id)] : null) ||
+                    (lead_id && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(lead_id)] : null);
+      const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
+      if (humanTime) {
+        now = humanTime + Number(offset_ms);
+      }
     }
   }
   const status = await centralHandoffManager.checkLockStatus(lead_id, talk_id, null, now);
@@ -5038,6 +5042,76 @@ app.get('/api/staging/check-lock-status', requireStagingAuth, async (req, res) =
     simulated_delta_ms: status.lastIntervention ? (now - status.lastIntervention) : null,
     lock_status: status
   });
+});
+
+// Endpoint exclusivo de Staging para evaluación determinista del pipeline con tiempo simulado
+app.post('/api/staging/test-pipeline-evaluation', requireStagingAuth, async (req, res) => {
+  try {
+    const {
+      user_text,
+      lead_id,
+      talk_id,
+      contact_id,
+      offset_ms,
+      simulated_now
+    } = req.body || {};
+
+    const currentLeadId = lead_id ? String(lead_id) : null;
+    const currentTalkId = talk_id ? String(talk_id) : null;
+    const currentContactId = contact_id ? String(contact_id) : null;
+    const userText = user_text || '';
+
+    let evaluationTime = Date.now();
+    if (isAuthorizedStagingTestRequest(req)) {
+      if (simulated_now !== undefined && simulated_now !== null) {
+        evaluationTime = Number(simulated_now);
+      } else if (offset_ms !== undefined && offset_ms !== null) {
+        const offsetMs = Number(offset_ms);
+        const entry = (currentTalkId && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(currentTalkId)] : null) ||
+                      (currentLeadId && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(currentLeadId)] : null);
+        const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
+        if (humanTime) {
+          evaluationTime = humanTime + offsetMs;
+        }
+      }
+    }
+
+    const properties = await getAvailableProperties();
+
+    const pipelineResult = await evaluateCentralDecisionPipeline({
+      userText,
+      leadId: currentLeadId,
+      talkId: currentTalkId,
+      contactId: currentContactId,
+      properties,
+      handoffManager: centralHandoffManager,
+      contextManager: centralContextManager,
+      currentTime: evaluationTime
+    });
+
+    recordStagingDecision({
+      timestamp: evaluationTime,
+      lead_id: currentLeadId,
+      talk_id: currentTalkId,
+      user_text: userText,
+      observation_mode: OBSERVATION_MODE,
+      decision: pipelineResult.decision,
+      text: pipelineResult.text
+    });
+
+    return res.json({
+      status: 'ok',
+      evaluation_time: evaluationTime,
+      lead_id: currentLeadId,
+      talk_id: currentTalkId,
+      user_text: userText,
+      decision: pipelineResult.decision,
+      text: pipelineResult.text
+    });
+  } catch (err) {
+    console.error('[test-pipeline-evaluation] Error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // 4. Verificación de Capacidades y Permisos en Vivo de la API de Kommo
@@ -5188,5 +5262,9 @@ module.exports = {
   stagingTestDispatchEnabled: () => stagingTestDispatchEnabled,
   authorizedControlledPair,
   controlledDispatchHistory,
-  recordControlledDispatch
+  recordControlledDispatch,
+  isAuthorizedStagingTestRequest,
+  verifyStagingAuthHeader,
+  ALLOWED_STAGING_HOSTNAMES,
+  ALLOWED_SIMULATED_TIME_ROUTES
 };

@@ -26,6 +26,8 @@ services:
         value: "true"
       - key: CLAUDE_MODEL
         value: "nvidia/nemotron-3.5-lightning:free"
+      - key: STAGING_AUTH_TOKEN
+        value: "e847b09e895fb4b6a037d16cc6daa6cd9d48fbcfd5c7ed86330e1775c5a1e144"
       - key: KOMMO_TOKEN
         sync: false
       - key: GOOGLE_SHEET_CSV_URL

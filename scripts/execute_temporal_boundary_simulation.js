@@ -21,7 +21,7 @@ const axios = require('axios');
 require('dotenv').config();
 
 const BASE_URL = process.env.STAGING_URL || 'https://tu-techo-ideal-staging.onrender.com';
-const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN || process.env.STAGING_AUDIT_SECRET || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
+const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN;
 
 const TARGET_LEAD_ID = '25092108';
 const TARGET_TALK_ID = '1149';
@@ -129,18 +129,11 @@ async function executeFullDeterministicSimulation() {
   const lock1m = status1mRes.data?.lock_status;
   console.log('Estado en T0 + 60.000 ms:', lock1m);
 
-  const webhook1mRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=60000`, {
-    account: { id: 36728143 },
-    message: {
-      add: [{
-        id: 'msg_t1m_' + Date.now(),
-        entity_id: parseInt(TARGET_LEAD_ID, 10),
-        talk_id: TARGET_TALK_ID,
-        type: 'incoming',
-        text: '¿Cuántos metros tiene el apartamento?',
-        author: { type: 'external', name: 'Daniel Palma' }
-      }]
-    }
+  const webhook1mRes = await axios.post(`${BASE_URL}/api/staging/test-pipeline-evaluation`, {
+    user_text: '¿Cuántos metros tiene el apartamento?',
+    lead_id: TARGET_LEAD_ID,
+    talk_id: TARGET_TALK_ID,
+    offset_ms: 60000
   }, { headers: { 'x-staging-auth': STAGING_AUTH } });
 
   console.log('Decisión en T0 + 1m:', webhook1mRes.data?.decision);
@@ -172,18 +165,11 @@ async function executeFullDeterministicSimulation() {
   const lock11h = status11hRes.data?.lock_status;
   console.log('Estado en T0 + 43.199.000 ms:', lock11h);
 
-  const webhook11hRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43199000`, {
-    account: { id: 36728143 },
-    message: {
-      add: [{
-        id: 'msg_t11h_' + Date.now(),
-        entity_id: parseInt(TARGET_LEAD_ID, 10),
-        talk_id: TARGET_TALK_ID,
-        type: 'incoming',
-        text: '¿Tiene estacionamiento techado?',
-        author: { type: 'external', name: 'Daniel Palma' }
-      }]
-    }
+  const webhook11hRes = await axios.post(`${BASE_URL}/api/staging/test-pipeline-evaluation`, {
+    user_text: '¿Tiene estacionamiento techado?',
+    lead_id: TARGET_LEAD_ID,
+    talk_id: TARGET_TALK_ID,
+    offset_ms: 43199000
   }, { headers: { 'x-staging-auth': STAGING_AUTH } });
 
   console.log('Decisión en T0 + 43.199.000 ms:', webhook11hRes.data?.decision);
@@ -245,18 +231,11 @@ async function executeFullDeterministicSimulation() {
 
   // 5.1 Pregunta con dato oficial (Metraje) -> Responde "Tiene 110 m²"
   console.log('5.1 Pregunta con información oficial (Metraje)...');
-  const webhook12h1s_m2 = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43201000`, {
-    account: { id: 36728143 },
-    message: {
-      add: [{
-        id: 'msg_t12h1s_m2_' + Date.now(),
-        entity_id: parseInt(TARGET_LEAD_ID, 10),
-        talk_id: TARGET_TALK_ID,
-        type: 'incoming',
-        text: '¿Cuántos metros tiene el apartamento?',
-        author: { type: 'external', name: 'Daniel Palma' }
-      }]
-    }
+  const webhook12h1s_m2 = await axios.post(`${BASE_URL}/api/staging/test-pipeline-evaluation`, {
+    user_text: '¿Cuántos metros tiene el apartamento?',
+    lead_id: TARGET_LEAD_ID,
+    talk_id: TARGET_TALK_ID,
+    offset_ms: 43201000
   }, { headers: { 'x-staging-auth': STAGING_AUTH }, timeout: 45000 });
 
   console.log('Respuesta 5.1 (Metraje):', {
@@ -268,18 +247,11 @@ async function executeFullDeterministicSimulation() {
 
   // 5.2 Pregunta sin información (Condominio) -> Silencio absoluto
   console.log('5.2 Pregunta sin dato en Google Sheets (Condominio mensual)...');
-  const webhook12h1s_condo = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=43201000`, {
-    account: { id: 36728143 },
-    message: {
-      add: [{
-        id: 'msg_t12h1s_condo_' + Date.now(),
-        entity_id: parseInt(TARGET_LEAD_ID, 10),
-        talk_id: TARGET_TALK_ID,
-        type: 'incoming',
-        text: '¿Cuánto cuesta el condominio mensual?',
-        author: { type: 'external', name: 'Daniel Palma' }
-      }]
-    }
+  const webhook12h1s_condo = await axios.post(`${BASE_URL}/api/staging/test-pipeline-evaluation`, {
+    user_text: '¿Cuánto cuesta el condominio mensual?',
+    lead_id: TARGET_LEAD_ID,
+    talk_id: TARGET_TALK_ID,
+    offset_ms: 43201000
   }, { headers: { 'x-staging-auth': STAGING_AUTH }, timeout: 45000 });
 
   console.log('Respuesta 5.2 (Condominio):', {
@@ -352,7 +324,7 @@ async function executeFullDeterministicSimulation() {
   const newLock = newLockStatusRes.data?.lock_status;
 
   // Pregunta inmediata del cliente tras la nueva intervención humana -> SILENCIO
-  const postNewLockWebhookRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=1000`, {
+  const postNewLockWebhookRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
     account: { id: 36728143 },
     message: {
       add: [{

@@ -12,7 +12,7 @@ const BASE_URL = 'https://tu-techo-ideal-staging.onrender.com';
 const TALK_ID = 'talk_stg_test_seq_8899';
 const LEAD_ID = '88990001';
 const CONTACT_ID = 'contact_stg_seq_8899';
-const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
+const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN;
 
 const results = [];
 
