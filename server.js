@@ -4970,7 +4970,6 @@ app.get('/api/staging/check-lock-status', requireStagingAuth, async (req, res) =
     lock_status: status
   });
 });
-});
 
 // 4. Verificación de Capacidades y Permisos en Vivo de la API de Kommo
 app.get('/api/audit-kommo-lock-capability', requireStagingAuth, async (req, res) => {
