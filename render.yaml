@@ -25,7 +25,7 @@ services:
       - key: USE_CLAUDE
         value: "true"
       - key: CLAUDE_MODEL
-        value: "anthropic/claude-sonnet-4.5"
+        value: "nvidia/nemotron-3.5-lightning:free"
       - key: KOMMO_TOKEN
         sync: false
       - key: GOOGLE_SHEET_CSV_URL
