@@ -4429,6 +4429,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 2. NUEVO CONTROLADOR CENTRAL DETERMINÍSTICO ÚNICO (REGLAS 1 A 10)
       // ======================================================================
       console.log('[Processing] Evaluando decisión central con pipeline_decision.js...');
+      const simulatedNow = (req.query.simulated_now && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging'))
+        ? Number(req.query.simulated_now)
+        : Date.now();
+
       const pipelineResult = await evaluateCentralDecisionPipeline({
         userText,
         leadId: currentLeadId,
@@ -4437,7 +4441,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         properties,
         handoffManager: centralHandoffManager,
         contextManager: centralContextManager,
-        currentTime: Date.now()
+        currentTime: simulatedNow
       });
 
       console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
@@ -4905,7 +4909,7 @@ app.get('/api/staging-decision-logs', requireStagingAuth, (req, res) => {
 
 // 3. Simular Avance Temporal de Bloqueo de 24 Horas para Pruebas Controladas
 app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
-  const { lead_id, talk_id, hours_ago, clear, reset } = req.body;
+  const { lead_id, talk_id, hours_ago, seconds_ago, timestamp, clear, reset } = req.body;
 
   if (clear || reset) {
     if (talk_id && centralHandoffManager.handoffs.talks) delete centralHandoffManager.handoffs.talks[String(talk_id)];
@@ -4914,8 +4918,16 @@ app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
     return res.json({ status: 'ok', cleared: true, lead_id, talk_id });
   }
 
-  const hours = Number(hours_ago) || 25;
-  const simulatedTime = Date.now() - (hours * 60 * 60 * 1000);
+  let simulatedTime = Date.now();
+  if (timestamp !== undefined) {
+    simulatedTime = Number(timestamp);
+  } else if (seconds_ago !== undefined) {
+    simulatedTime = Date.now() - (Number(seconds_ago) * 1000);
+  } else if (hours_ago !== undefined) {
+    simulatedTime = Date.now() - (Number(hours_ago) * 60 * 60 * 1000);
+  } else {
+    simulatedTime = Date.now() - (25 * 60 * 60 * 1000);
+  }
 
   if (talk_id) {
     if (!centralHandoffManager.handoffs.talks) centralHandoffManager.handoffs.talks = {};
@@ -4937,13 +4949,27 @@ app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
   }
   centralHandoffManager.save();
 
+  const elapsedSeconds = (Date.now() - simulatedTime) / 1000;
   res.json({
     status: 'ok',
-    simulated_hours_ago: hours,
     simulated_timestamp: simulatedTime,
+    elapsed_seconds: elapsedSeconds,
+    elapsed_hours: elapsedSeconds / 3600,
     lead_id,
     talk_id
   });
+});
+
+app.get('/api/staging/check-lock-status', requireStagingAuth, async (req, res) => {
+  const { lead_id, talk_id, simulated_now } = req.query;
+  const now = simulated_now ? Number(simulated_now) : Date.now();
+  const status = await centralHandoffManager.checkLockStatus(lead_id, talk_id, null, now);
+  res.json({
+    status: 'ok',
+    now,
+    lock_status: status
+  });
+});
 });
 
 // 4. Verificación de Capacidades y Permisos en Vivo de la API de Kommo
