@@ -126,3 +126,4 @@ async function auditPersistentLockAndKommo() {
 }
 
 auditPersistentLockAndKommo().catch(console.error);
+

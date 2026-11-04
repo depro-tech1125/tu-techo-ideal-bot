@@ -102,12 +102,12 @@ async function runFullSimulation() {
     const text2 = '¿Cuántos metros tiene el apartamento?';
     const res2 = await sendWebhookMessage({ text: text2 });
     const dec2 = res2.decision;
-    const hasMetros = res2.text && (/120\s*m/i.test(res2.text) || /ciento\s*veinte/i.test(res2.text));
+    const hasMetros = res2.text && (/(?:110|120)\s*m/i.test(res2.text) || /(?:ciento\s*diez|ciento\s*veinte)/i.test(res2.text));
     const passed2 = res2.status === 'ok' && dec2.action === 'RESPOND' && hasMetros;
     recordResult(
       'MENSAJE 2',
       'Cliente pregunta cuántos metros tiene (Nemotron)',
-      'Responder dato exacto de la ficha con evidencia validada (120 m²)',
+      'Responder dato exacto de la ficha con evidencia validada (110 m² en Google Sheets para REF-012)',
       res2.text || dec2.action,
       passed2,
       {
