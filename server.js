@@ -4264,6 +4264,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     if (!leadId) {
       console.log('[Webhook] Could not resolve lead entity_id. Skipping.');
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
+      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'NO_LEAD_ID' });
       return;
     }
 
@@ -4277,6 +4278,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     if (isRobertChat) {
       console.log(`[Webhook] Mensaje procedente del chat o número de Robert (${clientPhone || currentLeadId}). El bot no responde a Robert.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
+      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'ROBERT_CHAT' });
       return;
     }
 
@@ -4284,21 +4286,25 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     if (activeProcessingLeads.has(currentLeadId)) {
       console.log(`[Webhook] Lead #${currentLeadId} ya está en procesamiento activo. Skipping para evitar duplicar tokens de Claude.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
+      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'CONCURRENT_PROCESSING' });
       return;
     }
 
-    // 🛑 FILTRO 6: Debounce de 15 segundos por Lead
-    if (isDebounced(currentLeadId)) {
+    // 🛑 FILTRO 6: Debounce de 15 segundos por Lead (Bypassable en Staging/Modo Observación para pruebas sintéticas)
+    const bypassDebounce = OBSERVATION_MODE && (req.query.bypass_debounce === 'true' || req.headers['x-bypass-debounce'] === 'true');
+    if (!bypassDebounce && isDebounced(currentLeadId)) {
       console.log(`[Webhook] Debounce activado para Lead #${currentLeadId} (ventana 15s). Skipping para evitar doble respuesta.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
+      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'DEBOUNCED' });
       return;
     }
 
     // 🛑 FILTRO 6.1: Antiduplicado Estricto de Mensaje Reciente (Ventana 15 minutos)
     // Si este mismo lead ya envió este mismo texto en los últimos 15 minutos, IGNORAR (previene reintentos de Kommo/Make).
-    if (isSameLeadMessageRecent(currentLeadId, userText)) {
+    if (!bypassDebounce && isSameLeadMessageRecent(currentLeadId, userText)) {
       console.log(`[Webhook] Mensaje idéntico detectado recientemente para Lead #${currentLeadId} ("${userText.substring(0, 40)}..."). Skipping para evitar respuesta duplicada.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
+      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'DUPLICATE_MESSAGE' });
       return;
     }
 

@@ -56,9 +56,9 @@ async function sendWebhookMessage({ text, type = 'incoming', authorType = 'exter
     }
   };
 
-  const response = await axios.post(`${BASE_URL}/webhook?sync=true`, payload, {
+  const response = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, payload, {
     headers: { 'Content-Type': 'application/json' },
-    timeout: 25000
+    timeout: 35000
   });
 
   return response.data;
@@ -262,3 +262,4 @@ async function runFullSimulation() {
 }
 
 runFullSimulation().catch(console.error);
+
