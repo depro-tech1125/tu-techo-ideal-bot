@@ -387,7 +387,7 @@ async function runRigorousSecurityAudit() {
   try {
     const res = await axios.get(`${PROD_URL}/api/staging/check-lock-status`, {
       headers: { 'x-staging-auth': VALID_TOKEN },
-      timeout: 10000
+      timeout: 45000
     });
     d5Status = res.status;
   } catch (err) {

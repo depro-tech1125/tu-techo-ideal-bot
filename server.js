@@ -5095,7 +5095,7 @@ app.post('/api/staging/test-pipeline-evaluation', requireStagingAuth, async (req
       talk_id: currentTalkId,
       user_text: userText,
       observation_mode: OBSERVATION_MODE,
-      decision: pipelineResult.decision,
+      decision: pipelineResult.log,
       text: pipelineResult.text
     });
 
@@ -5105,7 +5105,7 @@ app.post('/api/staging/test-pipeline-evaluation', requireStagingAuth, async (req
       lead_id: currentLeadId,
       talk_id: currentTalkId,
       user_text: userText,
-      decision: pipelineResult.decision,
+      decision: pipelineResult.log,
       text: pipelineResult.text
     });
   } catch (err) {

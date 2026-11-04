@@ -60,6 +60,12 @@ async function executeFullDeterministicSimulation() {
 
   // Asegurar contexto activo de REF-012 en Staging
   console.log('--- Asegurando contexto activo de REF-012 en Staging ---');
+  await axios.post(`${BASE_URL}/api/staging/set-handoff-time`, {
+    lead_id: TARGET_LEAD_ID,
+    talk_id: TARGET_TALK_ID,
+    clear: true
+  }, { headers: { 'x-staging-auth': STAGING_AUTH } });
+
   await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
     account: { id: 36728143 },
     message: {
