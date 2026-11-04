@@ -57,9 +57,9 @@ Para evitar ambigüedades entre el diseño arquitectónico, el código desarroll
 - **Dictamen:** **Completamente operativo y verificado.**
 
 ### 2.7 Soporte Operativo y Documentación para el Equipo
-- **Estado Técnico:** Creación de un paquete integral de 9 documentos técnicos, comerciales y de control de entrega en la carpeta [`docs/`](./).
+- **Estado Técnico:** Creación de un paquete integral de 10 documentos técnicos, comerciales, operativos y de control de entrega en la carpeta [`docs/`](./).
 - **Estado Operativo Real:**
-  - La documentación cubre el 100% de la arquitectura, variables, protocolos comerciales, recuperación y demostración.
+  - La documentación cubre el 100% de la arquitectura, variables, protocolos comerciales, recuperación, demostración y el procedimiento paso a paso para el piloto comercial de 7 días.
   - El alcance no incluye servicios de mantenimiento continuo indefinido ni jornadas de capacitación presencial no contratadas.
 - **Dictamen:** **Compromiso documental 100% cumplido con la entrega del paquete formal.**
 
@@ -104,3 +104,4 @@ La clasificación **B** refleja con total transparencia que, para la operación 
 1. Completar la vinculación de canales de redes sociales (Instagram, TikTok) en Kommo CRM.
 2. Definir si se asignará saldo a OpenRouter para preguntas abiertas complejas o si se mantendrá la operación puramente determinista.
 3. Autorizar el pase a producción (merge hacia `main`) en Render.
+

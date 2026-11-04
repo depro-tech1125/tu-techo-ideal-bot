@@ -64,13 +64,13 @@ El equipo de ingeniería entrega las siguientes capacidades comprobadas y valida
 Para la entrada en operación comercial plena, quedan bajo responsabilidad del cliente las siguientes actividades operativas:
 1. **Vinculación de Canales en Kommo CRM:** Vincular las cuentas comerciales de Instagram y TikTok en el módulo de canales de Kommo CRM si se desea recibir mensajes directos de dichas plataformas.
 2. **Gestión de Saldo en Proveedor de IA:** En caso de habilitar respuestas abiertas a preguntas complejas no estructuradas, recargar saldo en OpenRouter o configurar una API Key de pago para evitar el límite de tasa gratuito (HTTP 429).
-3. **Mantenimiento del Catálogo en Google Sheets:** Mantener la redacción clara de los atributos en la columna `DESCRIPCION_BREVE` según las pautas del Manual Operativo Comercial.
-4. **Pase a Producción:** Evaluar y autorizar el merge de la rama `feature/reinicio-logica-inmobiliaria` hacia `main` en Render.
+3. **Mantenimiento del Catálogo en Google Sheets:** Mantener la redacción clara de los atributos en la columna `DESCRIPCION_BREVE` según las pautas del Manual Operativo Comercial. Opcionalmente, importar en Google Drive el archivo generado `google_sheet_Hoja1_COMPLETA_ACTUALIZADA.xlsx` (respaldo original en `google_sheet_backup_original.xlsx`).
+4. **Pase a Producción:** Evaluar y autorizar el merge de la rama `feature/reinicio-logica-inmobiliaria` hacia `main` en Render conforme al protocolo del Piloto Comercial de 7 Días.
 
 ---
 
 ### 6. PAQUETE DE DOCUMENTACIÓN ENTREGADO
-El paquete documental formal consta de los siguientes 9 documentos alojados en la carpeta [`docs/`](./):
+El paquete documental formal consta de los siguientes 10 documentos alojados en la carpeta [`docs/`](./):
 1. [`INFORME_EJECUTIVO_FINAL.md`](./INFORME_EJECUTIVO_FINAL.md) — Evaluación ejecutiva del estado real del sistema y cierre.
 2. [`MANUAL_TECNICO.md`](./MANUAL_TECNICO.md) — Especificación técnica del pipeline, prioridades y managers.
 3. [`MANUAL_OPERATIVO_COMERCIAL.md`](./MANUAL_OPERATIVO_COMERCIAL.md) — Guía para asesores, reglas de silencio y bloqueo de 12 horas.
@@ -79,7 +79,8 @@ El paquete documental formal consta de los siguientes 9 documentos alojados en l
 6. [`SUPERVISION_Y_RECUPERACION.md`](./SUPERVISION_Y_RECUPERACION.md) — Protocolos de monitoreo `/health` y recuperación ante fallos.
 7. [`LIMITACIONES_Y_DEPENDENCIAS.md`](./LIMITACIONES_Y_DEPENDENCIAS.md) — Limitaciones técnicas, dependencias externas y costos operativos.
 8. [`GUION_DEMOSTRACION_RESPONSABLE.md`](./GUION_DEMOSTRACION_RESPONSABLE.md) — Procedimiento paso a paso para la demostración en vivo.
-9. [`ACTA_DE_ENTREGA.md`](./ACTA_DE_ENTREGA.md) — Presente acta formal de entrega y cierre.
+9. [`PROCEDIMIENTO_PILOTO_COMERCIAL_7_DIAS.md`](./PROCEDIMIENTO_PILOTO_COMERCIAL_7_DIAS.md) — Protocolo para el piloto comercial de 7 días, kill switch y procedimiento de reversión a v4.1.
+10. [`ACTA_DE_ENTREGA.md`](./ACTA_DE_ENTREGA.md) — Presente acta formal de entrega y cierre.
 
 ---
 
@@ -93,3 +94,4 @@ Se firma la presente acta en señal de entrega formal de la versión de desarrol
 | :---: | :---: |
 | <br><br>_________________________________________<br>**Líder de Desarrollo / Agente Antigravity**<br>Ingeniería de Software Tu Techo Ideal | <br><br>_________________________________________<br>**Robert / Dirección Comercial**<br>Tu Techo Ideal |
 | Fecha: 04 / Noviembre / 2026 | Fecha: _____ / __________________ / 2026 |
+
