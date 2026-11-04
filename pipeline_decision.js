@@ -931,9 +931,12 @@ async function evaluateCentralDecisionPipeline(context) {
   // --------------------------------------------------------------------------
   // PRIORIDAD 2.1: CONDICIÓN DE REACTIVACIÓN POST-24H (REGLA 4):
   // Tras cumplirse 24h de una intervención humana previa, se exige un nuevo enlace Wasi validado
-  // para reactivar el bot. Si no viene enlace y la conversación no está activa, silencio.
+  // o una propiedad previamente activa en el contexto de la conversación. Si no hay contexto ni enlace, silencio.
   // --------------------------------------------------------------------------
-  if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= 24 && !handoff.activeAutomationPropertyId) {
+  const knownConversationProperty = (contextManager && contextManager.getContext(talkId, leadId)) ||
+    (handoff && handoff.activeAutomationPropertyId && Array.isArray(properties) ? properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (handoff.activeAutomationPropertyId || '').toUpperCase()) : null);
+
+  if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= 24 && !handoff.activeAutomationPropertyId && !knownConversationProperty) {
     if (wasiExtraction.count === 0) {
       logEntry.typeDetected = 'POST_24H_REQUIRES_WASI_LINK';
       logEntry.reason = 'Transcurridas 24h tras intervención humana, pero el cliente no envió enlace Wasi nuevo. Silencio seguro.';
