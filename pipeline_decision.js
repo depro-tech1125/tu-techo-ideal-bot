@@ -621,23 +621,29 @@ class DeduplicationManager {
 }
 
 // ============================================================================
-// 9. AISLAMIENTO ESTRICTO DE CONTEXTO POR CONVERSACIÓN (TALK ID)
+// 9. AISLAMIENTO ESTRICTO DE CONTEXTO POR CONVERSACIÓN (TALK ID Y LEAD ID)
 // ============================================================================
 class ConversationContextManager {
   constructor() {
     this.talkContexts = new Map(); // talkId -> property
+    this.leadContexts = new Map(); // leadId -> property
   }
 
   saveContext(talkId, leadIdOrProperty, property) {
-    if (!talkId) return;
-    const prop = property !== undefined ? property : leadIdOrProperty;
-    if (!prop) return;
-    this.talkContexts.set(String(talkId), prop);
+    const prop = property !== undefined ? property : (typeof leadIdOrProperty === 'object' ? leadIdOrProperty : null);
+    const leadId = typeof leadIdOrProperty === 'string' || typeof leadIdOrProperty === 'number' ? leadIdOrProperty : null;
+    if (talkId && prop) this.talkContexts.set(String(talkId), prop);
+    if (leadId && prop) this.leadContexts.set(String(leadId), prop);
   }
 
   getContext(talkId, leadId) {
-    if (!talkId) return null;
-    return this.talkContexts.get(String(talkId)) || null;
+    if (talkId && this.talkContexts.has(String(talkId))) {
+      return this.talkContexts.get(String(talkId));
+    }
+    if (leadId && this.leadContexts.has(String(leadId))) {
+      return this.leadContexts.get(String(leadId));
+    }
+    return null;
   }
 }
 
@@ -943,9 +949,9 @@ async function evaluateCentralDecisionPipeline(context) {
         logEntry.action = 'RESPOND';
         logEntry.text = 'Sí, disponible.';
 
-        // Guardar contexto aislado por talkId
-        if (contextManager && talkId) {
-          contextManager.saveContext(talkId, targetProperty);
+        // Guardar contexto aislado por talkId y leadId
+        if (contextManager) {
+          contextManager.saveContext(talkId, leadId, targetProperty);
         }
         if (handoffManager) {
           handoffManager.activateAutomation(leadId, talkId, contactId, targetProperty.ID_PROPIEDAD);
@@ -980,8 +986,8 @@ async function evaluateCentralDecisionPipeline(context) {
   // PRIORIDAD 8, 9 Y 10: CONTINUACIÓN DE PREGUNTAS SOBRE PROPIEDAD IDENTIFICADA (REGLA 3.E)
   // --------------------------------------------------------------------------
   if (!targetProperty) {
-    if (contextManager && talkId) {
-      targetProperty = contextManager.getContext(talkId);
+    if (contextManager) {
+      targetProperty = contextManager.getContext(talkId, leadId);
     } else if (activePropertyContext) {
       targetProperty = activePropertyContext;
     }
@@ -1022,6 +1028,7 @@ async function evaluateCentralDecisionPipeline(context) {
     if (!aiResult.isSinDato && aiResult.text) {
       logEntry.typeDetected = 'PROPERTY_FEATURE_ANSWERED';
       logEntry.reason = `Dato encontrado y verificado con evidencia textual en Google Sheets para ${targetProperty.ID_PROPIEDAD}: "${aiResult.evidence}".`;
+      logEntry.evidence = aiResult.evidence || null;
       logEntry.action = 'RESPOND';
       logEntry.text = aiResult.text;
       return { shouldRespond: true, text: aiResult.text, log: logEntry, targetProperty };

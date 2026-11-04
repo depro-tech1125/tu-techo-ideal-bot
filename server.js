@@ -48,6 +48,13 @@ const centralHandoffManager = new HandoffManager(
 );
 const centralContextManager = new ConversationContextManager();
 
+// Buffer de decisiones para auditoría de staging y monitoreo en vivo (últimas 50 decisiones)
+const stagingDecisionBuffer = [];
+function recordStagingDecision(entry) {
+  stagingDecisionBuffer.unshift(entry);
+  if (stagingDecisionBuffer.length > 50) stagingDecisionBuffer.pop();
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -3962,8 +3969,11 @@ function isInstagramStoryOrRestricted(body, messageObj = null, userText = '') {
 // 📡 ENDPOINT DEL WEBHOOK
 // ==========================================
 app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
-  // Respuesta 200 OK inmediata para Kommo
-  res.status(200).send({ status: 'ok' });
+  const isSync = req.query.sync === 'true' || req.headers['x-sync-eval'] === 'true';
+  // Respuesta 200 OK inmediata para Kommo cuando no se solicita evaluación síncrona
+  if (!isSync) {
+    res.status(200).send({ status: 'ok' });
+  }
 
   try {
     const body = req.body;
@@ -3973,6 +3983,18 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     // "tampoco le mandes alerta a robert por eso... silencio absoluto (0 mensajes al cliente y 0 alertas a Robert)"
     if (isInstagramStoryOrRestricted(body)) {
       console.log('[CRITICAL BLINDAJE] Instagram story mention or restricted notice discarded immediately at endpoint entry. Zero client messages, zero Robert alerts.');
+      recordStagingDecision({
+        timestamp: Date.now(),
+        lead_id: null,
+        talk_id: null,
+        user_text: '[Instagram Story/Restricted]',
+        observation_mode: OBSERVATION_MODE,
+        decision: { action: 'SILENCE', typeDetected: 'SOCIAL_MEDIA_MENTION', reason: 'Mención de Instagram descartada en la entrada.' },
+        text: null
+      });
+      if (isSync && !res.headersSent) {
+        return res.status(200).json({ status: 'ok', handled: 'DISCARDED_INSTAGRAM_STORY' });
+      }
       return;
     }
 
@@ -3981,6 +4003,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       const allowedAccountId = process.env.KOMMO_ACCOUNT_ID || '36728143';
       if (String(body.account.id) !== String(allowedAccountId)) {
         console.warn(`[Security] Petición rechazada: Account ID no coincide (${body.account.id})`);
+        if (isSync && !res.headersSent) {
+          return res.status(403).json({ error: 'Account ID mismatch' });
+        }
         return;
       }
     }
@@ -4005,6 +4030,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
     if (!messageObj) {
       console.log('[Webhook] Not a chat message event. Skipping.');
+      if (isSync && !res.headersSent) {
+        return res.status(200).json({ status: 'ok', handled: 'NOT_A_CHAT_MESSAGE' });
+      }
       return;
     }
 
@@ -4017,6 +4045,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       if (outClassification.isBot) {
         console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado (${outClassification.source}, "${outText.substring(0, 40)}..."). Skipping echo.`);
+        if (isSync && !res.headersSent) {
+          return res.status(200).json({ status: 'ok', handled: 'BOT_OUTGOING_ECHO' });
+        }
         return;
       }
 
@@ -4042,9 +4073,33 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       if (outTalkId) setTalkHandoff(outTalkId);
       if (outContactId) setContactHandoff(outContactId);
 
+      recordStagingDecision({
+        timestamp: Date.now(),
+        lead_id: outLeadId,
+        talk_id: outTalkId,
+        user_text: outText,
+        observation_mode: OBSERVATION_MODE,
+        decision: {
+          action: 'LOCK_24H',
+          typeDetected: 'HUMAN_OUTGOING_INTERVENTION',
+          source: outClassification.source,
+          reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de 24 horas activado.`
+        },
+        text: null
+      });
+
       // En MODO OBSERVACIÓN: Cero efectos secundarios en Kommo
       if (OBSERVATION_MODE) {
         console.log(`[OBSERVATION MODE] Intervención registrada internamente. Cero mutaciones a Kommo.`);
+        if (isSync && !res.headersSent) {
+          return res.status(200).json({
+            status: 'ok',
+            processed: true,
+            action: 'LOCK_24H',
+            source: outClassification.source,
+            reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de 24 horas activado.`
+          });
+        }
         return;
       }
 
@@ -4288,6 +4343,28 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         } else {
           console.log(`[OBSERVATION MODE ACTIVE] Decisión: SILENCIO (${pipelineResult.log.reason || 'Sin respuesta'}). Cero modificaciones a Kommo, cero alertas a WhatsApp.`);
         }
+
+        recordStagingDecision({
+          timestamp: Date.now(),
+          lead_id: currentLeadId,
+          talk_id: currentTalkId,
+          user_text: userText,
+          observation_mode: true,
+          decision: pipelineResult.log,
+          text: pipelineResult.text
+        });
+
+        if (isSync && !res.headersSent) {
+          return res.status(200).json({
+            status: 'ok',
+            processed: true,
+            observation_mode: true,
+            lead_id: currentLeadId,
+            talk_id: currentTalkId,
+            decision: pipelineResult.log,
+            text: pipelineResult.text
+          });
+        }
         return;
       }
 
@@ -4375,6 +4452,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
   } catch (err) {
     console.error('[Webhook Processing Error]:', err.response?.data || err.message);
+    if (isSync && !res.headersSent) {
+      return res.status(500).json({ status: 'error', error: err.message });
+    }
   }
 });
 
@@ -4460,6 +4540,231 @@ app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
     subject: WEEKLY_AUDIT_SUBJECT,
     state
   });
+});
+
+// ============================================================================
+// 🧪 ENDPOINTS DE VERIFICACIÓN Y AUDITORÍA EXCLUSIVOS PARA STAGING
+// ============================================================================
+
+// 1. Inferencia Real en Vivo con Nemotron 3.5 Lightning (Ficha Sintética, 0 Datos Personales)
+app.get('/api/test-nemotron-inference', async (req, res) => {
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'No OPENROUTER_API_KEY configured in environment' });
+  }
+
+  const model = process.env.CLAUDE_MODEL || 'nvidia/nemotron-3.5-lightning:free';
+
+  // Ficha sintética estrictamente ficticia (sin datos reales ni personales)
+  const syntheticProperty = {
+    ID_PROPIEDAD: 'SYNTH-STG-001',
+    TIPO: 'Apartamento',
+    OPERACION: 'Venta',
+    ESTATUS: 'Disponible',
+    DESCRIPCION_BREVE: 'Apartamento de 120 m² en Los Samanes, tres habitaciones, dos baños y cocina remodelada. No posee gas directo, cocina eléctrica.'
+  };
+
+  const syntheticQuestion = '¿Cuántos metros tiene el apartamento?';
+
+  const systemPrompt = `Eres el asistente de interpretación de datos de "Tu Techo Ideal".
+Tu rol es extraer información exacta de la propiedad para responder la pregunta del cliente.
+Debes responder OBLIGATORIAMENTE en formato JSON con la siguiente estructura:
+
+{
+  "has_data": true,
+  "answer": "Respuesta exacta y concisa para el cliente",
+  "evidence": "Frase textual exacta tomada de la descripción oficial que sustenta la respuesta"
+}
+
+DATOS OFICIALES DE LA PROPIEDAD:
+- Identificador: ${syntheticProperty.ID_PROPIEDAD}
+- Tipo: ${syntheticProperty.TIPO}
+- Operación: ${syntheticProperty.OPERACION}
+- Estatus: ${syntheticProperty.ESTATUS}
+- DESCRIPCION_BREVE:
+"""
+${syntheticProperty.DESCRIPCION_BREVE}
+"""
+
+REGLAS ESTRICTAS:
+1. Si el dato está expresado en los datos oficiales, coloca has_data: true, redacta la respuesta corta en "answer" y copia la frase exacta de la descripción en "evidence".
+2. Si la descripción aclara explícitamente que NO posee un servicio o atributo, coloca has_data: true, responde la negativa documentada en "answer" y copia la evidencia en "evidence".
+3. Si el dato NO APARECE, coloca has_data: false, answer: null, evidence: null.
+4. Responde ÚNICAMENTE el objeto JSON sin bloques de código markdown ni explicaciones adicionales.`;
+
+  const startTime = Date.now();
+  try {
+    const apiRes = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: syntheticQuestion }
+        ],
+        temperature: 0.0,
+        max_tokens: 220
+      },
+      {
+        headers: {
+          Authorization: apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://tu-techo-ideal-staging.onrender.com',
+          'X-Title': 'Tu Techo Ideal Staging Verification',
+          'Content-Type': 'application/json'
+        },
+        timeout: 18000
+      }
+    );
+
+    const latencyMs = Date.now() - startTime;
+    const rawContent = apiRes.data?.choices?.[0]?.message?.content?.trim() || '';
+    let parsedJson = null;
+    let jsonValid = false;
+    let validationPassed = false;
+    let validationDetails = '';
+
+    try {
+      const cleanJson = rawContent.replace(/```json\s*/i, '').replace(/```/g, '').trim();
+      parsedJson = JSON.parse(cleanJson);
+      jsonValid = true;
+
+      if (parsedJson.has_data === true && parsedJson.answer && parsedJson.evidence) {
+        const descNorm = syntheticProperty.DESCRIPCION_BREVE.toLowerCase();
+        const evNorm = parsedJson.evidence.toLowerCase();
+        if (descNorm.includes(evNorm)) {
+          validationPassed = true;
+          validationDetails = 'Evidencia textual verificada al 100% en la descripción autorizada.';
+        } else {
+          validationDetails = 'La evidencia no se encuentra textualmente en la descripción.';
+        }
+      } else {
+        validationDetails = 'JSON no contiene has_data:true o falta answer/evidence.';
+      }
+    } catch (pe) {
+      jsonValid = false;
+      validationDetails = `Error parseando JSON: ${pe.message}`;
+    }
+
+    res.json({
+      status: 'success',
+      http_status: apiRes.status,
+      latency_ms: latencyMs,
+      model_requested: model,
+      model_used: apiRes.data?.model || model,
+      generation_id: apiRes.data?.id || 'unknown',
+      usage: {
+        prompt_tokens: apiRes.data?.usage?.prompt_tokens || 0,
+        completion_tokens: apiRes.data?.usage?.completion_tokens || 0,
+        total_tokens: apiRes.data?.usage?.total_tokens || 0
+      },
+      raw_content: rawContent,
+      parsed_json: parsedJson,
+      json_valid: jsonValid,
+      validation_passed: validationPassed,
+      validation_details: validationDetails,
+      errors_or_limits: null
+    });
+  } catch (err) {
+    const latencyMs = Date.now() - startTime;
+    res.status(err.response?.status || 500).json({
+      status: 'error',
+      http_status: err.response?.status || 500,
+      latency_ms: latencyMs,
+      model_requested: model,
+      error_message: err.message,
+      error_data: err.response?.data || null,
+      errors_or_limits: err.response?.data?.error || err.message
+    });
+  }
+});
+
+// 2. Buffer de Decisiones de Staging
+app.get('/api/staging-decision-logs', (req, res) => {
+  const { talk_id, lead_id } = req.query;
+  let logs = stagingDecisionBuffer;
+  if (talk_id) {
+    logs = logs.filter(l => String(l.talk_id) === String(talk_id));
+  }
+  if (lead_id) {
+    logs = logs.filter(l => String(l.lead_id) === String(lead_id));
+  }
+  res.json({ count: logs.length, logs });
+});
+
+// 3. Simular Avance Temporal de Bloqueo de 24 Horas para Pruebas Controladas
+app.post('/api/staging/set-handoff-time', (req, res) => {
+  const { lead_id, talk_id, hours_ago } = req.body;
+  const hours = Number(hours_ago) || 25;
+  const simulatedTime = Date.now() - (hours * 60 * 60 * 1000);
+
+  if (talk_id) {
+    if (!centralHandoffManager.handoffs.talks) centralHandoffManager.handoffs.talks = {};
+    const cur = centralHandoffManager.handoffs.talks[String(talk_id)] || {};
+    centralHandoffManager.handoffs.talks[String(talk_id)] = {
+      ...cur,
+      lastHumanIntervention: simulatedTime,
+      timestamp: simulatedTime
+    };
+  }
+  if (lead_id) {
+    if (!centralHandoffManager.handoffs.leads) centralHandoffManager.handoffs.leads = {};
+    const cur = centralHandoffManager.handoffs.leads[String(lead_id)] || {};
+    centralHandoffManager.handoffs.leads[String(lead_id)] = {
+      ...cur,
+      lastHumanIntervention: simulatedTime,
+      timestamp: simulatedTime
+    };
+  }
+  centralHandoffManager.save();
+
+  res.json({
+    status: 'ok',
+    simulated_hours_ago: hours,
+    simulated_timestamp: simulatedTime,
+    lead_id,
+    talk_id
+  });
+});
+
+// 4. Verificación de Capacidades y Permisos en Vivo de la API de Kommo
+app.get('/api/audit-kommo-lock-capability', async (req, res) => {
+  const token = process.env.KOMMO_TOKEN;
+  const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+  if (!token) return res.status(500).json({ error: 'KOMMO_TOKEN no configurado' });
+  const headers = { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` };
+
+  const results = {};
+
+  // A. Probar Endpoint de Mensajes de Conversación (External Chat History)
+  try {
+    const talkRes = await axios.get(`https://${subdomain}.kommo.com/api/v4/talks/12345/messages`, { headers, timeout: 5000 });
+    results.talk_messages = { status: talkRes.status, available: true };
+  } catch (err) {
+    results.talk_messages = {
+      status: err.response?.status || 500,
+      available: false,
+      error: err.response?.data?.['detail'] || err.message,
+      limitation: 'El token carece del scope "crm_chats_read" (External chat history). Prohibido acceso directo al historial de chat.'
+    };
+  }
+
+  // B. Probar Endpoint de Eventos Outgoing
+  try {
+    const evRes = await axios.get(`https://${subdomain}.kommo.com/api/v4/events?filter[type]=outgoing_chat_message&limit=5`, { headers, timeout: 5000 });
+    const events = evRes.data?._embedded?.events || [];
+    results.outgoing_events = {
+      status: evRes.status,
+      count: events.length,
+      sample_created_by: events[0]?.created_by,
+      sample_origin: events[0]?.value_after?.[0]?.message?.origin,
+      can_differentiate_salesbot_vs_human: false,
+      limitation: 'Eventos de WhatsApp / Salesbot registran created_by: 0 sin metadatos de autor. No es posible diferenciar Salesbot de asesor humano vía eventos. Se requiere silencio preventivo fail-closed.'
+    };
+  } catch (err) {
+    results.outgoing_events = { status: err.response?.status || 500, error: err.message };
+  }
+
+  res.json(results);
 });
 
 if (require.main === module) {
