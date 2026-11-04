@@ -716,7 +716,8 @@ REGLAS ESTRICTAS:
           { role: 'user', content: userQuestion }
         ],
         temperature: 0.0,
-        max_tokens: 1024
+        max_tokens: 2048,
+        reasoning: { exclude: true }
       },
       {
         headers: {
@@ -737,10 +738,20 @@ REGLAS ESTRICTAS:
     }
     const tokensUsed = response.data?.usage?.total_tokens || 0;
 
-    // Parseo seguro de JSON
+    // Parseo seguro de JSON robusto contra razonamiento, bloques markdown o texto explicativo
     let parsed = null;
     try {
-      const cleanJson = rawContent.replace(/```json\s*/i, '').replace(/```/g, '').trim();
+      let cleanJson = rawContent;
+      const jsonBlockMatch = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (jsonBlockMatch && jsonBlockMatch[1]) {
+        cleanJson = jsonBlockMatch[1].trim();
+      } else {
+        const objMatch = rawContent.match(/\{[\s\S]*"has_data"[\s\S]*\}/);
+        if (objMatch) {
+          cleanJson = objMatch[0].trim();
+        }
+      }
+      cleanJson = cleanJson.replace(/```json\s*/i, '').replace(/```/g, '').trim();
       parsed = JSON.parse(cleanJson);
     } catch (parseErr) {
       console.warn('[Claude JSON Parse Error]:', rawContent);

@@ -40,6 +40,8 @@ const centralHandoffManager = new HandoffManager(
       const events = evRes.data?._embedded?.events || [];
       for (const ev of events) {
         if (leadId && String(ev.entity_id) === String(leadId)) {
+          // Ignorar mensajes salientes automáticos de robots/Salesbot/API (created_by === 0)
+          if (ev.created_by === 0) continue;
           return { lastHumanTimestamp: ev.created_at * 1000 };
         }
       }
@@ -4797,7 +4799,8 @@ REGLAS ESTRICTAS:
           { role: 'user', content: syntheticQuestion }
         ],
         temperature: 0.0,
-        max_tokens: 1024
+        max_tokens: 2048,
+        reasoning: { exclude: true }
       },
       {
         headers: {
@@ -4823,7 +4826,17 @@ REGLAS ESTRICTAS:
     let validationDetails = '';
 
     try {
-      const cleanJson = rawContent.replace(/```json\s*/i, '').replace(/```/g, '').trim();
+      let cleanJson = rawContent;
+      const jsonBlockMatch = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (jsonBlockMatch && jsonBlockMatch[1]) {
+        cleanJson = jsonBlockMatch[1].trim();
+      } else {
+        const objMatch = rawContent.match(/\{[\s\S]*"has_data"[\s\S]*\}/);
+        if (objMatch) {
+          cleanJson = objMatch[0].trim();
+        }
+      }
+      cleanJson = cleanJson.replace(/```json\s*/i, '').replace(/```/g, '').trim();
       parsedJson = JSON.parse(cleanJson);
       jsonValid = true;
 
