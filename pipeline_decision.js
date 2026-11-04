@@ -711,20 +711,25 @@ REGLAS ESTRICTAS:
           { role: 'user', content: userQuestion }
         ],
         temperature: 0.0,
-        max_tokens: 220
+        max_tokens: 1024
       },
       {
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`,
           'HTTP-Referer': 'https://tu-techo-ideal-bot-1.onrender.com',
           'X-Title': 'Tu Techo Ideal Pipeline Decision',
           'Content-Type': 'application/json'
         },
-        timeout: 12000
+        timeout: 25000
       }
     );
 
-    const rawContent = response.data?.choices?.[0]?.message?.content?.trim() || '';
+    const choice = response.data?.choices?.[0];
+    let rawContent = (choice?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    if (!rawContent && choice?.message?.reasoning) {
+      const match = choice.message.reasoning.match(/\{[\s\S]*\}/);
+      if (match) rawContent = match[0].trim();
+    }
     const tokensUsed = response.data?.usage?.total_tokens || 0;
 
     // Parseo seguro de JSON

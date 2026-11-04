@@ -4603,7 +4603,7 @@ REGLAS ESTRICTAS:
           { role: 'user', content: syntheticQuestion }
         ],
         temperature: 0.0,
-        max_tokens: 220
+        max_tokens: 1024
       },
       {
         headers: {
@@ -4612,12 +4612,17 @@ REGLAS ESTRICTAS:
           'X-Title': 'Tu Techo Ideal Staging Verification',
           'Content-Type': 'application/json'
         },
-        timeout: 18000
+        timeout: 25000
       }
     );
 
     const latencyMs = Date.now() - startTime;
-    const rawContent = apiRes.data?.choices?.[0]?.message?.content?.trim() || '';
+    const choice = apiRes.data?.choices?.[0];
+    let rawContent = (choice?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    if (!rawContent && choice?.message?.reasoning) {
+      const match = choice.message.reasoning.match(/\{[\s\S]*\}/);
+      if (match) rawContent = match[0].trim();
+    }
     let parsedJson = null;
     let jsonValid = false;
     let validationPassed = false;
