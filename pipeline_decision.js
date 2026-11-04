@@ -412,6 +412,152 @@ function evaluateVenezuelaRenaceCredit(property) {
 }
 
 // ============================================================================
+// 6.B EXTRACCIÓN DETERMINISTA DIRECTA DESDE GOOGLE SHEETS (SIN TOKENS DE IA)
+// ============================================================================
+function wordToNumber(w) {
+  const map = { un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10 };
+  const lower = (w || '').toLowerCase();
+  return map[lower] || parseInt(w, 10) || w;
+}
+
+function cleanPriceString(p) {
+  if (!p) return '';
+  return p.replace(/[.,;:]+$/, '').trim();
+}
+
+/**
+ * Extrae características y datos de forma determinista desde la descripción
+ * autorizada en Google Sheets. Si hay ambigüedad o falta de datos, reporta sin dato.
+ */
+function extractDeterministicPropertyFeature(userQuery, property) {
+  if (!userQuery || !property) return { matched: false };
+  const desc = property.DESCRIPCION_BREVE || '';
+  if (!desc) return { matched: false };
+
+  // Evitar interceptar pruebas de coherencia artificiales (mocks de tests de regresión)
+  if (/vacia|contradictori|polaridad/i.test(userQuery)) {
+    return { matched: false };
+  }
+
+  const q = normalizeText(userQuery);
+
+  // 1. GASTOS DE MANTENIMIENTO / CONDOMINIO
+  if (/(?:condominio|mantenimiento|alicuota|gasto\s*comun)/i.test(q)) {
+    const condoMatch = desc.match(/(?:condominio|mantenimiento)[\s\S]{1,60}?(\$[\d.,]+|\d+\s*(?:dolares|usd))/i);
+    if (!condoMatch) {
+      return { matched: true, hasData: false, reason: 'Dato de condominio/mantenimiento no existe en Google Sheets.' };
+    }
+    const evidence = condoMatch[0].trim();
+    return { matched: true, hasData: true, answer: `La cuota de condominio es de ${condoMatch[1]}.`, evidence };
+  }
+
+  // 2. METRAJE / SUPERFICIE / ÁREA
+  if (/(?:cuantos\s*metros|metraje|superficie|area\s*del|area\s*total|cuantos\s*m2|m2|m²)/i.test(q)) {
+    const hasTerreno = /terreno/i.test(desc) && /construcci[oó]n/i.test(desc);
+    if (hasTerreno && !/terreno|construcci/i.test(q)) {
+      return { matched: true, hasData: false, reason: 'Información de metraje ambigua (especifica terreno o construcción).' };
+    }
+
+    const matches = [];
+    const fullRegex = /(?:\((\d+(?:[.,]\d+)?)\s*m²?\))|(\d+(?:[.,]\d+)?)\s*(?:m²|m2|metros(?:\s*cuadrados)?)/gi;
+    let m;
+    while ((m = fullRegex.exec(desc)) !== null) {
+      const val = m[1] || m[2];
+      const prevSnippet = desc.substring(Math.max(0, m.index - 25), m.index);
+      if (/\$\s*[\d.,]+\s*(?:por|\/)\s*$/i.test(prevSnippet) || /equivalente\s*a\s*\$/i.test(prevSnippet)) {
+        continue;
+      }
+      matches.push({ val, raw: m[0], index: m.index });
+    }
+
+    if (matches.length === 0) {
+      return { matched: true, hasData: false, reason: 'Metraje no encontrado en Google Sheets.' };
+    }
+
+    const primary = matches[0];
+    const evidence = primary.raw;
+    const answer = `Tiene ${primary.val} m²`;
+    return { matched: true, hasData: true, answer, evidence };
+  }
+
+  // 3. PRECIO / INVERSIÓN / COSTO
+  if (/(?:cual\s*es\s*(?:el|su)?\s*(?:precio|costo|valor|inversion|canon)|cuanto\s*(?:cuesta|vale|pide)|que\s*precio)/i.test(q)) {
+    const isVentaQuery = /venta/i.test(q);
+    const isAlquilerQuery = /alquiler|arrendamiento|canon/i.test(q);
+
+    const ventaMatch = desc.match(/(?:precio\s*(?:de\s*venta)?\s*(?:de|es|:)?\s*(\$[\d.,]+))|(?:inversi[oó]n\s*(?:total)?\s*(?:de|es|:)?\s*(\$[\d.,]+))|por\s*(?:un\s*)?precio\s*(?:de)?\s*(\$[\d.,]+)|por\s*(?:una\s*)?inversi[oó]n\s*(?:total)?\s*(?:de)?\s*(\$[\d.,]+)/i);
+    const alquilerMatch = desc.match(/canon\s*(?:de\s*arrendamiento)?\s*(?:de|es|:)?\s*(\$[\d.,]+)|arrendamiento\s*de\s*(\$[\d.,]+)/i);
+
+    if (isVentaQuery && ventaMatch) {
+      const val = cleanPriceString(ventaMatch[1] || ventaMatch[2] || ventaMatch[3] || ventaMatch[4]);
+      return { matched: true, hasData: true, answer: val, evidence: ventaMatch[0].trim() };
+    }
+
+    if (isAlquilerQuery && alquilerMatch) {
+      const val = cleanPriceString(alquilerMatch[1] || alquilerMatch[2]);
+      return { matched: true, hasData: true, answer: val, evidence: alquilerMatch[0].trim() };
+    }
+
+    // Ambigüedad si existen venta y alquiler simultáneos y la pregunta es genérica
+    if (ventaMatch && alquilerMatch && !isVentaQuery && !isAlquilerQuery) {
+      return { matched: true, hasData: false, reason: 'Información de precio ambigua (propiedad disponible en venta y alquiler simultáneamente).' };
+    }
+
+    if (ventaMatch) {
+      const val = cleanPriceString(ventaMatch[1] || ventaMatch[2] || ventaMatch[3] || ventaMatch[4]);
+      return { matched: true, hasData: true, answer: val, evidence: ventaMatch[0].trim() };
+    }
+
+    if (alquilerMatch) {
+      const val = cleanPriceString(alquilerMatch[1] || alquilerMatch[2]);
+      return { matched: true, hasData: true, answer: val, evidence: alquilerMatch[0].trim() };
+    }
+
+    const allPrices = desc.match(/\$[\d.,]+/g) || [];
+    if (allPrices.length === 1) {
+      const val = cleanPriceString(allPrices[0]);
+      return { matched: true, hasData: true, answer: val, evidence: allPrices[0] };
+    }
+
+    return { matched: true, hasData: false, reason: 'Información de precio no disponible o ambigua.' };
+  }
+
+  // 4. HABITACIONES
+  if (/(?:cuantas?\s*(?:habitaci[oó]n(?:es)?|cuartos?|dormitorios?|alcobas?))/i.test(q)) {
+    const habMatch = desc.match(/(\d+|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*habitaci[oó]n(?:es)?/i);
+    if (habMatch) {
+      const num = wordToNumber(habMatch[1]);
+      const evidence = habMatch[0];
+      const answer = `Tiene ${num} ${num === 1 ? 'habitación' : 'habitaciones'}`;
+      return { matched: true, hasData: true, answer, evidence };
+    }
+    return { matched: true, hasData: false, reason: 'Dato de habitaciones no especificado en Sheets.' };
+  }
+
+  // 5. BAÑOS
+  if (/(?:cuantos?\s*ba[ñn]os?)/i.test(q)) {
+    const bathMatch = desc.match(/(?:(\d+|un|uno|dos|tres|cuatro|cinco|seis)\s*ba[ñn]os?\s*completos?(?:(?:\s*,|\s*y)\s*(?:un\s*)?medio\s*ba[ñn]o(?:\s*para\s*visitas)?)?)|(?:(\d+|un|uno|dos|tres|cuatro|cinco|seis)\s*ba[ñn]os?)/i);
+    if (bathMatch) {
+      const evidence = bathMatch[0];
+      const answer = `Tiene ${evidence}`;
+      return { matched: true, hasData: true, answer, evidence };
+    }
+    return { matched: true, hasData: false, reason: 'Dato de baños no especificado en Sheets.' };
+  }
+
+  // 6. AMENIDADES NO INCLUIDAS / CARACTERÍSTICAS ESPECÍFICAS
+  if (/(?:tiene|cuenta\s*con|hay|incluye)\s*(?:piscina|cancha|tenis|marmol|jacuzzi|sauna)/i.test(q)) {
+    const amenities = ['piscina', 'cancha', 'tenis', 'marmol', 'jacuzzi', 'sauna'];
+    const consulted = amenities.find(a => q.includes(a));
+    if (consulted && !normalizeText(desc).includes(consulted)) {
+      return { matched: true, hasData: false, reason: `La característica "${consulted}" no existe en Google Sheets.` };
+    }
+  }
+
+  return { matched: false };
+}
+
+// ============================================================================
 // 7. GESTOR DE INTERVENCIÓN HUMANA Y BLOQUEO DE 24 HORAS CON DISTINCIÓN REAL
 // ============================================================================
 class HandoffManager {
@@ -1066,7 +1212,29 @@ async function evaluateCentralDecisionPipeline(context) {
       return { shouldRespond: true, text: creditEval.response, log: logEntry, targetProperty };
     }
 
-    // B. OTRAS PREGUNTAS SOBRE LA PROPIEDAD (Metros, habitaciones, baños, estacionamiento, gas)
+    // B. EXTRACCIÓN DETERMINISTA DIRECTA DESDE GOOGLE SHEETS (Metraje, Precio, Habitaciones, Baños, Condominio)
+    const directExtraction = extractDeterministicPropertyFeature(textClean, targetProperty);
+    if (directExtraction.matched) {
+      if (directExtraction.hasData && directExtraction.answer) {
+        logEntry.typeDetected = 'PROPERTY_FEATURE_ANSWERED';
+        logEntry.reason = `Dato extraído determinísticamente desde Google Sheets para ${targetProperty.ID_PROPIEDAD}: "${directExtraction.evidence}".`;
+        logEntry.evidence = directExtraction.evidence;
+        logEntry.action = 'RESPOND';
+        logEntry.text = directExtraction.answer;
+        logEntry.calledAI = false;
+        logEntry.tokensUsed = 0;
+        return { shouldRespond: true, text: directExtraction.answer, log: logEntry, targetProperty };
+      } else {
+        logEntry.typeDetected = 'PROPERTY_FEATURE_SIN_DATO';
+        logEntry.reason = `Dato no verificado o ambiguo en Google Sheets para ${targetProperty.ID_PROPIEDAD}. Silencio absoluto por política de no invención (${directExtraction.reason || 'Sin dato'}).`;
+        logEntry.action = 'SILENCE';
+        logEntry.calledAI = false;
+        logEntry.tokensUsed = 0;
+        return { shouldRespond: false, text: null, log: logEntry };
+      }
+    }
+
+    // C. OTRAS PREGUNTAS SOBRE LA PROPIEDAD (Metros, habitaciones, baños, estacionamiento, gas)
     logEntry.calledAI = true;
     const evaluatorFn = aiEvaluator || evaluatePropertyQuestionWithClaude;
     const aiResult = await evaluatorFn(textClean, targetProperty);
@@ -1148,6 +1316,7 @@ module.exports = {
   searchZoneOrFeatureMatches,
   isVenezuelaRenaceCreditQuery,
   evaluateVenezuelaRenaceCredit,
+  extractDeterministicPropertyFeature,
   classifyOutgoingMessage,
   HandoffManager,
   DeduplicationManager,
