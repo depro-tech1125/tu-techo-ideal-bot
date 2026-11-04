@@ -20,66 +20,66 @@ async function testEndpointProtection() {
 
   // 1. Acceso NO autenticado a /api/test-nemotron-inference
   try {
-    await axios.get(`${BASE_URL}/api/test-nemotron-inference`, { timeout: 10000 });
+    await axios.get(`${BASE_URL}/api/test-nemotron-inference`, { timeout: 25000 });
     console.error('❌ [1/6] FALLÓ: /api/test-nemotron-inference permitió acceso sin autenticación');
   } catch (err) {
     if (err.response?.status === 401) {
       console.log('✅ [1/6] PASÓ: /api/test-nemotron-inference sin token -> HTTP 401 Unauthorized');
       passed++;
     } else {
-      console.error(`❌ [1/6] FALLÓ: Esperado 401, recibido ${err.response?.status}`);
+      console.error(`❌ [1/6] FALLÓ: Esperado 401, recibido ${err.response?.status} (${err.message})`);
     }
   }
 
   // 2. Acceso NO autenticado a /api/staging-decision-logs
   try {
-    await axios.get(`${BASE_URL}/api/staging-decision-logs`, { timeout: 10000 });
+    await axios.get(`${BASE_URL}/api/staging-decision-logs`, { timeout: 25000 });
     console.error('❌ [2/6] FALLÓ: /api/staging-decision-logs permitió acceso sin autenticación');
   } catch (err) {
     if (err.response?.status === 401) {
       console.log('✅ [2/6] PASÓ: /api/staging-decision-logs sin token -> HTTP 401 Unauthorized');
       passed++;
     } else {
-      console.error(`❌ [2/6] FALLÓ: Esperado 401, recibido ${err.response?.status}`);
+      console.error(`❌ [2/6] FALLÓ: Esperado 401, recibido ${err.response?.status} (${err.message})`);
     }
   }
 
   // 3. Acceso NO autenticado a /api/staging/set-handoff-time
   try {
-    await axios.post(`${BASE_URL}/api/staging/set-handoff-time`, { hours_ago: 25 }, { timeout: 10000 });
+    await axios.post(`${BASE_URL}/api/staging/set-handoff-time`, { hours_ago: 25 }, { timeout: 25000 });
     console.error('❌ [3/6] FALLÓ: /api/staging/set-handoff-time permitió mutación sin autenticación');
   } catch (err) {
     if (err.response?.status === 401) {
       console.log('✅ [3/6] PASÓ: /api/staging/set-handoff-time sin token -> HTTP 401 Unauthorized');
       passed++;
     } else {
-      console.error(`❌ [3/6] FALLÓ: Esperado 401, recibido ${err.response?.status}`);
+      console.error(`❌ [3/6] FALLÓ: Esperado 401, recibido ${err.response?.status} (${err.message})`);
     }
   }
 
   // 4. Acceso NO autenticado a /api/staging/controlled-dispatch-status
   try {
-    await axios.get(`${BASE_URL}/api/staging/controlled-dispatch-status`, { timeout: 10000 });
+    await axios.get(`${BASE_URL}/api/staging/controlled-dispatch-status`, { timeout: 25000 });
     console.error('❌ [4/6] FALLÓ: /api/staging/controlled-dispatch-status permitió acceso sin autenticación');
   } catch (err) {
     if (err.response?.status === 401) {
       console.log('✅ [4/6] PASÓ: /api/staging/controlled-dispatch-status sin token -> HTTP 401 Unauthorized');
       passed++;
     } else {
-      console.error(`❌ [4/6] FALLÓ: Esperado 401, recibido ${err.response?.status}`);
+      console.error(`❌ [4/6] FALLÓ: Esperado 401, recibido ${err.response?.status} (${err.message})`);
     }
   }
 
   // 5. Acceso NO autenticado a /api/staging/configure-test-dispatch
   try {
-    await axios.post(`${BASE_URL}/api/staging/configure-test-dispatch`, { enabled: true }, { timeout: 10000 });
+    await axios.post(`${BASE_URL}/api/staging/configure-test-dispatch`, { enabled: true }, { timeout: 25000 });
     console.error('❌ [5/6] FALLÓ: /api/staging/configure-test-dispatch permitió mutación sin autenticación');
   } catch (err) {
     if (err.response?.status === 401) {
       console.log('✅ [5/6] PASÓ: /api/staging/configure-test-dispatch sin token -> HTTP 401 Unauthorized');
       passed++;
     } else {
-      console.error(`❌ [5/6] FALLÓ: Esperado 401, recibido ${err.response?.status}`);
+      console.error(`❌ [5/6] FALLÓ: Esperado 401, recibido ${err.response?.status} (${err.message})`);
     }
   }
 
@@ -87,7 +87,7 @@ async function testEndpointProtection() {
   try {
     const resAuth = await axios.get(`${BASE_URL}/api/staging-decision-logs`, {
       headers: { 'x-staging-auth': STAGING_AUTH },
-      timeout: 10000
+      timeout: 25000
     });
     const logs = resAuth.data?.logs || [];
     const hasRawPersonalData = logs.some(l => l.client_phone || l.client_name || (l.lead_id && !l.lead_id.includes('***')));

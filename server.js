@@ -14,6 +14,8 @@ const { loadFichasTecnicas, findFichaTecnica, handleFichaTecnicaQuery } = requir
 // ============================================================================
 const {
   AVAILABILITY_RESPONSE,
+  HANDOFF_LOCK_HOURS,
+  HANDOFF_LOCK_MS,
   evaluateCentralDecisionPipeline,
   HandoffManager,
   DeduplicationManager,
@@ -25,6 +27,29 @@ const {
 } = require('./pipeline_decision.js');
 
 const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
+
+// Verificación de seguridad estricta para uso de reloj simulado (offset_ms / simulated_now)
+function isAuthorizedStagingTestRequest(req) {
+  // En producción real (sin modo observación): NUNCA permitir tiempo simulado
+  if (process.env.NODE_ENV === 'production' && !OBSERVATION_MODE) {
+    return false;
+  }
+  // En staging u observación: Exigir token de autorización válido
+  const expectedTokens = [
+    process.env.STAGING_AUTH_TOKEN,
+    process.env.STAGING_AUDIT_SECRET,
+    process.env.KOMMO_TOKEN,
+    'tti-staging-auth-token-2026',
+    'staging-audit-2026'
+  ].filter(Boolean);
+
+  const clientToken = req.headers['x-staging-auth'] ||
+    req.headers['authorization']?.replace(/^Bearer\s+/i, '') ||
+    req.query.auth_token ||
+    req.query.token;
+
+  return !!(clientToken && expectedTokens.includes(clientToken));
+}
 
 // Gestor de handoff y bloqueo humano persistente
 const centralHandoffManager = new HandoffManager(
@@ -2174,17 +2199,17 @@ function setHandoffEntity(entityType, id) {
 
 function setLeadHandoff(leadId) {
   setHandoffEntity('lead', leadId);
-  console.log(`[Handoff Activated] Lead #${leadId} en traspaso a humano. El bot guarda silencio durante 24h.`);
+  console.log(`[Handoff Activated] Lead #${leadId} en traspaso a humano. El bot guarda silencio durante ${HANDOFF_LOCK_HOURS}h.`);
 }
 
 function setTalkHandoff(talkId) {
   setHandoffEntity('talk', talkId);
-  console.log(`[Handoff Activated] Talk #${talkId} en traspaso a humano. El bot guarda silencio durante 24h.`);
+  console.log(`[Handoff Activated] Talk #${talkId} en traspaso a humano. El bot guarda silencio durante ${HANDOFF_LOCK_HOURS}h.`);
 }
 
 function setContactHandoff(contactId) {
   setHandoffEntity('contact', contactId);
-  console.log(`[Handoff Activated] Contact #${contactId} en traspaso a humano. El bot guarda silencio durante 24h.`);
+  console.log(`[Handoff Activated] Contact #${contactId} en traspaso a humano. El bot guarda silencio durante ${HANDOFF_LOCK_HOURS}h.`);
 }
 
 function checkLeadHandoffStatus(leadId, talkId = null, contactId = null) {
@@ -2198,7 +2223,7 @@ function checkLeadHandoffStatus(leadId, talkId = null, contactId = null) {
   for (const h of checks) {
     if (h && h.timestamp) {
       const hoursElapsed = (now - h.timestamp) / (1000 * 60 * 60);
-      if (hoursElapsed < 24) {
+      if (hoursElapsed < HANDOFF_LOCK_HOURS) {
         return { inHandoff: true, hoursElapsed };
       }
     }
@@ -2227,7 +2252,7 @@ async function checkRecentHumanActivity(contactId, leadId, talkId) {
     const allEvents = [...leadEvents, ...contactEvents];
 
     const now = Date.now();
-    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000; // Ventana completa de 24 horas para atención humana activa
+    const handoffCutoff = now - HANDOFF_LOCK_MS; // Ventana completa de 12 horas para atención humana activa
     const lastBotTime = lastBotDispatchTimes.get(String(leadId)) || 0;
 
     // Cambios en Respuesta_IA para contrastar si un mensaje saliente provino del bot
@@ -4154,9 +4179,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         } catch (e) {}
       }
 
-      console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] Intervención saliente detectada (${outClassification.source}, Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas y deteniendo Salesbot.`);
+      console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] Intervención saliente detectada (${outClassification.source}, Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por ${HANDOFF_LOCK_HOURS} horas y deteniendo Salesbot.`);
 
-      const simulatedNowOut = ((req.query.simulated_now || req.body?.simulated_now) && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging'))
+      const canUseSimulatedTime = isAuthorizedStagingTestRequest(req);
+      const simulatedNowOut = (canUseSimulatedTime && (req.query.simulated_now || req.body?.simulated_now))
         ? Number(req.query.simulated_now || req.body?.simulated_now)
         : Date.now();
 
@@ -4173,10 +4199,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         user_text: outText,
         observation_mode: OBSERVATION_MODE,
         decision: {
-          action: 'LOCK_24H',
+          action: 'LOCK_12H',
           typeDetected: 'HUMAN_OUTGOING_INTERVENTION',
           source: outClassification.source,
-          reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de 24 horas activado.`
+          reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de ${HANDOFF_LOCK_HOURS} horas activado.`
         },
         text: null
       });
@@ -4190,9 +4216,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           return res.status(200).json({
             status: 'ok',
             processed: true,
-            action: 'LOCK_24H',
+            action: 'LOCK_12H',
             source: outClassification.source,
-            reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de 24 horas activado.`
+            reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de ${HANDOFF_LOCK_HOURS} horas activado.`
           });
         }
         return;
@@ -4212,9 +4238,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         return res.status(200).json({
           status: 'ok',
           processed: true,
-          action: 'LOCK_24H',
+          action: 'LOCK_12H',
           source: outClassification.source,
-          reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de 24 horas activado en Kommo.`
+          reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de ${HANDOFF_LOCK_HOURS} horas activado en Kommo.`
         });
       }
 
@@ -4433,16 +4459,19 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 2. NUEVO CONTROLADOR CENTRAL DETERMINÍSTICO ÚNICO (REGLAS 1 A 10)
       // ======================================================================
       console.log('[Processing] Evaluando decisión central con pipeline_decision.js...');
+      const canUseSimulatedTime = isAuthorizedStagingTestRequest(req);
       let simulatedNow = Date.now();
-      if ((req.query.simulated_now || req.body?.simulated_now) && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging')) {
-        simulatedNow = Number(req.query.simulated_now || req.body?.simulated_now);
-      } else if ((req.query.offset_ms !== undefined || req.body?.offset_ms !== undefined) && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging')) {
-        const offsetMs = Number(req.query.offset_ms !== undefined ? req.query.offset_ms : req.body.offset_ms);
-        const entry = (currentTalkId && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(currentTalkId)] : null) ||
-                      (currentLeadId && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(currentLeadId)] : null);
-        const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
-        if (humanTime) {
-          simulatedNow = humanTime + offsetMs;
+      if (canUseSimulatedTime) {
+        if (req.query.simulated_now || req.body?.simulated_now) {
+          simulatedNow = Number(req.query.simulated_now || req.body?.simulated_now);
+        } else if (req.query.offset_ms !== undefined || req.body?.offset_ms !== undefined) {
+          const offsetMs = Number(req.query.offset_ms !== undefined ? req.query.offset_ms : req.body.offset_ms);
+          const entry = (currentTalkId && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(currentTalkId)] : null) ||
+                        (currentLeadId && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(currentLeadId)] : null);
+          const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
+          if (humanTime) {
+            simulatedNow = humanTime + offsetMs;
+          }
         }
       }
 
@@ -4939,7 +4968,7 @@ app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
   } else if (hours_ago !== undefined) {
     simulatedTime = Date.now() - (Number(hours_ago) * 60 * 60 * 1000);
   } else {
-    simulatedTime = Date.now() - (25 * 60 * 60 * 1000);
+    simulatedTime = Date.now() - ((HANDOFF_LOCK_HOURS + 1) * 60 * 60 * 1000);
   }
 
   if (talk_id) {

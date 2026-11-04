@@ -120,137 +120,137 @@ async function runRigorousBoundaryTest() {
   });
 
   // --------------------------------------------------------------------------
-  // 3. T0 + 23 HORAS, 59 MINUTOS Y 59 SEGUNDOS (86.399 SEGUNDOS = 86.399.000 MS)
+  // 3. T0 + 11 HORAS, 59 MINUTOS Y 59 SEGUNDOS (43.199 SEGUNDOS = 43.199.000 MS)
   // --------------------------------------------------------------------------
-  console.log('\n--- 3. Límite: T0 + 23h 59m 59s (86.399 segundos) ---');
-  const delta23h = (23 * 3600 + 59 * 60 + 59) * 1000;
-  const T_23h = T0 + delta23h;
-  const status23h = await handoffManager.checkLockStatus(LEAD_ID, TALK_ID, null, T_23h);
-  console.log('Estado en T0 + 23h 59m 59s:', status23h);
+  console.log('\n--- 3. Límite: T0 + 11h 59m 59s (43.199 segundos) ---');
+  const delta11h = (11 * 3600 + 59 * 60 + 59) * 1000;
+  const T_11h = T0 + delta11h;
+  const status11h = await handoffManager.checkLockStatus(LEAD_ID, TALK_ID, null, T_11h);
+  console.log('Estado en T0 + 11h 59m 59s:', status11h);
 
-  const pipeline23h = await evaluateCentralDecisionPipeline({
+  const pipeline11h = await evaluateCentralDecisionPipeline({
     userText: '¿Tiene estacionamiento?',
     leadId: LEAD_ID,
     talkId: TALK_ID,
     properties,
     handoffManager,
     contextManager,
-    currentTime: T_23h
+    currentTime: T_11h
   });
 
-  console.log('Decisión del bot en T0 + 23h 59m 59s:', {
-    action: pipeline23h.log.action,
-    typeDetected: pipeline23h.log.typeDetected,
-    calledAI: pipeline23h.log.calledAI,
-    tokensUsed: pipeline23h.log.tokensUsed,
-    text: pipeline23h.text
+  console.log('Decisión del bot en T0 + 11h 59m 59s:', {
+    action: pipeline11h.log.action,
+    typeDetected: pipeline11h.log.typeDetected,
+    calledAI: pipeline11h.log.calledAI,
+    tokensUsed: pipeline11h.log.tokensUsed,
+    text: pipeline11h.text
   });
 
-  const passed23h = status23h.isLocked === true &&
-                    status23h.hoursElapsed < 24.0 &&
-                    pipeline23h.log.action === 'SILENCE' &&
-                    pipeline23h.log.typeDetected === 'HUMAN_LOCKED' &&
-                    pipeline23h.log.calledAI === false &&
-                    pipeline23h.text === null;
+  const passed11h = status11h.isLocked === true &&
+                    status11h.hoursElapsed < 12.0 &&
+                    pipeline11h.log.action === 'SILENCE' &&
+                    pipeline11h.log.typeDetected === 'HUMAN_LOCKED' &&
+                    pipeline11h.log.calledAI === false &&
+                    pipeline11h.text === null;
 
   boundaryResults.push({
-    limite: '3. T0 + 23h 59m 59s',
-    reloj_simulado: new Date(T_23h).toISOString(),
-    delta_segundos: 86399,
-    horas_transcurridas: `${status23h.hoursElapsed.toFixed(6)}h`,
-    isLocked: status23h.isLocked,
+    limite: '3. T0 + 11h 59m 59s',
+    reloj_simulado: new Date(T_11h).toISOString(),
+    delta_segundos: 43199,
+    horas_transcurridas: `${status11h.hoursElapsed.toFixed(6)}h`,
+    isLocked: status11h.isLocked,
     esperado: 'isLocked: true -> SILENCE / HUMAN_LOCKED (0 tokens)',
-    resultado: passed23h ? '✅ SUPERADO' : '❌ FALLÓ',
-    accion_bot: `${pipeline23h.log.action} (${pipeline23h.log.typeDetected})`,
-    detalle: pipeline23h.log.reason
+    resultado: passed11h ? '✅ SUPERADO' : '❌ FALLÓ',
+    accion_bot: `${pipeline11h.log.action} (${pipeline11h.log.typeDetected})`,
+    detalle: pipeline11h.log.reason
   });
 
   // --------------------------------------------------------------------------
-  // 4. T0 + 24 HORAS EXACTAS (86.400 SEGUNDOS = 86.400.000 MS)
+  // 4. T0 + 12 HORAS EXACTAS (43.200 SEGUNDOS = 43.200.000 MS)
   // --------------------------------------------------------------------------
-  console.log('\n--- 4. Límite: T0 + 24 horas exactas (86.400 segundos) ---');
-  const delta24h = (24 * 3600) * 1000;
-  const T_24h = T0 + delta24h;
-  const status24h = await handoffManager.checkLockStatus(LEAD_ID, TALK_ID, null, T_24h);
-  console.log('Estado en T0 + 24h exactas:', status24h);
+  console.log('\n--- 4. Límite: T0 + 12 horas exactas (43.200 segundos) ---');
+  const delta12h = (12 * 3600) * 1000;
+  const T_12h = T0 + delta12h;
+  const status12h = await handoffManager.checkLockStatus(LEAD_ID, TALK_ID, null, T_12h);
+  console.log('Estado en T0 + 12h exactas:', status12h);
 
-  // Demostración matemática: hoursElapsed = 24.000000 -> (hoursElapsed < 24) es estrictamente FALSE
-  const passed24h = status24h.isLocked === false && status24h.hoursElapsed === 24.0;
+  // Demostración matemática: hoursElapsed = 12.000000 -> (hoursElapsed < 12) es estrictamente FALSE
+  const passed12h = status12h.isLocked === false && status12h.hoursElapsed === 12.0;
 
   boundaryResults.push({
-    limite: '4. T0 + 24h 00m 00s',
-    reloj_simulado: new Date(T_24h).toISOString(),
-    delta_segundos: 86400,
-    horas_transcurridas: `${status24h.hoursElapsed.toFixed(6)}h`,
-    isLocked: status24h.isLocked,
-    esperado: 'isLocked: false (Expiración matemática exacta a las 24.0h)',
-    resultado: passed24h ? '✅ SUPERADO' : '❌ FALLÓ',
+    limite: '4. T0 + 12h 00m 00s',
+    reloj_simulado: new Date(T_12h).toISOString(),
+    delta_segundos: 43200,
+    horas_transcurridas: `${status12h.hoursElapsed.toFixed(6)}h`,
+    isLocked: status12h.isLocked,
+    esperado: 'isLocked: false (Expiración matemática exacta a las 12.0h)',
+    resultado: passed12h ? '✅ SUPERADO' : '❌ FALLÓ',
     accion_bot: 'BLOQUEO_EXPIRADO',
-    detalle: `hoursElapsed (${status24h.hoursElapsed}) < 24 es estrictamente FALSE -> isLocked: false`
+    detalle: `hoursElapsed (${status12h.hoursElapsed}) < 12 es estrictamente FALSE -> isLocked: false`
   });
 
   // --------------------------------------------------------------------------
-  // 5. T0 + 24 HORAS Y 1 SEGUNDO (86.401 SEGUNDOS = 86.401.000 MS)
+  // 5. T0 + 12 HORAS Y 1 SEGUNDO (43.201 SEGUNDOS = 43.201.000 MS)
   // --------------------------------------------------------------------------
-  console.log('\n--- 5. Límite: T0 + 24h y 1 segundo (86.401 segundos) ---');
-  const delta24h1s = (24 * 3600 + 1) * 1000;
-  const T_24h1s = T0 + delta24h1s;
-  const status24h1s = await handoffManager.checkLockStatus(LEAD_ID, TALK_ID, null, T_24h1s);
-  console.log('Estado en T0 + 24h 1s:', status24h1s);
+  console.log('\n--- 5. Límite: T0 + 12h y 1 segundo (43.201 segundos) ---');
+  const delta12h1s = (12 * 3600 + 1) * 1000;
+  const T_12h1s = T0 + delta12h1s;
+  const status12h1s = await handoffManager.checkLockStatus(LEAD_ID, TALK_ID, null, T_12h1s);
+  console.log('Estado en T0 + 12h 1s:', status12h1s);
 
   // Sub-prueba 5.1: Pregunta con dato oficial en Sheets (Metraje de REF-012)
-  console.log('Evaluando metraje tras 24h 1s...');
-  const pipeline24h_m2 = await evaluateCentralDecisionPipeline({
+  console.log('Evaluando metraje tras 12h 1s...');
+  const pipeline12h_m2 = await evaluateCentralDecisionPipeline({
     userText: '¿Cuántos metros tiene el apartamento?',
     leadId: LEAD_ID,
     talkId: TALK_ID,
     properties,
     handoffManager,
     contextManager,
-    currentTime: T_24h1s,
+    currentTime: T_12h1s,
     // Función mock de inferencia para comprobación puramente matemática/pipeline
     aiEvaluator: async (q, prop) => ({ text: 'Tiene 110 m²', evidence: 'apartamento amoblado de 110 m²', tokensUsed: 120, isSinDato: false })
   });
 
   console.log('Decisión 5.1 (Metraje):', {
-    action: pipeline24h_m2.log.action,
-    typeDetected: pipeline24h_m2.log.typeDetected,
-    text: pipeline24h_m2.text
+    action: pipeline12h_m2.log.action,
+    typeDetected: pipeline12h_m2.log.typeDetected,
+    text: pipeline12h_m2.text
   });
 
   // Sub-prueba 5.2: Pregunta sin dato en Sheets (Condominio mensual)
-  console.log('Evaluando condominio mensual tras 24h 1s...');
-  const pipeline24h_condo = await evaluateCentralDecisionPipeline({
+  console.log('Evaluando condominio mensual tras 12h 1s...');
+  const pipeline12h_condo = await evaluateCentralDecisionPipeline({
     userText: '¿Cuánto cuesta el condominio mensual?',
     leadId: LEAD_ID,
     talkId: TALK_ID,
     properties,
     handoffManager,
     contextManager,
-    currentTime: T_24h1s,
+    currentTime: T_12h1s,
     aiEvaluator: async (q, prop) => ({ text: null, evidence: null, tokensUsed: 100, isSinDato: true, reason: 'Dato no afirmado en Sheets.' })
   });
 
   console.log('Decisión 5.2 (Condominio):', {
-    action: pipeline24h_condo.log.action,
-    typeDetected: pipeline24h_condo.log.typeDetected,
-    text: pipeline24h_condo.text
+    action: pipeline12h_condo.log.action,
+    typeDetected: pipeline12h_condo.log.typeDetected,
+    text: pipeline12h_condo.text
   });
 
-  const passed5_1 = pipeline24h_m2.log.action === 'RESPOND' && pipeline24h_m2.text === 'Tiene 110 m²';
-  const passed5_2 = pipeline24h_condo.log.action === 'SILENCE' && pipeline24h_condo.text === null;
-  const passed24h1s = status24h1s.isLocked === false && passed5_1 && passed5_2;
+  const passed5_1 = pipeline12h_m2.log.action === 'RESPOND' && pipeline12h_m2.text === 'Tiene 110 m²';
+  const passed5_2 = pipeline12h_condo.log.action === 'SILENCE' && pipeline12h_condo.text === null;
+  const passed12h1s = status12h1s.isLocked === false && passed5_1 && passed5_2;
 
   boundaryResults.push({
-    limite: '5. T0 + 24h 00m 01s',
-    reloj_simulado: new Date(T_24h1s).toISOString(),
-    delta_segundos: 86401,
-    horas_transcurridas: `${status24h1s.hoursElapsed.toFixed(6)}h`,
-    isLocked: status24h1s.isLocked,
+    limite: '5. T0 + 12h 00m 01s',
+    reloj_simulado: new Date(T_12h1s).toISOString(),
+    delta_segundos: 43201,
+    horas_transcurridas: `${status12h1s.hoursElapsed.toFixed(6)}h`,
+    isLocked: status12h1s.isLocked,
     esperado: 'isLocked: false -> Metraje: "Tiene 110 m²" | Condominio: SILENCIO',
-    resultado: passed24h1s ? '✅ SUPERADO' : '❌ FALLÓ',
-    accion_bot: `Metraje: ${pipeline24h_m2.text} | Condominio: SILENCE`,
-    detalle: 'Reactivación condicional confirmada operando 1s después de las 24 horas'
+    resultado: passed12h1s ? '✅ SUPERADO' : '❌ FALLÓ',
+    accion_bot: `Metraje: ${pipeline12h_m2.text} | Condominio: SILENCE`,
+    detalle: 'Reactivación condicional confirmada operando 1s después de las 12 horas'
   });
 
   // --------------------------------------------------------------------------

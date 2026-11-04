@@ -46,6 +46,12 @@ const AUTHORIZED_COLUMNS = Object.freeze([
 // ============================================================================
 const AVAILABILITY_RESPONSE = 'Bienvenido a Tu Techo Ideal, sí, disponible.';
 
+// ============================================================================
+// CONSTANTES CENTRALIZADAS OFICIALES: BLOQUEO POR INTERVENCIÓN HUMANA (12 HORAS)
+// ============================================================================
+const HANDOFF_LOCK_HOURS = 12;
+const HANDOFF_LOCK_MS = HANDOFF_LOCK_HOURS * 60 * 60 * 1000; // 43,200,000 ms
+
 // Normalización de texto uniforme y determinística
 function normalizeText(text) {
   if (!text) return '';
@@ -499,7 +505,7 @@ class HandoffManager {
   }
 
   /**
-   * Comprueba el estado de bloqueo de 24 horas.
+   * Comprueba el estado de bloqueo de 12 horas.
    */
   async checkLockStatus(leadId = null, talkId = null, contactId = null, now = Date.now()) {
     // Prioridad 1: talkId específico
@@ -512,7 +518,7 @@ class HandoffManager {
 
     if (humanTime) {
       const hoursElapsed = (now - humanTime) / (1000 * 60 * 60);
-      if (hoursElapsed < 24) {
+      if (hoursElapsed < HANDOFF_LOCK_HOURS) {
         return {
           isLocked: true,
           hoursElapsed,
@@ -549,7 +555,7 @@ class HandoffManager {
         if (remoteResult && remoteResult.lastHumanTimestamp) {
           this.recordHumanIntervention(leadId, talkId, contactId, remoteResult.lastHumanTimestamp);
           const hoursElapsed = (now - remoteResult.lastHumanTimestamp) / (1000 * 60 * 60);
-          if (hoursElapsed < 24) {
+          if (hoursElapsed < HANDOFF_LOCK_HOURS) {
             return {
               isLocked: true,
               hoursElapsed,
@@ -886,7 +892,7 @@ async function evaluateCentralDecisionPipeline(context) {
   }
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 2: COMPROBACIÓN DE BLOQUEO HUMANO (24 HORAS)
+  // PRIORIDAD 2: COMPROBACIÓN DE BLOQUEO HUMANO (12 HORAS)
   // --------------------------------------------------------------------------
   const handoff = handoffManager
     ? await handoffManager.checkLockStatus(leadId, talkId, contactId, currentTime)
@@ -898,7 +904,7 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.deltaMs = handoff.lastIntervention ? (currentTime - handoff.lastIntervention) : null;
     logEntry.reason = handoff.isFailClosed
       ? handoff.reason
-      : `Conversación en bloqueo humano (${handoff.hoursElapsed.toFixed(6)}h transcurridas de 24h requeridas).`;
+      : `Conversación en bloqueo humano (${handoff.hoursElapsed.toFixed(6)}h transcurridas de ${HANDOFF_LOCK_HOURS}h requeridas).`;
     logEntry.action = 'SILENCE';
     return { shouldRespond: false, text: null, log: logEntry };
   }
@@ -931,17 +937,17 @@ async function evaluateCentralDecisionPipeline(context) {
   const wasiExtraction = extractWasiPropertyIdentifiers(textClean, properties);
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 2.1: CONDICIÓN DE REACTIVACIÓN POST-24H (REGLA 4):
-  // Tras cumplirse 24h de una intervención humana previa, se exige un nuevo enlace Wasi validado
+  // PRIORIDAD 2.1: CONDICIÓN DE REACTIVACIÓN POST-12H (REGLA 4):
+  // Tras cumplirse 12h de una intervención humana previa, se exige un nuevo enlace Wasi validado
   // o una propiedad previamente activa en el contexto de la conversación. Si no hay contexto ni enlace, silencio.
   // --------------------------------------------------------------------------
   const knownConversationProperty = (contextManager && contextManager.getContext(talkId, leadId)) ||
     (handoff && handoff.activeAutomationPropertyId && Array.isArray(properties) ? properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (handoff.activeAutomationPropertyId || '').toUpperCase()) : null);
 
-  if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= 24 && !handoff.activeAutomationPropertyId && !knownConversationProperty) {
+  if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= HANDOFF_LOCK_HOURS && !handoff.activeAutomationPropertyId && !knownConversationProperty) {
     if (wasiExtraction.count === 0) {
-      logEntry.typeDetected = 'POST_24H_REQUIRES_WASI_LINK';
-      logEntry.reason = 'Transcurridas 24h tras intervención humana, pero el cliente no envió enlace Wasi nuevo. Silencio seguro.';
+      logEntry.typeDetected = 'POST_12H_REQUIRES_WASI_LINK';
+      logEntry.reason = `Transcurridas ${HANDOFF_LOCK_HOURS}h tras intervención humana, pero el cliente no envió enlace Wasi nuevo. Silencio seguro.`;
       logEntry.action = 'SILENCE';
       return { shouldRespond: false, text: null, log: logEntry };
     }
@@ -1129,6 +1135,8 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
 
 module.exports = {
   AVAILABILITY_RESPONSE,
+  HANDOFF_LOCK_HOURS,
+  HANDOFF_LOCK_MS,
   AUTHORIZED_COLUMNS,
   normalizeText,
   adaptProperty,

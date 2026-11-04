@@ -96,7 +96,7 @@ async function auditPersistentLockAndKommo() {
 
   console.log(`    ¿Invocó kommoFetcher para reconstruir el estado?: ${kommoFetcherCalled ? 'SÍ' : 'NO'}`);
   console.log(`    ¿Reconstruyó el bloqueo tras reinicio?: ${statusAfterReboot.isLocked ? 'SÍ (BLOQUEADO)' : 'NO'}`);
-  console.log(`    Horas transcurridas reconstruidas: ${statusAfterReboot.hoursElapsed.toFixed(2)}h de 24h requeridas`);
+  console.log(`    Horas transcurridas reconstruidas: ${statusAfterReboot.hoursElapsed.toFixed(2)}h de 12h requeridas`);
   console.log('');
 
   // --------------------------------------------------------------------------
