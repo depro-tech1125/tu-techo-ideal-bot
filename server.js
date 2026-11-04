@@ -4156,14 +4156,18 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] Intervención saliente detectada (${outClassification.source}, Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por 24 horas y deteniendo Salesbot.`);
 
+      const simulatedNowOut = ((req.query.simulated_now || req.body?.simulated_now) && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging'))
+        ? Number(req.query.simulated_now || req.body?.simulated_now)
+        : Date.now();
+
       // Registrar en ambos gestores (nuevo pipeline central y compatibilidad)
-      centralHandoffManager.recordHumanIntervention(outLeadId, outTalkId, outContactId, Date.now());
+      centralHandoffManager.recordHumanIntervention(outLeadId, outTalkId, outContactId, simulatedNowOut);
       if (outLeadId) setLeadHandoff(outLeadId);
       if (outTalkId) setTalkHandoff(outTalkId);
       if (outContactId) setContactHandoff(outContactId);
 
       recordStagingDecision({
-        timestamp: Date.now(),
+        timestamp: simulatedNowOut,
         lead_id: outLeadId,
         talk_id: outTalkId,
         user_text: outText,
@@ -4429,9 +4433,18 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 2. NUEVO CONTROLADOR CENTRAL DETERMINÍSTICO ÚNICO (REGLAS 1 A 10)
       // ======================================================================
       console.log('[Processing] Evaluando decisión central con pipeline_decision.js...');
-      const simulatedNow = (req.query.simulated_now && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging'))
-        ? Number(req.query.simulated_now)
-        : Date.now();
+      let simulatedNow = Date.now();
+      if ((req.query.simulated_now || req.body?.simulated_now) && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging')) {
+        simulatedNow = Number(req.query.simulated_now || req.body?.simulated_now);
+      } else if ((req.query.offset_ms !== undefined || req.body?.offset_ms !== undefined) && (OBSERVATION_MODE || process.env.NODE_ENV === 'staging')) {
+        const offsetMs = Number(req.query.offset_ms !== undefined ? req.query.offset_ms : req.body.offset_ms);
+        const entry = (currentTalkId && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(currentTalkId)] : null) ||
+                      (currentLeadId && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(currentLeadId)] : null);
+        const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
+        if (humanTime) {
+          simulatedNow = humanTime + offsetMs;
+        }
+      }
 
       const pipelineResult = await evaluateCentralDecisionPipeline({
         userText,
@@ -4961,12 +4974,23 @@ app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
 });
 
 app.get('/api/staging/check-lock-status', requireStagingAuth, async (req, res) => {
-  const { lead_id, talk_id, simulated_now } = req.query;
-  const now = simulated_now ? Number(simulated_now) : Date.now();
+  const { lead_id, talk_id, simulated_now, offset_ms } = req.query;
+  let now = Date.now();
+  if (simulated_now) {
+    now = Number(simulated_now);
+  } else if (offset_ms !== undefined) {
+    const entry = (talk_id && centralHandoffManager.handoffs.talks ? centralHandoffManager.handoffs.talks[String(talk_id)] : null) ||
+                  (lead_id && centralHandoffManager.handoffs.leads ? centralHandoffManager.handoffs.leads[String(lead_id)] : null);
+    const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
+    if (humanTime) {
+      now = humanTime + Number(offset_ms);
+    }
+  }
   const status = await centralHandoffManager.checkLockStatus(lead_id, talk_id, null, now);
   res.json({
     status: 'ok',
     now,
+    simulated_delta_ms: status.lastIntervention ? (now - status.lastIntervention) : null,
     lock_status: status
   });
 });

@@ -894,9 +894,11 @@ async function evaluateCentralDecisionPipeline(context) {
 
   if (handoff.isLocked) {
     logEntry.typeDetected = 'HUMAN_LOCKED';
+    logEntry.hoursElapsed = handoff.hoursElapsed;
+    logEntry.deltaMs = handoff.lastIntervention ? (currentTime - handoff.lastIntervention) : null;
     logEntry.reason = handoff.isFailClosed
       ? handoff.reason
-      : `Conversación en bloqueo humano (${handoff.hoursElapsed.toFixed(1)}h transcurridas de 24h requeridas).`;
+      : `Conversación en bloqueo humano (${handoff.hoursElapsed.toFixed(6)}h transcurridas de 24h requeridas).`;
     logEntry.action = 'SILENCE';
     return { shouldRespond: false, text: null, log: logEntry };
   }

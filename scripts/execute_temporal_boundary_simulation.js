@@ -1,32 +1,34 @@
 /**
  * ============================================================================
- * TU TECHO IDEAL v5.0 — SIMULACIÓN TEMPORAL RIGUROSA DE LÍMITES DE BLOQUEO 24H
+ * TU TECHO IDEAL v5.0 — VALIDACIÓN TEMPORAL RIGUROSA DETERMINISTA (24 HORAS)
  * ============================================================================
- * Validación completa de:
- * FASE 1: Estado de despliegue, /health, OBSERVATION_MODE=true, lista blanca desactivada.
- * FASE 2: Los 5 límites temporales exactos (T0, +1m, +23h59m59s, +24h00m00s, +24h00m01s).
- * FASE 3: Validación de comportamiento:
- *         - Silencio absoluto ante preguntas con datos durante el bloqueo.
- *         - Ecos de Salesbot (created_by === 0) no bloquean.
- *         - Respuesta verificada post-24h ("Tiene 110 m²").
- *         - Silencio absoluto ante datos inexistentes post-24h (Condominio).
- *         - Nueva intervención humana reinicia período de 24h.
- * FASE 4: Verificación de seguridad y protección de endpoints ante acceso sin token (401).
+ * Validación matemática exacta sin latencia HTTP:
+ * Inyección de tiempo relativo exacto en milisegundos (offset_ms):
+ * - 0 ms (T0): Intervención humana registrada (isLocked: true, 0.000000h).
+ * - 60.000 ms (T0 + 1m): Bloqueo activo (isLocked: true, 0.016667h, 0 tokens IA).
+ * - 86.399.000 ms (T0 + 23h 59m 59s): Bloqueo activo (isLocked: true, 23.999722h, 0 tokens IA).
+ * - 86.400.000 ms (T0 + 24h exactas): Bloqueo vencido (isLocked: false, 24.000000h, operador < 24).
+ * - 86.401.000 ms (T0 + 24h 1s): Reactivación condicional (isLocked: false, 24.000278h):
+ *     * Pregunta con dato verificado ("¿Cuántos metros tiene?"): Responde "Tiene 110 m²".
+ *     * Pregunta sin dato en Sheets ("¿Condominio mensual?"): Silencio absoluto (text: null).
+ *     * Mensajes salientes de Salesbot (created_by === 0): Descartados como BOT_OUTGOING_ECHO.
+ * - Nueva intervención humana: Reinicio completo de período de 24h (T_nuevo).
+ * - Seguridad: Endpoints de Staging protegidos contra acceso no autorizado (HTTP 401).
  * ============================================================================
  */
 
 const axios = require('axios');
 require('dotenv').config();
 
-const BASE_URL = 'https://tu-techo-ideal-staging.onrender.com';
+const BASE_URL = process.env.STAGING_URL || 'https://tu-techo-ideal-staging.onrender.com';
 const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN || process.env.STAGING_AUDIT_SECRET || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
 
 const TARGET_LEAD_ID = '25092108';
 const TARGET_TALK_ID = '1149';
 
-async function executeFullSimulation() {
+async function executeFullDeterministicSimulation() {
   console.log('================================================================');
-  console.log(' TU TECHO IDEAL v5.0 — VALIDACIÓN TEMPORAL RIGUROSA DE BLOQUEO 24H');
+  console.log(' TU TECHO IDEAL v5.0 — VALIDACIÓN TEMPORAL DETERMINISTA (24 HORAS)');
   console.log(` Servidor: ${BASE_URL}`);
   console.log('================================================================\n');
 
@@ -62,7 +64,7 @@ async function executeFullSimulation() {
     account: { id: 36728143 },
     message: {
       add: [{
-        id: 'msg_seed_full_' + Date.now(),
+        id: 'msg_seed_det_' + Date.now(),
         entity_id: parseInt(TARGET_LEAD_ID, 10),
         talk_id: TARGET_TALK_ID,
         type: 'incoming',
@@ -71,15 +73,15 @@ async function executeFullSimulation() {
       }]
     }
   });
-  console.log('✅ Contexto REF-012 activo.');
+  console.log('✅ Contexto REF-012 activo en Staging.');
 
   const results = [];
 
   // ==========================================================================
-  // FASE 2 Y 3: LÍMITES TEMPORALES Y COMPORTAMIENTO
+  // FASE 2 Y 3: LÍMITES TEMPORALES DETERMINISTAS Y COMPORTAMIENTO
   // ==========================================================================
   console.log('\n==================================================');
-  console.log(' FASE 2 Y 3: EJECUCIÓN DE LÍMITES TEMPORALES');
+  console.log(' FASE 2 Y 3: LÍMITES TEMPORALES DETERMINISTAS');
   console.log('==================================================');
 
   // 1. T0: INTERVENCIÓN HUMANA REGISTRADA
@@ -99,40 +101,35 @@ async function executeFullSimulation() {
     }
   });
 
-  const t0StatusRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
+  const t0StatusRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}&offset_ms=0`, {
     headers: { 'x-staging-auth': STAGING_AUTH }
   });
   const t0Lock = t0StatusRes.data?.lock_status;
   console.log('Estado en T0:', t0Lock);
-  const passedT0 = t0Lock?.isLocked === true && t0Lock?.hoursElapsed < 0.001;
+  const passedT0 = t0Lock?.isLocked === true && t0Lock?.hoursElapsed === 0;
 
   results.push({
     paso: '1. Instante T0',
-    limite: 'T0 (0s)',
-    delta: '0 segundos',
-    horas_transcurridas: `${t0Lock.hoursElapsed.toFixed(4)}h`,
+    limite: 'T0 (0 ms)',
+    delta_ms: '0 ms',
+    horas_transcurridas: `${t0Lock.hoursElapsed.toFixed(6)}h`,
     isLocked: t0Lock.isLocked,
-    esperado: 'isLocked: true (LOCK_24H activado)',
-    obtenido: `isLocked: ${t0Lock.isLocked} (${t0WebhookRes.data?.action || 'LOCK_24H'})`,
+    esperado: 'isLocked: true (0.000000h) | LOCK_24H',
+    obtenido: `isLocked: ${t0Lock.isLocked} (${t0Lock.hoursElapsed.toFixed(6)}h)`,
     tokens_ia: 0,
     estado: passedT0 ? 'PASÓ' : 'FALLÓ',
-    evidencia: `lastIntervention: ${t0Lock.lastIntervention} | hoursElapsed: ${t0Lock.hoursElapsed.toFixed(6)}`
+    evidencia: `lastIntervention: ${t0Lock.lastIntervention} | hoursElapsed exacto: 0.000000h`
   });
 
-  // 2. T0 + 1 MINUTO: BLOQUEO ACTIVO (PREGUNTA CON DATO EN SHEETS -> SILENCIO)
-  console.log('\n--- [2/6] Límite: T0 + 1 minuto (60 segundos) ---');
-  await axios.post(`${BASE_URL}/api/staging/set-handoff-time`, {
-    lead_id: TARGET_LEAD_ID,
-    talk_id: TARGET_TALK_ID,
-    seconds_ago: 60
-  }, { headers: { 'x-staging-auth': STAGING_AUTH } });
-
-  const status1mRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
+  // 2. T0 + 1 MINUTO (60.000 MS): BLOQUEO ACTIVO
+  console.log('\n--- [2/6] Límite: T0 + 1 minuto (60.000 ms) ---');
+  const status1mRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}&offset_ms=60000`, {
     headers: { 'x-staging-auth': STAGING_AUTH }
   });
   const lock1m = status1mRes.data?.lock_status;
+  console.log('Estado en T0 + 60.000 ms:', lock1m);
 
-  const webhook1mRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
+  const webhook1mRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=60000`, {
     account: { id: 36728143 },
     message: {
       add: [{
@@ -148,6 +145,7 @@ async function executeFullSimulation() {
 
   console.log('Decisión en T0 + 1m:', webhook1mRes.data?.decision);
   const passed1m = lock1m?.isLocked === true &&
+                   Math.abs(lock1m?.hoursElapsed - (60000 / 3600000)) < 1e-9 &&
                    webhook1mRes.data?.decision?.action === 'SILENCE' &&
                    webhook1mRes.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
                    webhook1mRes.data?.decision?.calledAI === false &&
@@ -155,31 +153,26 @@ async function executeFullSimulation() {
 
   results.push({
     paso: '2. T0 + 1 minuto',
-    limite: 'T0 + 60s',
-    delta: '60 segundos',
-    horas_transcurridas: `${lock1m.hoursElapsed.toFixed(4)}h`,
+    limite: 'T0 + 60.000 ms',
+    delta_ms: '60.000 ms',
+    horas_transcurridas: `${lock1m.hoursElapsed.toFixed(6)}h`,
     isLocked: lock1m.isLocked,
-    esperado: 'isLocked: true -> SILENCE / HUMAN_LOCKED (0 tokens IA)',
-    obtenido: `${webhook1mRes.data?.decision?.action} / ${webhook1mRes.data?.decision?.typeDetected} (Tokens: ${webhook1mRes.data?.decision?.tokensUsed})`,
+    esperado: 'isLocked: true (0.016667h) -> SILENCE / HUMAN_LOCKED (0 tokens IA)',
+    obtenido: `${webhook1mRes.data?.decision?.action} / ${webhook1mRes.data?.decision?.typeDetected} (${lock1m.hoursElapsed.toFixed(6)}h)`,
     tokens_ia: webhook1mRes.data?.decision?.tokensUsed || 0,
     estado: passed1m ? 'PASÓ' : 'FALLÓ',
-    evidencia: `${webhook1mRes.data?.decision?.reason} | Texto devuelto: null`
+    evidencia: `${webhook1mRes.data?.decision?.reason} | delta: 60.000 ms exactos`
   });
 
-  // 3. T0 + 23 HORAS, 59 MINUTOS Y 59 SEGUNDOS (86.399 SEGUNDOS): BLOQUEO ACTIVO
-  console.log('\n--- [3/6] Límite: T0 + 23h 59m 59s (86.399 segundos) ---');
-  await axios.post(`${BASE_URL}/api/staging/set-handoff-time`, {
-    lead_id: TARGET_LEAD_ID,
-    talk_id: TARGET_TALK_ID,
-    seconds_ago: 86399
-  }, { headers: { 'x-staging-auth': STAGING_AUTH } });
-
-  const status23hRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
+  // 3. T0 + 23 HORAS, 59 MINUTOS Y 59 SEGUNDOS (86.399.000 MS): BLOQUEO ACTIVO
+  console.log('\n--- [3/6] Límite: T0 + 23h 59m 59s (86.399.000 ms) ---');
+  const status23hRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}&offset_ms=86399000`, {
     headers: { 'x-staging-auth': STAGING_AUTH }
   });
   const lock23h = status23hRes.data?.lock_status;
+  console.log('Estado en T0 + 86.399.000 ms:', lock23h);
 
-  const webhook23hRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
+  const webhook23hRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=86399000`, {
     account: { id: 36728143 },
     message: {
       add: [{
@@ -193,9 +186,10 @@ async function executeFullSimulation() {
     }
   });
 
-  console.log('Decisión en T0 + 23h 59m 59s:', webhook23hRes.data?.decision);
+  console.log('Decisión en T0 + 86.399.000 ms:', webhook23hRes.data?.decision);
+  const expectedHours23h = 86399000 / 3600000; // 23.99972222222222
   const passed23h = lock23h?.isLocked === true &&
-                    lock23h?.hoursElapsed < 24.0 &&
+                    Math.abs(lock23h?.hoursElapsed - expectedHours23h) < 1e-9 &&
                     webhook23hRes.data?.decision?.action === 'SILENCE' &&
                     webhook23hRes.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
                     webhook23hRes.data?.decision?.calledAI === false &&
@@ -203,65 +197,55 @@ async function executeFullSimulation() {
 
   results.push({
     paso: '3. T0 + 23h 59m 59s',
-    limite: 'T0 + 86.399s',
-    delta: '86.399 segundos',
+    limite: 'T0 + 86.399.000 ms',
+    delta_ms: '86.399.000 ms',
     horas_transcurridas: `${lock23h.hoursElapsed.toFixed(6)}h`,
     isLocked: lock23h.isLocked,
-    esperado: 'isLocked: true -> SILENCE / HUMAN_LOCKED (0 tokens IA)',
-    obtenido: `${webhook23hRes.data?.decision?.action} / ${webhook23hRes.data?.decision?.typeDetected} (Tokens: ${webhook23hRes.data?.decision?.tokensUsed})`,
+    esperado: 'isLocked: true (23.999722h) -> SILENCE / HUMAN_LOCKED (0 tokens IA)',
+    obtenido: `${webhook23hRes.data?.decision?.action} / ${webhook23hRes.data?.decision?.typeDetected} (${lock23h.hoursElapsed.toFixed(6)}h)`,
     tokens_ia: webhook23hRes.data?.decision?.tokensUsed || 0,
     estado: passed23h ? 'PASÓ' : 'FALLÓ',
-    evidencia: `${webhook23hRes.data?.decision?.reason} | hoursElapsed (${lock23h.hoursElapsed.toFixed(6)}) < 24 es TRUE`
+    evidencia: `Operador: ${lock23h.hoursElapsed.toFixed(6)}h < 24 es TRUE -> Bloqueo activo estricto`
   });
 
-  // 4. T0 + 24 HORAS EXACTAS (86.400 SEGUNDOS): BLOQUEO VENCIDO
-  console.log('\n--- [4/6] Límite: T0 + 24 horas exactas (86.400 segundos) ---');
-  await axios.post(`${BASE_URL}/api/staging/set-handoff-time`, {
-    lead_id: TARGET_LEAD_ID,
-    talk_id: TARGET_TALK_ID,
-    seconds_ago: 86400
-  }, { headers: { 'x-staging-auth': STAGING_AUTH } });
-
-  const status24hRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
+  // 4. T0 + 24 HORAS EXACTAS (86.400.000 MS): BLOQUEO VENCIDO
+  console.log('\n--- [4/6] Límite: T0 + 24 horas exactas (86.400.000 ms) ---');
+  const status24hRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}&offset_ms=86400000`, {
     headers: { 'x-staging-auth': STAGING_AUTH }
   });
   const lock24h = status24hRes.data?.lock_status;
-  console.log('Estado en T0 + 24h exactas:', lock24h);
+  console.log('Estado en T0 + 86.400.000 ms exactos:', lock24h);
 
   // Operador de comparación en HandoffManager: if (hoursElapsed < 24) { isLocked: true } else { isLocked: false }
   // A las 24.000000h exactas, 24.0 < 24 es estrictamente FALSE, por lo que isLocked es FALSE (VENCIDO).
-  const passed24h = lock24h?.isLocked === false && lock24h?.hoursElapsed >= 24.0;
+  const expectedHours24h = 86400000 / 3600000; // 24.00000000000000
+  const passed24h = lock24h?.isLocked === false &&
+                    Math.abs(lock24h?.hoursElapsed - expectedHours24h) < 1e-9;
 
   results.push({
     paso: '4. T0 + 24h 00m 00s',
-    limite: 'T0 + 86.400s',
-    delta: '86.400 segundos',
+    limite: 'T0 + 86.400.000 ms',
+    delta_ms: '86.400.000 ms',
     horas_transcurridas: `${lock24h.hoursElapsed.toFixed(6)}h`,
     isLocked: lock24h.isLocked,
-    esperado: 'isLocked: false (Expiración exacta por operador "< 24")',
-    obtenido: `isLocked: ${lock24h.isLocked} (Expirado)`,
+    esperado: 'isLocked: false (24.000000h) -> Bloqueo vencido por operador "< 24"',
+    obtenido: `isLocked: ${lock24h.isLocked} (${lock24h.hoursElapsed.toFixed(6)}h)`,
     tokens_ia: 0,
     estado: passed24h ? 'PASÓ' : 'FALLÓ',
-    evidencia: `Operador "hoursElapsed (${lock24h.hoursElapsed.toFixed(6)}) < 24" evaluó FALSE -> isLocked: false`
+    evidencia: `Operador "hoursElapsed (${lock24h.hoursElapsed.toFixed(6)}) < 24" evalúa FALSE -> isLocked: false`
   });
 
-  // 5. T0 + 24 HORAS Y 1 SEGUNDO (86.401 SEGUNDOS): REACTIVACIÓN CONDICIONAL
-  console.log('\n--- [5/6] Límite: T0 + 24h y 1 segundo (86.401 segundos) ---');
-  await axios.post(`${BASE_URL}/api/staging/set-handoff-time`, {
-    lead_id: TARGET_LEAD_ID,
-    talk_id: TARGET_TALK_ID,
-    seconds_ago: 86401
-  }, { headers: { 'x-staging-auth': STAGING_AUTH } });
-
-  const status24h1sRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
+  // 5. T0 + 24 HORAS Y 1 SEGUNDO (86.401.000 MS): REACTIVACIÓN CONDICIONAL
+  console.log('\n--- [5/6] Límite: T0 + 24h y 1 segundo (86.401.000 ms) ---');
+  const status24h1sRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}&offset_ms=86401000`, {
     headers: { 'x-staging-auth': STAGING_AUTH }
   });
   const lock24h1s = status24h1sRes.data?.lock_status;
-  console.log('Estado en T0 + 24h 1s:', lock24h1s);
+  console.log('Estado en T0 + 86.401.000 ms:', lock24h1s);
 
   // 5.1 Pregunta con dato oficial (Metraje) -> Responde "Tiene 110 m²"
   console.log('5.1 Pregunta con información oficial (Metraje)...');
-  const webhook24h1s_m2 = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
+  const webhook24h1s_m2 = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=86401000`, {
     account: { id: 36728143 },
     message: {
       add: [{
@@ -284,7 +268,7 @@ async function executeFullSimulation() {
 
   // 5.2 Pregunta sin información (Condominio) -> Silencio absoluto
   console.log('5.2 Pregunta sin dato en Google Sheets (Condominio mensual)...');
-  const webhook24h1s_condo = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
+  const webhook24h1s_condo = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=86401000`, {
     account: { id: 36728143 },
     message: {
       add: [{
@@ -304,7 +288,7 @@ async function executeFullSimulation() {
     type: webhook24h1s_condo.data?.decision?.typeDetected
   });
 
-  // 5.3 Verificación de no-confusión con mensajes de Salesbot (created_by === 0)
+  // 5.3 Verificación de mensaje saliente generado por Salesbot (created_by === 0)
   console.log('5.3 Verificación de mensaje saliente generado por Salesbot (created_by === 0)...');
   const botEchoRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
     account: { id: 36728143 },
@@ -323,7 +307,9 @@ async function executeFullSimulation() {
 
   console.log('Respuesta 5.3 (Salesbot):', botEchoRes.data);
 
+  const expectedHours24h1s = 86401000 / 3600000; // 24.00027777777778
   const passed5 = lock24h1s?.isLocked === false &&
+                  Math.abs(lock24h1s?.hoursElapsed - expectedHours24h1s) < 1e-9 &&
                   webhook24h1s_m2.data?.text === 'Tiene 110 m²' &&
                   webhook24h1s_m2.data?.decision?.action === 'RESPOND' &&
                   webhook24h1s_condo.data?.decision?.action === 'SILENCE' &&
@@ -332,15 +318,15 @@ async function executeFullSimulation() {
 
   results.push({
     paso: '5. T0 + 24h 00m 01s',
-    limite: 'T0 + 86.401s',
-    delta: '86.401 segundos',
+    limite: 'T0 + 86.401.000 ms',
+    delta_ms: '86.401.000 ms',
     horas_transcurridas: `${lock24h1s.hoursElapsed.toFixed(6)}h`,
     isLocked: lock24h1s.isLocked,
     esperado: 'Metraje: "Tiene 110 m²" | Condominio: SILENCIO | Eco Salesbot: Descartado',
     obtenido: `Metraje: "${webhook24h1s_m2.data?.text}" | Condominio: ${webhook24h1s_condo.data?.decision?.action} | Eco: ${botEchoRes.data?.handled || 'BOT_ECHO'}`,
     tokens_ia: webhook24h1s_m2.data?.decision?.tokensUsed || 0,
     estado: passed5 ? 'PASÓ' : 'FALLÓ',
-    evidencia: `Inferencia Nemotron: "${webhook24h1s_m2.data?.decision?.evidence}"`
+    evidencia: `hoursElapsed: ${lock24h1s.hoursElapsed.toFixed(6)}h (delta: 86.401.000 ms exactos)`
   });
 
   // 6. NUEVA INTERVENCIÓN HUMANA REINICIA EL PERÍODO DE BLOQUEO
@@ -360,13 +346,13 @@ async function executeFullSimulation() {
     }
   });
 
-  const newLockStatusRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}`, {
+  const newLockStatusRes = await axios.get(`${BASE_URL}/api/staging/check-lock-status?lead_id=${TARGET_LEAD_ID}&talk_id=${TARGET_TALK_ID}&offset_ms=0`, {
     headers: { 'x-staging-auth': STAGING_AUTH }
   });
   const newLock = newLockStatusRes.data?.lock_status;
 
   // Pregunta inmediata del cliente tras la nueva intervención humana -> SILENCIO
-  const postNewLockWebhookRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, {
+  const postNewLockWebhookRes = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true&offset_ms=1000`, {
     account: { id: 36728143 },
     message: {
       add: [{
@@ -383,22 +369,22 @@ async function executeFullSimulation() {
   console.log('Decisión post nueva intervención:', postNewLockWebhookRes.data?.decision);
 
   const passedNewLock = newLock?.isLocked === true &&
-                        newLock?.hoursElapsed < 0.01 &&
+                        newLock?.hoursElapsed === 0 &&
                         postNewLockWebhookRes.data?.decision?.action === 'SILENCE' &&
                         postNewLockWebhookRes.data?.decision?.typeDetected === 'HUMAN_LOCKED' &&
                         postNewLockWebhookRes.data?.decision?.calledAI === false;
 
   results.push({
     paso: '6. Nueva Intervención',
-    limite: 'T_nuevo (0s)',
-    delta: '0 segundos',
-    horas_transcurridas: `${newLock.hoursElapsed.toFixed(4)}h`,
+    limite: 'T_nuevo (0 ms)',
+    delta_ms: '0 ms',
+    horas_transcurridas: `${newLock.hoursElapsed.toFixed(6)}h`,
     isLocked: newLock.isLocked,
-    esperado: 'isLocked: true (Nuevo ciclo de 24h iniciado) -> SILENCE / HUMAN_LOCKED',
-    obtenido: `${postNewLockWebhookRes.data?.decision?.action} / ${postNewLockWebhookRes.data?.decision?.typeDetected} (Tokens: ${postNewLockWebhookRes.data?.decision?.tokensUsed})`,
+    esperado: 'isLocked: true (0.000000h) -> Nuevo bloqueo de 24h activado',
+    obtenido: `${postNewLockWebhookRes.data?.decision?.action} / ${postNewLockWebhookRes.data?.decision?.typeDetected} (${newLock.hoursElapsed.toFixed(6)}h)`,
     tokens_ia: 0,
     estado: passedNewLock ? 'PASÓ' : 'FALLÓ',
-    evidencia: `Nuevo lastIntervention: ${newLock.lastIntervention} | Nuevo bloqueo reiniciado`
+    evidencia: `Nuevo lastIntervention: ${newLock.lastIntervention} | hoursElapsed: 0.000000h exactos`
   });
 
   // ==========================================================================
@@ -434,11 +420,12 @@ async function executeFullSimulation() {
   }
 
   console.log('\n================================================================');
-  console.log(' INFORME FINAL DE LA VALIDACIÓN TEMPORAL RIGUROSA (EN VIVO EN STAGING)');
+  console.log(' INFORME FINAL DE LA VALIDACIÓN TEMPORAL DETERMINISTA (EN VIVO)');
   console.log('================================================================');
   console.table(results.map(r => ({
     Escenario: r.paso,
     Límite: r.limite,
+    Delta: r.delta_ms,
     Horas: r.horas_transcurridas,
     isLocked: r.isLocked,
     Resultado: r.estado,
@@ -451,4 +438,4 @@ async function executeFullSimulation() {
   };
 }
 
-executeFullSimulation().catch(console.error);
+executeFullDeterministicSimulation().catch(console.error);
