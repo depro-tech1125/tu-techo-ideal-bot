@@ -53,22 +53,69 @@ const centralContextManager = new ConversationContextManager();
 // 🎛️ CONTROLADOR DE DESPACHO RESTRINGIDO PARA STAGING (CONTROLLED DISPATCH)
 // ============================================================================
 let stagingTestDispatchEnabled = process.env.STAGING_TEST_DISPATCH === 'true';
-const authorizedTestLeads = new Set(
-  (process.env.STAGING_ALLOWED_LEAD_IDS || '').split(',').map(s => s.trim()).filter(Boolean)
-);
-const authorizedTestTalks = new Set(
-  (process.env.STAGING_ALLOWED_TALK_IDS || '').split(',').map(s => s.trim()).filter(Boolean)
-);
+
+// Lista blanca estricta con coincidencia simultánea de LEAD_ID y TALK_ID
+const authorizedControlledPair = {
+  leadId: process.env.STAGING_ALLOWED_LEAD_ID || null,
+  talkId: process.env.STAGING_ALLOWED_TALK_ID || null,
+  expiresAt: process.env.STAGING_DISPATCH_TTL_MS ? Date.now() + Number(process.env.STAGING_DISPATCH_TTL_MS) : (Date.now() + 60 * 60 * 1000), // 1 hora por defecto
+  maxDispatches: Number(process.env.STAGING_MAX_TEST_DISPATCHES) || 2, // Máximo 2 mensajes por defecto
+  currentDispatches: 0
+};
+
+// Historial de auditoría de despachos controlados en Staging
+const controlledDispatchHistory = [];
+function recordControlledDispatch(entry) {
+  controlledDispatchHistory.unshift({
+    timestamp: new Date().toISOString(),
+    lead_id: entry.leadId ? `LEAD_${String(entry.leadId).substring(0, 4)}***` : null,
+    talk_id: entry.talkId ? `TALK_${String(entry.talkId).substring(0, 4)}***` : null,
+    text: entry.text || null,
+    action: entry.action || 'DISPATCH',
+    success: !!entry.success,
+    salesbot_triggered: !!entry.salesbotTriggered,
+    error: entry.error || null
+  });
+  if (controlledDispatchHistory.length > 50) controlledDispatchHistory.pop();
+}
 
 function isControlledDispatchAuthorized(leadId, talkId) {
-  // En producción real (sin modo observación), esta excepción queda COMPLETAMENTE BLOQUEADA
+  // 1. En producción real (sin modo observación), esta excepción queda COMPLETAMENTE BLOQUEADA
   if (process.env.NODE_ENV === 'production' && !OBSERVATION_MODE) {
     return false;
   }
+  // 2. Interruptor general de despacho en Staging debe estar encendido
   if (!stagingTestDispatchEnabled) return false;
-  const leadMatch = leadId && authorizedTestLeads.has(String(leadId));
-  const talkMatch = talkId && authorizedTestTalks.has(String(talkId));
-  return !!(leadMatch || talkMatch);
+
+  // 3. Debe haber un par (LEAD_ID + TALK_ID) configurado
+  if (!authorizedControlledPair.leadId || !authorizedControlledPair.talkId) {
+    return false;
+  }
+
+  // 4. SEGURIDAD REFORZADA: Exigir coincidencia SIMULTÁNEA de ambos identificadores.
+  // Prohibida la autorización por uno solo.
+  if (!leadId || !talkId) {
+    return false;
+  }
+  const leadMatch = String(leadId) === String(authorizedControlledPair.leadId);
+  const talkMatch = String(talkId) === String(authorizedControlledPair.talkId);
+  if (!leadMatch || !talkMatch) {
+    return false;
+  }
+
+  // 5. Vencimiento temporal de la autorización
+  if (Date.now() > authorizedControlledPair.expiresAt) {
+    console.warn(`[CONTROLLED DISPATCH EXPIRED] La autorización para Lead #${leadId} / Talk #${talkId} ha vencido.`);
+    return false;
+  }
+
+  // 6. Límite de mensajes de prueba
+  if (authorizedControlledPair.currentDispatches >= authorizedControlledPair.maxDispatches) {
+    console.warn(`[CONTROLLED DISPATCH LIMIT REACHED] Se alcanzó el límite de ${authorizedControlledPair.maxDispatches} despachos para Lead #${leadId} / Talk #${talkId}.`);
+    return false;
+  }
+
+  return true;
 }
 
 // Buffer de decisiones de auditoría para Staging con anonimización estricta de datos personales
@@ -3683,9 +3730,9 @@ async function generateResponse(userMessage, allProperties, imageUrl = null, lea
 // ==========================================
 // ⚡ COMUNICACIÓN CON KOMMO CRM
 // ==========================================
-async function ensureLeadInActivePipeline(leadId) {
+async function ensureLeadInActivePipeline(leadId, forceDispatch = false) {
   if (!leadId) return;
-  if (OBSERVATION_MODE) {
+  if (OBSERVATION_MODE && !forceDispatch) {
     console.log(`[OBSERVATION MODE] ensureLeadInActivePipeline(Lead #${leadId}) interceptado. Cero llamadas a Kommo.`);
     return null;
   }
@@ -3719,8 +3766,8 @@ async function ensureLeadInActivePipeline(leadId) {
   }
 }
 
-async function updateKommoLead(leadId, aiText) {
-  if (OBSERVATION_MODE) {
+async function updateKommoLead(leadId, aiText, forceDispatch = false) {
+  if (OBSERVATION_MODE && !forceDispatch) {
     console.log(`[OBSERVATION MODE] updateKommoLead(Lead #${leadId}, "${(aiText || '').substring(0, 30)}...") interceptado. Cero actualizaciones a Kommo.`);
     return { id: leadId, observation_mode: true };
   }
@@ -3751,8 +3798,8 @@ async function updateKommoLead(leadId, aiText) {
   return response.data;
 }
 
-async function triggerKommoSalesbot(leadId) {
-  if (OBSERVATION_MODE) {
+async function triggerKommoSalesbot(leadId, forceDispatch = false) {
+  if (OBSERVATION_MODE && !forceDispatch) {
     console.log(`[OBSERVATION MODE] triggerKommoSalesbot(Lead #${leadId}) interceptado. Cero disparos a Salesbot.`);
     return { success: true, observation_mode: true };
   }
@@ -3779,9 +3826,9 @@ async function triggerKommoSalesbot(leadId) {
 }
 
 // 🛑 DETENER SALESBOT EN KOMMO PARA EVITAR SECUENCIAS O TIMERS NO DESEADOS
-async function stopKommoSalesbot(leadId) {
+async function stopKommoSalesbot(leadId, forceDispatch = false) {
   if (!leadId) return;
-  if (OBSERVATION_MODE) {
+  if (OBSERVATION_MODE && !forceDispatch) {
     console.log(`[OBSERVATION MODE] stopKommoSalesbot(Lead #${leadId}) interceptado. Cero llamadas a Kommo.`);
     return { success: true, observation_mode: true };
   }
@@ -4484,9 +4531,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       if (!preDispatchCheck.canDispatch) {
         console.warn(`[PRE-DISPATCH ABORT] ${preDispatchCheck.reason} Cancelando despacho a Kommo.`);
-        await stopKommoSalesbot(currentLeadId);
+        await stopKommoSalesbot(currentLeadId, isControlledDispatch);
         try {
-          await updateKommoLead(currentLeadId, ' ');
+          await updateKommoLead(currentLeadId, ' ', isControlledDispatch);
         } catch (e) {}
         if (isSync && !res.headersSent) {
           return res.status(200).json({
@@ -4506,16 +4553,28 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // ======================================================================
       // 5. DESPACHO A KOMMO Y DISPARO DE SALESBOT
       // ======================================================================
-      await ensureLeadInActivePipeline(currentLeadId);
+      await ensureLeadInActivePipeline(currentLeadId, isControlledDispatch);
 
       // Guardar respuesta en campo 2103996 de Kommo
       console.log('[Processing] Saving response to Kommo lead field...');
-      await updateKommoLead(currentLeadId, responseText);
+      await updateKommoLead(currentLeadId, responseText, isControlledDispatch);
       recordBotDispatchedMessage(currentLeadId, responseText);
 
       // Disparar Salesbot ÚNICA VEZ
       console.log('[Processing] Triggering Salesbot single delivery...');
-      await triggerKommoSalesbot(currentLeadId);
+      await triggerKommoSalesbot(currentLeadId, isControlledDispatch);
+
+      if (isControlledDispatch) {
+        authorizedControlledPair.currentDispatches++;
+        recordControlledDispatch({
+          leadId: currentLeadId,
+          talkId: currentTalkId,
+          text: responseText,
+          action: 'DISPATCH_SUCCESS',
+          success: true,
+          salesbotTriggered: true
+        });
+      }
 
       const responseNum = incrementLeadResponseCount(currentLeadId);
       console.log(`[Response Count] Lead #${currentLeadId} - Respuestas automáticas acumuladas: ${responseNum}/${MAX_AI_RESPONSES_PER_LEAD}`);
@@ -4523,8 +4582,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO Y PARADA DE SALESBOT (45s)
       setTimeout(async () => {
         try {
-          await updateKommoLead(currentLeadId, ' ');
-          await stopKommoSalesbot(currentLeadId);
+          await updateKommoLead(currentLeadId, ' ', isControlledDispatch);
+          await stopKommoSalesbot(currentLeadId, isControlledDispatch);
           console.log(`[Anti-Duplicate] Campo Respuesta_IA vaciado y Salesbot detenido para Lead #${currentLeadId}`);
         } catch (e) {
           console.warn('[Anti-Duplicate Clear Error]:', e.message);
@@ -4910,50 +4969,57 @@ app.get('/api/staging/controlled-dispatch-status', requireStagingAuth, (req, res
     status: 'ok',
     staging_test_dispatch_enabled: stagingTestDispatchEnabled,
     observation_mode: OBSERVATION_MODE,
-    authorized_lead_ids: Array.from(authorizedTestLeads),
-    authorized_talk_ids: Array.from(authorizedTestTalks),
+    authorized_pair: {
+      lead_id: authorizedControlledPair.leadId,
+      talk_id: authorizedControlledPair.talkId,
+      expires_at: authorizedControlledPair.expiresAt ? new Date(authorizedControlledPair.expiresAt).toISOString() : null,
+      max_dispatches: authorizedControlledPair.maxDispatches,
+      current_dispatches: authorizedControlledPair.currentDispatches,
+      is_valid: isControlledDispatchAuthorized(authorizedControlledPair.leadId, authorizedControlledPair.talkId)
+    },
+    dispatch_history: controlledDispatchHistory,
     node_env: process.env.NODE_ENV || 'development'
   });
 });
 
 // 6. Configuración Dinámica de Despacho Controlado en Staging
 app.post('/api/staging/configure-test-dispatch', requireStagingAuth, (req, res) => {
-  const { enabled, add_lead_ids, remove_lead_ids, add_talk_ids, remove_talk_ids } = req.body || {};
+  const { enabled, lead_id, talk_id, ttl_minutes, max_dispatches } = req.body || {};
 
   if (typeof enabled === 'boolean') {
     stagingTestDispatchEnabled = enabled;
   }
 
-  if (Array.isArray(add_lead_ids)) {
-    for (const id of add_lead_ids) {
-      if (id) authorizedTestLeads.add(String(id).trim());
-    }
-  }
-  if (Array.isArray(remove_lead_ids)) {
-    for (const id of remove_lead_ids) {
-      if (id) authorizedTestLeads.delete(String(id).trim());
-    }
-  }
-
-  if (Array.isArray(add_talk_ids)) {
-    for (const id of add_talk_ids) {
-      if (id) authorizedTestTalks.add(String(id).trim());
-    }
-  }
-  if (Array.isArray(remove_talk_ids)) {
-    for (const id of remove_talk_ids) {
-      if (id) authorizedTestTalks.delete(String(id).trim());
-    }
+  if (lead_id && talk_id) {
+    const ttl = Number(ttl_minutes) || 60; // 60 minutos por defecto
+    authorizedControlledPair.leadId = String(lead_id).trim();
+    authorizedControlledPair.talkId = String(talk_id).trim();
+    authorizedControlledPair.expiresAt = Date.now() + (ttl * 60 * 1000);
+    authorizedControlledPair.maxDispatches = Number(max_dispatches) || 2;
+    authorizedControlledPair.currentDispatches = 0;
+    console.log(`[CONTROLLED DISPATCH CONFIGURED] Autorizado par simultáneo Lead #${authorizedControlledPair.leadId} + Talk #${authorizedControlledPair.talkId} por ${ttl} min (máx ${authorizedControlledPair.maxDispatches} despachos).`);
   }
 
-  console.log(`[CONTROLLED DISPATCH CONFIG] Enabled: ${stagingTestDispatchEnabled}, Leads: [${Array.from(authorizedTestLeads).join(', ')}], Talks: [${Array.from(authorizedTestTalks).join(', ')}]`);
+  if (enabled === false) {
+    authorizedControlledPair.leadId = null;
+    authorizedControlledPair.talkId = null;
+    authorizedControlledPair.expiresAt = 0;
+    authorizedControlledPair.currentDispatches = 0;
+    console.log(`[CONTROLLED DISPATCH DISABLED] Despacho controlado desactivado y par limpiado.`);
+  }
 
   res.json({
     status: 'ok',
     staging_test_dispatch_enabled: stagingTestDispatchEnabled,
     observation_mode: OBSERVATION_MODE,
-    authorized_lead_ids: Array.from(authorizedTestLeads),
-    authorized_talk_ids: Array.from(authorizedTestTalks)
+    authorized_pair: {
+      lead_id: authorizedControlledPair.leadId,
+      talk_id: authorizedControlledPair.talkId,
+      expires_at: authorizedControlledPair.expiresAt ? new Date(authorizedControlledPair.expiresAt).toISOString() : null,
+      max_dispatches: authorizedControlledPair.maxDispatches,
+      current_dispatches: authorizedControlledPair.currentDispatches,
+      is_valid: isControlledDispatchAuthorized(authorizedControlledPair.leadId, authorizedControlledPair.talkId)
+    }
   });
 });
 
@@ -5002,6 +5068,7 @@ module.exports = {
   formatAvailabilityResponse,
   isControlledDispatchAuthorized,
   stagingTestDispatchEnabled: () => stagingTestDispatchEnabled,
-  authorizedTestLeads,
-  authorizedTestTalks
+  authorizedControlledPair,
+  controlledDispatchHistory,
+  recordControlledDispatch
 };
