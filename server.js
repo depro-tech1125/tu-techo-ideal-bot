@@ -13,6 +13,7 @@ const { loadFichasTecnicas, findFichaTecnica, handleFichaTecnicaQuery } = requir
 // NUEVO CONTROLADOR CENTRAL DETERMINÍSTICO (PIPELINE DE DECISIÓN INMOBILIARIA)
 // ============================================================================
 const {
+  AVAILABILITY_RESPONSE,
   evaluateCentralDecisionPipeline,
   HandoffManager,
   DeduplicationManager,
@@ -48,10 +49,24 @@ const centralHandoffManager = new HandoffManager(
 );
 const centralContextManager = new ConversationContextManager();
 
-// Buffer de decisiones para auditoría de staging y monitoreo en vivo (últimas 50 decisiones)
+// Buffer de decisiones de auditoría para Staging con anonimización estricta de datos personales
 const stagingDecisionBuffer = [];
 function recordStagingDecision(entry) {
-  stagingDecisionBuffer.unshift(entry);
+  // Anonimizar identificadores y omitir datos personales (teléfonos, nombres reales)
+  const sanitized = {
+    timestamp: entry.timestamp || Date.now(),
+    lead_id: entry.lead_id ? `LEAD_${String(entry.lead_id).substring(0, 4)}***` : null,
+    talk_id: entry.talk_id ? `TALK_${String(entry.talk_id).substring(0, 4)}***` : null,
+    inquiry_type: entry.decision?.typeDetected || 'UNKNOWN',
+    action: entry.decision?.action || 'UNKNOWN',
+    property_id: entry.decision?.propertyIdentified || null,
+    response_text: entry.text || null,
+    called_ai: !!entry.decision?.calledAI,
+    tokens_used: entry.decision?.tokensUsed || 0,
+    evidence: entry.decision?.evidence || null,
+    reason: entry.decision?.reason || null
+  };
+  stagingDecisionBuffer.unshift(sanitized);
   if (stagingDecisionBuffer.length > 50) stagingDecisionBuffer.pop();
 }
 
@@ -4552,8 +4567,31 @@ app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
 // 🧪 ENDPOINTS DE VERIFICACIÓN Y AUDITORÍA EXCLUSIVOS PARA STAGING
 // ============================================================================
 
+// Middleware de protección estricta para endpoints de prueba y diagnóstico
+function requireStagingAuth(req, res, next) {
+  // 1. En producción sin modo observación, los endpoints quedan COMPLETAMENTE deshabilitados (404)
+  if (process.env.NODE_ENV === 'production' && !OBSERVATION_MODE) {
+    return res.status(404).json({ error: 'Not Found' });
+  }
+
+  // 2. En staging / observación: Exigir autenticación para evitar accesos externos no autorizados
+  const expectedToken = process.env.STAGING_AUTH_TOKEN || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
+  const clientToken = req.headers['x-staging-auth'] ||
+    req.headers['authorization']?.replace(/^Bearer\s+/i, '') ||
+    req.query.auth_token;
+
+  if (clientToken && (clientToken === expectedToken || (process.env.KOMMO_TOKEN && clientToken === process.env.KOMMO_TOKEN))) {
+    return next();
+  }
+
+  return res.status(401).json({
+    error: 'Unauthorized',
+    message: 'Este endpoint de diagnóstico requiere el header de autenticación x-staging-auth.'
+  });
+}
+
 // 1. Inferencia Real en Vivo con Nemotron 3.5 Lightning (Ficha Sintética, 0 Datos Personales)
-app.get('/api/test-nemotron-inference', async (req, res) => {
+app.get('/api/test-nemotron-inference', requireStagingAuth, async (req, res) => {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: 'No OPENROUTER_API_KEY configured in environment' });
@@ -4690,20 +4728,20 @@ REGLAS ESTRICTAS:
 });
 
 // 2. Buffer de Decisiones de Staging
-app.get('/api/staging-decision-logs', (req, res) => {
+app.get('/api/staging-decision-logs', requireStagingAuth, (req, res) => {
   const { talk_id, lead_id } = req.query;
   let logs = stagingDecisionBuffer;
   if (talk_id) {
-    logs = logs.filter(l => String(l.talk_id) === String(talk_id));
+    logs = logs.filter(l => String(l.talk_id).includes(String(talk_id).substring(0, 4)));
   }
   if (lead_id) {
-    logs = logs.filter(l => String(l.lead_id) === String(lead_id));
+    logs = logs.filter(l => String(l.lead_id).includes(String(lead_id).substring(0, 4)));
   }
   res.json({ count: logs.length, logs });
 });
 
 // 3. Simular Avance Temporal de Bloqueo de 24 Horas para Pruebas Controladas
-app.post('/api/staging/set-handoff-time', (req, res) => {
+app.post('/api/staging/set-handoff-time', requireStagingAuth, (req, res) => {
   const { lead_id, talk_id, hours_ago } = req.body;
   const hours = Number(hours_ago) || 25;
   const simulatedTime = Date.now() - (hours * 60 * 60 * 1000);
@@ -4738,7 +4776,7 @@ app.post('/api/staging/set-handoff-time', (req, res) => {
 });
 
 // 4. Verificación de Capacidades y Permisos en Vivo de la API de Kommo
-app.get('/api/audit-kommo-lock-capability', async (req, res) => {
+app.get('/api/audit-kommo-lock-capability', requireStagingAuth, async (req, res) => {
   const token = process.env.KOMMO_TOKEN;
   const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
   if (!token) return res.status(500).json({ error: 'KOMMO_TOKEN no configurado' });
@@ -4795,6 +4833,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  AVAILABILITY_RESPONSE,
   app,
   centralHandoffManager,
   centralContextManager,

@@ -6,11 +6,13 @@
 
 const axios = require('axios');
 require('dotenv').config();
+const { AVAILABILITY_RESPONSE } = require('./pipeline_decision.js');
 
 const BASE_URL = 'https://tu-techo-ideal-staging.onrender.com';
 const TALK_ID = 'talk_stg_test_seq_8899';
 const LEAD_ID = '88990001';
 const CONTACT_ID = 'contact_stg_seq_8899';
+const STAGING_AUTH = process.env.STAGING_AUTH_TOKEN || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
 
 const results = [];
 
@@ -57,7 +59,10 @@ async function sendWebhookMessage({ text, type = 'incoming', authorType = 'exter
   };
 
   const response = await axios.post(`${BASE_URL}/webhook?sync=true&bypass_debounce=true`, payload, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-staging-auth': STAGING_AUTH
+    },
     timeout: 35000
   });
 
@@ -78,11 +83,11 @@ async function runFullSimulation() {
     const text1 = 'Hola, me interesa este apartamento https://info.wasi.co/apartamento-venta-los-samanes-caracas/10493109';
     const res1 = await sendWebhookMessage({ text: text1 });
     const dec1 = res1.decision;
-    const passed1 = res1.status === 'ok' && dec1.action === 'RESPOND' && res1.text === 'Sí, disponible.';
+    const passed1 = res1.status === 'ok' && dec1.action === 'RESPOND' && res1.text === AVAILABILITY_RESPONSE;
     recordResult(
       'MENSAJE 1',
       'Cliente envía enlace Wasi disponible',
-      '«Sí, disponible.»',
+      `«${AVAILABILITY_RESPONSE}»`,
       res1.text || dec1.action,
       passed1,
       {
@@ -92,7 +97,7 @@ async function runFullSimulation() {
       }
     );
   } catch (err) {
-    recordResult('MENSAJE 1', 'Cliente envía enlace Wasi disponible', '«Sí, disponible.»', `ERROR: ${err.message}`, false);
+    recordResult('MENSAJE 1', 'Cliente envía enlace Wasi disponible', `«${AVAILABILITY_RESPONSE}»`, `ERROR: ${err.message}`, false);
   }
 
   // --------------------------------------------------------------------------
@@ -233,17 +238,22 @@ async function runFullSimulation() {
       talk_id: TALK_ID,
       lead_id: LEAD_ID,
       hours_ago: 25
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-staging-auth': STAGING_AUTH
+      }
     });
     console.log('    Resultado ajuste temporal:', JSON.stringify(timeRes.data));
 
     const text7 = 'Hola, han pasado varios días, ahora me interesa este apartamento disponible https://info.wasi.co/apartamento-venta-lomas-del-sol-caracas/10544010';
     const res7 = await sendWebhookMessage({ text: text7 });
     const dec7 = res7.decision;
-    const passed7 = res7.status === 'ok' && dec7.action === 'RESPOND' && res7.text === 'Sí, disponible.';
+    const passed7 = res7.status === 'ok' && dec7.action === 'RESPOND' && res7.text === AVAILABILITY_RESPONSE;
     recordResult(
       'MENSAJE 7',
       'Simular más de 24 horas y nuevo enlace Wasi válido',
-      'Reactivación autorizada: «Sí, disponible.»',
+      `Reactivación autorizada: «${AVAILABILITY_RESPONSE}»`,
       res7.text || dec7.action,
       passed7,
       {

@@ -166,6 +166,7 @@ axios.post = async function(url, data, config) {
   return originalAxiosPost.apply(this, arguments);
 };
 const {
+  AVAILABILITY_RESPONSE,
   evaluateCentralDecisionPipeline,
   HandoffManager,
   DeduplicationManager,
@@ -299,13 +300,13 @@ async function runTests() {
   });
   recordResult(
     2,
-    'Cliente envía enlace de Wasi con propiedad disponible -> "Sí, disponible."',
-    res2.shouldRespond === true && res2.text === 'Sí, disponible.',
+    'Cliente envía enlace de Wasi con propiedad disponible -> AVAILABILITY_RESPONSE',
+    res2.shouldRespond === true && res2.text === AVAILABILITY_RESPONSE,
     `Respondió: "${res2.text}", Propiedad: ${res2.log.propertyIdentified}`
   );
 
   // --------------------------------------------------------------------------
-  // TEST 3: Cliente pregunta por zona con coincidencias disponibles -> "Sí, disponible." sin listado
+  // TEST 3: Cliente pregunta por zona con coincidencias disponibles -> AVAILABILITY_RESPONSE sin listado
   // --------------------------------------------------------------------------
   const res3 = await evaluateCentralDecisionPipeline({
     userText: 'Hola, quiero información sobre inmuebles en Prados del Este',
@@ -315,8 +316,8 @@ async function runTests() {
   });
   recordResult(
     3,
-    'Cliente pregunta por una zona con coincidencias -> "Sí, disponible." sin listado',
-    res3.shouldRespond === true && res3.text === 'Sí, disponible.',
+    'Cliente pregunta por una zona con coincidencias -> AVAILABILITY_RESPONSE sin listado',
+    res3.shouldRespond === true && res3.text === AVAILABILITY_RESPONSE,
     `Respondió: "${res3.text}", Motivo: ${res3.log.reason}`
   );
 
@@ -499,8 +500,8 @@ async function runTests() {
   });
   recordResult(
     13,
-    'Humano respondió, pasaron 24h y cliente envía nuevo enlace Wasi válido -> Se permite evaluar ("Sí, disponible.")',
-    res13.shouldRespond === true && res13.text === 'Sí, disponible.',
+    'Humano respondió, pasaron 24h y cliente envía nuevo enlace Wasi válido -> Se permite evaluar (AVAILABILITY_RESPONSE)',
+    res13.shouldRespond === true && res13.text === AVAILABILITY_RESPONSE,
     `Respondió: "${res13.text}", Propiedad: ${res13.log.propertyIdentified}`
   );
 
@@ -946,7 +947,7 @@ async function runTests() {
   recordResult(
     33,
     'Reactivación post-24h y continuidad de preguntas -> Reactiva con nuevo enlace Wasi y responde preguntas subsiguientes',
-    res33a.shouldRespond === true && res33a.text === 'Sí, disponible.' && res33b.shouldRespond === true && res33b.text === 'Sí',
+    res33a.shouldRespond === true && res33a.text === AVAILABILITY_RESPONSE && res33b.shouldRespond === true && res33b.text === 'Sí',
     `Turno 1: "${res33a.text}", Turno 2 (Seguimiento crédito): "${res33b.text}"`
   );
 
@@ -954,7 +955,7 @@ async function runTests() {
   // TEST 34: Mensaje saliente de Salesbot o bot propio NO inicia bloqueo humano
   // --------------------------------------------------------------------------
   const botLeadId = 'lead_bot_echo_34';
-  const botDispatchedText = 'Sí, disponible.';
+  const botDispatchedText = AVAILABILITY_RESPONSE;
   // Simular que el bot registró este mensaje como recién despachado
   const recentDispatched = new Map();
   recentDispatched.set(`lead_${botLeadId}_${botDispatchedText}`, Date.now());
@@ -1123,8 +1124,8 @@ async function runTests() {
   });
   recordResult(
     41,
-    'Plantilla Wasi "¿podríamos conversar?" con enlace válido -> Exenta de bloqueo por reunión, responde "Sí, disponible."',
-    res41.shouldRespond === true && res41.text === 'Sí, disponible.',
+    'Plantilla Wasi "¿podríamos conversar?" con enlace válido -> Exenta de bloqueo por reunión, responde AVAILABILITY_RESPONSE',
+    res41.shouldRespond === true && res41.text === AVAILABILITY_RESPONSE,
     `Respondió: "${res41.text}", Acción: ${res41.log.action}, Tipo: ${res41.log.typeDetected}`
   );
 
@@ -1158,7 +1159,7 @@ async function runTests() {
   // --------------------------------------------------------------------------
   const mockMsgBot = {
     author: { type: 'bot', id: 'bot_system_1' },
-    text: 'Sí, disponible.'
+    text: AVAILABILITY_RESPONSE
   };
   const classificationBot = classifyOutgoingMessage(mockMsgBot, () => true);
   recordResult(

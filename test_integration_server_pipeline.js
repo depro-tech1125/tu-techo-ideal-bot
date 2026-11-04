@@ -16,6 +16,7 @@ const axios = require('axios');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { AVAILABILITY_RESPONSE } = require('./pipeline_decision.js');
 
 async function runServerIntegrationTests() {
   console.log('================================================================');
@@ -120,12 +121,12 @@ async function runServerIntegrationTests() {
     const fieldId = dispatchedMsg?.data?.custom_fields_values?.[0]?.field_id;
 
     const test2Passed = whRes.status === 200 &&
-      fieldValue === 'Sí, disponible.' &&
+      fieldValue === AVAILABILITY_RESPONSE &&
       fieldId === 2103996 &&
       triggeredSalesbots.length > 0;
 
     if (test2Passed) {
-      console.log('✅ [Int Test 2/6] PASÓ: Webhook procesa enlace Wasi -> Guarda "Sí, disponible." en campo 2103996 y dispara Salesbot');
+      console.log(`✅ [Int Test 2/6] PASÓ: Webhook procesa enlace Wasi -> Guarda "${AVAILABILITY_RESPONSE}" en campo 2103996 y dispara Salesbot`);
       console.log(`   Detalle: Campo=${fieldId}, Valor="${fieldValue}", Salesbot disparado=${triggeredSalesbots.length > 0}`);
       passed++;
     } else {

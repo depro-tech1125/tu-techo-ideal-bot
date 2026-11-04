@@ -41,6 +41,11 @@ const AUTHORIZED_COLUMNS = Object.freeze([
   'Tipo de Mascotas'     // Col M (12)
 ]);
 
+// ============================================================================
+// CONSTANTE CENTRALIZADA OFICIAL: MENSAJE DE DISPONIBILIDAD
+// ============================================================================
+const AVAILABILITY_RESPONSE = 'Bienvenido a Tu Techo Ideal, sí, disponible.';
+
 // Normalización de texto uniforme y determinística
 function normalizeText(text) {
   if (!text) return '';
@@ -952,7 +957,7 @@ async function evaluateCentralDecisionPipeline(context) {
         logEntry.typeDetected = 'WASI_LINK_AVAILABLE';
         logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} verificada con equivalencia exacta Disponible en Google Sheets.`;
         logEntry.action = 'RESPOND';
-        logEntry.text = 'Sí, disponible.';
+        logEntry.text = AVAILABILITY_RESPONSE;
 
         // Guardar contexto aislado por talkId y leadId
         if (contextManager) {
@@ -962,7 +967,7 @@ async function evaluateCentralDecisionPipeline(context) {
           handoffManager.activateAutomation(leadId, talkId, contactId, targetProperty.ID_PROPIEDAD);
         }
 
-        return { shouldRespond: true, text: 'Sí, disponible.', log: logEntry, targetProperty };
+        return { shouldRespond: true, text: AVAILABILITY_RESPONSE, log: logEntry, targetProperty };
       } else {
         logEntry.typeDetected = 'WASI_LINK_NOT_AVAILABLE';
         logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} estatus no equivalente a Disponible ("${targetProperty.ESTATUS}"). Silencio seguro.`;
@@ -980,10 +985,10 @@ async function evaluateCentralDecisionPipeline(context) {
     const zoneSearch = searchZoneOrFeatureMatches(textClean, properties);
     if (zoneSearch.hasAvailableMatches) {
       logEntry.typeDetected = 'ZONE_OR_FEATURE_SEARCH';
-      logEntry.reason = `Coincidencias encontradas (${zoneSearch.count} disponibles). Respondiendo exactamente "Sí, disponible." sin listados.`;
+      logEntry.reason = `Coincidencias encontradas (${zoneSearch.count} disponibles). Respondiendo exactamente "${AVAILABILITY_RESPONSE}" sin listados.`;
       logEntry.action = 'RESPOND';
-      logEntry.text = 'Sí, disponible.';
-      return { shouldRespond: true, text: 'Sí, disponible.', log: logEntry };
+      logEntry.text = AVAILABILITY_RESPONSE;
+      return { shouldRespond: true, text: AVAILABILITY_RESPONSE, log: logEntry };
     }
   }
 
@@ -1092,6 +1097,7 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
 }
 
 module.exports = {
+  AVAILABILITY_RESPONSE,
   AUTHORIZED_COLUMNS,
   normalizeText,
   adaptProperty,
