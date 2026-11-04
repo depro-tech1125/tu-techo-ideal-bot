@@ -30,11 +30,22 @@ const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
 
 // Verificación de seguridad estricta para uso de reloj simulado (offset_ms / simulated_now)
 function isAuthorizedStagingTestRequest(req) {
-  // En producción real (sin modo observación): NUNCA permitir tiempo simulado
-  if (process.env.NODE_ENV === 'production' && !OBSERVATION_MODE) {
+  // 1. En producción: RECHAZO TOTAL e INCONDICIONAL del reloj simulado,
+  //    tanto con OBSERVATION_MODE=true como con OBSERVATION_MODE=false.
+  if (process.env.NODE_ENV === 'production') {
     return false;
   }
-  // En staging u observación: Exigir token de autorización válido
+  const hostname = req?.hostname || req?.headers?.host || '';
+  if (hostname.includes('tu-techo-ideal-bot-1')) {
+    return false;
+  }
+
+  // 2. Solo permitido en entorno Staging explícito
+  if (process.env.NODE_ENV !== 'staging') {
+    return false;
+  }
+
+  // 3. Exigir autenticación estricta con token válido
   const expectedTokens = [
     process.env.STAGING_AUTH_TOKEN,
     process.env.STAGING_AUDIT_SECRET,
@@ -43,10 +54,10 @@ function isAuthorizedStagingTestRequest(req) {
     'staging-audit-2026'
   ].filter(Boolean);
 
-  const clientToken = req.headers['x-staging-auth'] ||
-    req.headers['authorization']?.replace(/^Bearer\s+/i, '') ||
-    req.query.auth_token ||
-    req.query.token;
+  const clientToken = req?.headers?.['x-staging-auth'] ||
+    req?.headers?.['authorization']?.replace(/^Bearer\s+/i, '') ||
+    req?.query?.auth_token ||
+    req?.query?.token;
 
   return !!(clientToken && expectedTokens.includes(clientToken));
 }
@@ -4759,8 +4770,13 @@ app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
 
 // Middleware de protección estricta para endpoints de prueba y diagnóstico
 function requireStagingAuth(req, res, next) {
-  // 1. En producción sin modo observación, los endpoints quedan COMPLETAMENTE deshabilitados (404)
-  if (process.env.NODE_ENV === 'production' && !OBSERVATION_MODE) {
+  // 1. En producción: endpoints de staging COMPLETAMENTE deshabilitados (404 Not Found),
+  //    tanto con OBSERVATION_MODE=true como con OBSERVATION_MODE=false.
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not Found' });
+  }
+  const hostname = req?.hostname || req?.headers?.host || '';
+  if (hostname.includes('tu-techo-ideal-bot-1')) {
     return res.status(404).json({ error: 'Not Found' });
   }
 
