@@ -34,9 +34,7 @@ const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
 // ============================================================================
 
 const ALLOWED_STAGING_HOSTNAMES = Object.freeze([
-  'tu-techo-ideal-staging.onrender.com',
-  'localhost',
-  '127.0.0.1'
+  'tu-techo-ideal-staging.onrender.com'
 ]);
 
 const ALLOWED_SIMULATED_TIME_ROUTES = Object.freeze([
@@ -64,14 +62,13 @@ function verifyStagingAuthHeader(req) {
 }
 
 function isAuthorizedStagingTestRequest(req) {
-  // 1. En producción: RECHAZO TOTAL e INCONDICIONAL del reloj simulado,
-  //    tanto con OBSERVATION_MODE=true como con OBSERVATION_MODE=false.
-  if (process.env.NODE_ENV === 'production') {
+  // 1. Exigir expresamente NODE_ENV === 'staging'. Si no es exactamente staging, rechazar.
+  if (process.env.NODE_ENV !== 'staging') {
     return false;
   }
 
-  // 2. Validación exacta de hostname (sin includes)
-  const rawHost = (req?.hostname || req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+  // 2. Validación estricta y exacta de hostname (únicamente hostname de Render Staging, sin X-Forwarded-Host no confiable)
+  const rawHost = (req?.headers?.host || req?.hostname || '').split(':')[0].trim().toLowerCase();
   if (!ALLOWED_STAGING_HOSTNAMES.includes(rawHost)) {
     return false;
   }
@@ -4783,14 +4780,13 @@ app.get(['/api/audit-status', '/api/estado-auditoria'], (req, res) => {
 
 // Middleware de protección estricta para endpoints de prueba y diagnóstico
 function requireStagingAuth(req, res, next) {
-  // 1. En producción: endpoints de staging COMPLETAMENTE deshabilitados (404 Not Found),
-  //    tanto con OBSERVATION_MODE=true como con OBSERVATION_MODE=false.
-  if (process.env.NODE_ENV === 'production') {
+  // 1. Exigir expresamente NODE_ENV === 'staging'. Si no es exactamente staging -> 404 Not Found
+  if (process.env.NODE_ENV !== 'staging') {
     return res.status(404).json({ error: 'Not Found' });
   }
 
-  // Validación exacta de hostname (sin includes)
-  const rawHost = (req?.hostname || req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+  // Validación exacta de hostname (únicamente Render Staging, sin X-Forwarded-Host no confiable)
+  const rawHost = (req?.headers?.host || req?.hostname || '').split(':')[0].trim().toLowerCase();
   if (!ALLOWED_STAGING_HOSTNAMES.includes(rawHost)) {
     return res.status(404).json({ error: 'Not Found' });
   }
