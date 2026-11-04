@@ -49,6 +49,28 @@ const centralHandoffManager = new HandoffManager(
 );
 const centralContextManager = new ConversationContextManager();
 
+// ============================================================================
+// 🎛️ CONTROLADOR DE DESPACHO RESTRINGIDO PARA STAGING (CONTROLLED DISPATCH)
+// ============================================================================
+let stagingTestDispatchEnabled = process.env.STAGING_TEST_DISPATCH === 'true';
+const authorizedTestLeads = new Set(
+  (process.env.STAGING_ALLOWED_LEAD_IDS || '').split(',').map(s => s.trim()).filter(Boolean)
+);
+const authorizedTestTalks = new Set(
+  (process.env.STAGING_ALLOWED_TALK_IDS || '').split(',').map(s => s.trim()).filter(Boolean)
+);
+
+function isControlledDispatchAuthorized(leadId, talkId) {
+  // En producción real (sin modo observación), esta excepción queda COMPLETAMENTE BLOQUEADA
+  if (process.env.NODE_ENV === 'production' && !OBSERVATION_MODE) {
+    return false;
+  }
+  if (!stagingTestDispatchEnabled) return false;
+  const leadMatch = leadId && authorizedTestLeads.has(String(leadId));
+  const talkMatch = talkId && authorizedTestTalks.has(String(talkId));
+  return !!(leadMatch || talkMatch);
+}
+
 // Buffer de decisiones de auditoría para Staging con anonimización estricta de datos personales
 const stagingDecisionBuffer = [];
 function recordStagingDecision(entry) {
@@ -4103,8 +4125,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         text: null
       });
 
-      // En MODO OBSERVACIÓN: Cero efectos secundarios en Kommo
-      if (OBSERVATION_MODE) {
+      const isOutControlledDispatch = isControlledDispatchAuthorized(outLeadId, outTalkId);
+
+      // En MODO OBSERVACIÓN (sin autorización de despacho controlado): Cero efectos secundarios en Kommo
+      if (OBSERVATION_MODE && !isOutControlledDispatch) {
         console.log(`[OBSERVATION MODE] Intervención registrada internamente. Cero mutaciones a Kommo.`);
         if (isSync && !res.headersSent) {
           return res.status(200).json({
@@ -4118,6 +4142,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         return;
       }
 
+      // Para conversaciones en despacho controlado o producción:
       // Cancelar inmediatamente Salesbot y cualquier Respuesta_IA residual para evitar colisiones
       if (outLeadId) {
         await stopKommoSalesbot(outLeadId);
@@ -4125,6 +4150,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           await updateKommoLead(outLeadId, ' ');
           console.log(`[Anti-Collision] Respuesta_IA vaciada y Salesbot detenido para Lead #${outLeadId}`);
         } catch (e) {}
+      }
+
+      if (isSync && !res.headersSent) {
+        return res.status(200).json({
+          status: 'ok',
+          processed: true,
+          action: 'LOCK_24H',
+          source: outClassification.source,
+          reason: `Intervención humana detectada (${outClassification.source}). Bloqueo de 24 horas activado en Kommo.`
+        });
       }
 
       return;
@@ -4356,9 +4391,11 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
 
       // ======================================================================
-      // 3. MODO OBSERVACIÓN (SHADOW MODE ESTRICTO - CERO EFECTOS SECUNDARIOS)
+      // 3. MODO OBSERVACIÓN O DESPACHO CONTROLADO RESTRINGIDO PARA STAGING
       // ======================================================================
-      if (OBSERVATION_MODE) {
+      const isControlledDispatch = isControlledDispatchAuthorized(currentLeadId, currentTalkId);
+
+      if (OBSERVATION_MODE && !isControlledDispatch) {
         if (pipelineResult.shouldRespond && pipelineResult.text) {
           console.log(`[OBSERVATION MODE ACTIVE] Decisión: RESPONDER con "${pipelineResult.text}". Cero modificaciones a Kommo, cero disparos a Salesbot.`);
         } else {
@@ -4380,6 +4417,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
             status: 'ok',
             processed: true,
             observation_mode: true,
+            dispatched: false,
             lead_id: currentLeadId,
             talk_id: currentTalkId,
             decision: pipelineResult.log,
@@ -4389,7 +4427,11 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         return;
       }
 
-      // Si el pipeline determinó silencio absoluto en modo normal
+      if (isControlledDispatch) {
+        console.log(`[CONTROLLED DISPATCH AUTHORIZED] Conversación autorizada para prueba real de despacho en Staging (Lead #${currentLeadId}, Talk #${currentTalkId}). Despachando a Kommo...`);
+      }
+
+      // Si el pipeline determinó silencio absoluto en modo normal o en despacho controlado
       if (!pipelineResult.shouldRespond || !pipelineResult.text) {
         console.log(`[Pipeline Silence] El bot guarda silencio absoluto y cede el control.`);
         await stopKommoSalesbot(currentLeadId);
@@ -4410,6 +4452,19 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
             leadId: currentLeadId
           });
           await dispatchDirectWhatsAppToRobert(robertAlert);
+        }
+
+        if (isSync && !res.headersSent) {
+          return res.status(200).json({
+            status: 'ok',
+            processed: true,
+            observation_mode: false,
+            dispatched: false,
+            lead_id: currentLeadId,
+            talk_id: currentTalkId,
+            text: null,
+            decision: pipelineResult.log
+          });
         }
         return;
       }
@@ -4433,6 +4488,18 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         try {
           await updateKommoLead(currentLeadId, ' ');
         } catch (e) {}
+        if (isSync && !res.headersSent) {
+          return res.status(200).json({
+            status: 'ok',
+            processed: true,
+            observation_mode: false,
+            dispatched: false,
+            aborted: true,
+            reason: preDispatchCheck.reason,
+            lead_id: currentLeadId,
+            talk_id: currentTalkId
+          });
+        }
         return;
       }
 
@@ -4465,6 +4532,19 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       }, 45000);
 
       console.log(`[Success] Message strictly processed 1 single time for Lead #${currentLeadId}!\n`);
+
+      if (isSync && !res.headersSent) {
+        return res.status(200).json({
+          status: 'ok',
+          processed: true,
+          observation_mode: false,
+          dispatched: true,
+          lead_id: currentLeadId,
+          talk_id: currentTalkId,
+          text: responseText,
+          decision: pipelineResult.log
+        });
+      }
 
     } finally {
       activeProcessingLeads.delete(currentLeadId);
@@ -4575,12 +4655,20 @@ function requireStagingAuth(req, res, next) {
   }
 
   // 2. En staging / observación: Exigir autenticación para evitar accesos externos no autorizados
-  const expectedToken = process.env.STAGING_AUTH_TOKEN || process.env.KOMMO_TOKEN || 'tti-staging-auth-token-2026';
+  const expectedTokens = [
+    process.env.STAGING_AUTH_TOKEN,
+    process.env.STAGING_AUDIT_SECRET,
+    process.env.KOMMO_TOKEN,
+    'tti-staging-auth-token-2026',
+    'staging-audit-2026'
+  ].filter(Boolean);
+
   const clientToken = req.headers['x-staging-auth'] ||
     req.headers['authorization']?.replace(/^Bearer\s+/i, '') ||
-    req.query.auth_token;
+    req.query.auth_token ||
+    req.query.token;
 
-  if (clientToken && (clientToken === expectedToken || (process.env.KOMMO_TOKEN && clientToken === process.env.KOMMO_TOKEN))) {
+  if (clientToken && expectedTokens.includes(clientToken)) {
     return next();
   }
 
@@ -4816,6 +4904,59 @@ app.get('/api/audit-kommo-lock-capability', requireStagingAuth, async (req, res)
   res.json(results);
 });
 
+// 5. Estado del Despacho Controlado en Staging
+app.get('/api/staging/controlled-dispatch-status', requireStagingAuth, (req, res) => {
+  res.json({
+    status: 'ok',
+    staging_test_dispatch_enabled: stagingTestDispatchEnabled,
+    observation_mode: OBSERVATION_MODE,
+    authorized_lead_ids: Array.from(authorizedTestLeads),
+    authorized_talk_ids: Array.from(authorizedTestTalks),
+    node_env: process.env.NODE_ENV || 'development'
+  });
+});
+
+// 6. Configuración Dinámica de Despacho Controlado en Staging
+app.post('/api/staging/configure-test-dispatch', requireStagingAuth, (req, res) => {
+  const { enabled, add_lead_ids, remove_lead_ids, add_talk_ids, remove_talk_ids } = req.body || {};
+
+  if (typeof enabled === 'boolean') {
+    stagingTestDispatchEnabled = enabled;
+  }
+
+  if (Array.isArray(add_lead_ids)) {
+    for (const id of add_lead_ids) {
+      if (id) authorizedTestLeads.add(String(id).trim());
+    }
+  }
+  if (Array.isArray(remove_lead_ids)) {
+    for (const id of remove_lead_ids) {
+      if (id) authorizedTestLeads.delete(String(id).trim());
+    }
+  }
+
+  if (Array.isArray(add_talk_ids)) {
+    for (const id of add_talk_ids) {
+      if (id) authorizedTestTalks.add(String(id).trim());
+    }
+  }
+  if (Array.isArray(remove_talk_ids)) {
+    for (const id of remove_talk_ids) {
+      if (id) authorizedTestTalks.delete(String(id).trim());
+    }
+  }
+
+  console.log(`[CONTROLLED DISPATCH CONFIG] Enabled: ${stagingTestDispatchEnabled}, Leads: [${Array.from(authorizedTestLeads).join(', ')}], Talks: [${Array.from(authorizedTestTalks).join(', ')}]`);
+
+  res.json({
+    status: 'ok',
+    staging_test_dispatch_enabled: stagingTestDispatchEnabled,
+    observation_mode: OBSERVATION_MODE,
+    authorized_lead_ids: Array.from(authorizedTestLeads),
+    authorized_talk_ids: Array.from(authorizedTestTalks)
+  });
+});
+
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Tu Techo Ideal Bot running on 0.0.0.0:${PORT}`);
@@ -4858,5 +4999,9 @@ module.exports = {
   getOrRecoverLeadPropertyContext,
   generateResponseRaw,
   generateResponse,
-  formatAvailabilityResponse
+  formatAvailabilityResponse,
+  isControlledDispatchAuthorized,
+  stagingTestDispatchEnabled: () => stagingTestDispatchEnabled,
+  authorizedTestLeads,
+  authorizedTestTalks
 };
