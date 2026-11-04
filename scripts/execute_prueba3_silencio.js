@@ -165,3 +165,4 @@ executePrueba3()
   .catch(err => {
     console.error('\n❌ ERROR EN PRUEBA 3:', err.response?.data || err.message);
   });
+
