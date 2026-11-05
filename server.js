@@ -24,7 +24,9 @@ const {
   verifyPreDispatchSafety,
   classifyOutgoingMessage,
   adaptProperty,
-  isPropertyAvailable
+  isPropertyAvailable,
+  extractMultiportalPropertyIdentifiers,
+  isExtendedInfoOrPhotoRequest
 } = require('./pipeline_decision.js');
 
 const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
@@ -570,6 +572,12 @@ function cleanUrlForMatching(url) {
 function findPropertyByAnyLinkOrCode(text, allProps) {
   if (!text || !allProps || allProps.length === 0) return null;
   const raw = String(text).trim();
+
+  // 0. Extracción multiportal prioritaria unificada (Wasi, Mercado Libre, Web, Rexup, Aliases)
+  const multiExtraction = extractMultiportalPropertyIdentifiers(raw, allProps);
+  if (multiExtraction && multiExtraction.count > 0 && multiExtraction.matches[0]) {
+    return multiExtraction.matches[0];
+  }
 
   // 1. Extraer códigos numéricos (7 a 9 dígitos)
   const numMatches = raw.match(/\b(\d{7,9})\b/g) || [];

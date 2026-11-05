@@ -216,64 +216,18 @@ function isHumanAttentionRequest(text) {
 }
 
 // ============================================================================
-// 4. DETECCIÓN BLINDADA DE ENLACES E IDENTIFICADORES DE WASI
+// 4. DETECCIÓN MULTIPORTAL DE ENLACES E IDENTIFICADORES (WASI, MERCADO LIBRE, WEB, REXUP)
 // ============================================================================
-function extractWasiPropertyIdentifiers(text, properties = []) {
-  if (!text) {
-    return { count: 0, codes: [], matches: [] };
-  }
-  const raw = text.toString();
-  const codeSet = new Set();
+const {
+  extractMultiportalPropertyIdentifiers: libExtractMultiportal
+} = require('./lib/multiportal_extractor');
 
-  // 1. Extraer códigos de URLs Wasi oficiales
-  const wasiUrlRegex = /https?:\/\/(?:[a-zA-Z0-9.-]+\.)?wasi\.(?:co|com)\/[^\s\/]+\/(\d{6,9})/gi;
-  const urlMatches = Array.from(raw.matchAll(wasiUrlRegex));
-  for (const m of urlMatches) {
-    if (m[1]) codeSet.add(m[1]);
-  }
-
-  // 2. Extraer menciones textuales con indicador inequívoco
-  const explicitTextMatches = Array.from(raw.matchAll(/(?:inmueble|c[oó]digo|cod|id|ref|propiedad)\s*[:#]?\s*(\d{6,9})\b/gi));
-  for (const m of explicitTextMatches) {
-    const candidateCode = m[1];
-    const matchIndex = m.index || 0;
-    const precedingText = raw.substring(Math.max(0, matchIndex - 15), matchIndex).toLowerCase();
-    const isPrice = /[\$€]|usd|bs|precio|canon/i.test(precedingText);
-    const isPhone = /tlf|telefono|celular|ws|whatsapp|\+58|04/i.test(precedingText);
-    if (!isPrice && !isPhone) {
-      codeSet.add(candidateCode);
-    }
-  }
-
-  // 3. Códigos internos REF-xxx
-  const refMatches = Array.from(raw.matchAll(/\bREF-(\d{2,4})\b/gi));
-  for (const m of refMatches) {
-    const fullRef = m[0].toUpperCase();
-    const propMatch = Array.isArray(properties) ? properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === fullRef) : null;
-    if (propMatch) {
-      const adapted = adaptProperty(propMatch);
-      if (adapted.CODIGO_WASI) codeSet.add(adapted.CODIGO_WASI);
-    }
-  }
-
-  const allExtractedCodes = Array.from(codeSet);
-
-  const matches = allExtractedCodes.map(code => {
-    if (!Array.isArray(properties) || properties.length === 0) return null;
-    const rawMatch = properties.find(p => {
-      const pCode = (p.CODIGO_WASI || '').toString().trim();
-      const pUrl = (p.Wasi_URL || p.Wasi || '').toString();
-      return pCode === code || pUrl.includes(`/${code}`);
-    });
-    return rawMatch ? adaptProperty(rawMatch) : null;
-  });
-
-  return {
-    count: allExtractedCodes.length,
-    codes: allExtractedCodes,
-    matches: matches
-  };
+function extractMultiportalPropertyIdentifiers(text, properties = []) {
+  return libExtractMultiportal(text, properties, adaptProperty);
 }
+
+// Retrocompatibilidad estricta con suites y módulos que invocan extractWasiPropertyIdentifiers
+const extractWasiPropertyIdentifiers = extractMultiportalPropertyIdentifiers;
 
 // ============================================================================
 // 5. BÚSQUEDA INTERNA MULTICRITERIO POR ZONA (UBICACIÓN + TIPO + OPERACIÓN)
@@ -1027,6 +981,31 @@ REGLAS ESTRICTAS:
 // ============================================================================
 // 12. CONTROLADOR CENTRAL ÚNICO (EVALUATE CENTRAL DECISION PIPELINE)
 // ============================================================================
+
+/**
+ * Detección de solicitud de fotos, información ampliada o detalles completos (FASE 4)
+ */
+function isExtendedInfoOrPhotoRequest(text) {
+  if (!text) return false;
+  const norm = normalizeText(text);
+
+  // Exclusión estricta si es una consulta específica de metraje, precio, canon o crédito sin mención de fotos/detalles ampliados
+  const isPureSpecificFeature = /(?:cuanto|cu[aá]nto|precio|costo|canon|metro|m2|mts|habitac|bano|baño|mascota|condominio|credito)/i.test(norm) &&
+    !/(?:fotos?|fotograf[ií]as?|im[aá]gen|galer[ií]a|m[aá]s\s*info|informaci[oó]n\s*ampliada|ver\s*m[aá]s|detalles?\s*completos?|ficha\s*completa)/i.test(norm);
+
+  if (isPureSpecificFeature) {
+    return false;
+  }
+
+  // Patrones de solicitud de fotografías / imágenes
+  const photoPattern = /(?:fotos?|fotograf[ií]as?|im[aá]genes?|galer[ií]a)/i;
+
+  // Patrones de solicitud de más información / detalles completos / ficha ampliada
+  const extendedInfoPattern = /(?:m[aá]s\s*info(?:rmaci[oó]n)?|informaci[oó]n\s*ampliada|informaci[oó]n\s*adicional|ver\s*m[aá]s\s*detalles?|detalles?\s*completos?|caracter[ií]sticas?\s*completas?|ficha\s*completa|enlace\s*(?:de|del)?\s*inmueble|link\s*(?:de|del)?\s*inmueble|ubicaci[oó]n\s*y\s*descripci[oó]n\s*ampliada)/i;
+
+  return photoPattern.test(norm) || extendedInfoPattern.test(norm);
+}
+
 async function evaluateCentralDecisionPipeline(context) {
   const {
     userText = '',
@@ -1251,6 +1230,31 @@ async function evaluateCentralDecisionPipeline(context) {
       return { shouldRespond: true, text: creditEval.response, log: logEntry, targetProperty };
     }
 
+    // B. INFORMACIÓN AMPLIADA Y FOTOGRAFÍAS (FASE 4 - LINK_FOTOS)
+    if (isExtendedInfoOrPhotoRequest(textClean)) {
+      const fotoLink = (targetProperty.LINK_FOTOS || targetProperty.LINK_FOTOS_URL || '').trim();
+      const isValidRexup = fotoLink.startsWith('http') &&
+        fotoLink.includes('rexup.net') &&
+        (fotoLink.includes('cod_inmueble=') || fotoLink.includes('/ver_inmueble_c.php')) &&
+        !/^https?:\/\/(?:www\.)?rexup\.net\/?$/i.test(fotoLink);
+
+      if (isValidRexup) {
+        logEntry.typeDetected = 'PROPERTY_EXTENDED_INFO_LINK_FOTOS';
+        logEntry.reason = `Enlace de fotos e información ampliada (Rexup) recuperado dinámicamente de Google Sheets para ${targetProperty.ID_PROPIEDAD}: ${fotoLink}`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = fotoLink;
+        logEntry.calledAI = false;
+        logEntry.tokensUsed = 0;
+        return { shouldRespond: true, text: fotoLink, log: logEntry, targetProperty };
+      } else {
+        logEntry.typeDetected = 'PROPERTY_EXTENDED_INFO_SIN_LINK';
+        logEntry.reason = `No existe enlace válido de fotos/Rexup documentado en Google Sheets para ${targetProperty.ID_PROPIEDAD}. Silencio seguro.`;
+        logEntry.action = 'SILENCE';
+        logEntry.calledAI = false;
+        return { shouldRespond: false, text: null, log: logEntry };
+      }
+    }
+
     // B. EXTRACCIÓN DETERMINISTA DIRECTA DESDE GOOGLE SHEETS (Metraje, Precio, Habitaciones, Baños, Condominio)
     const directExtraction = extractDeterministicPropertyFeature(textClean, targetProperty);
     if (directExtraction.matched) {
@@ -1337,6 +1341,7 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
     /^\$[\d.,]+/i.test(normOutPattern) ||
     /(?:cuenta con|tiene)\s*\d+.*(?:m²|m2|metros)/i.test(normOutPattern) ||
     normOutPattern.includes('bienvenido a tu techo ideal') ||
+    normOutPattern.includes('rexup.net') ||
     normOutPattern === 'si' || normOutPattern === 'no' ||
     normOutPattern === 'si, disponible.' || normOutPattern === 'si, disponible'
   ) {
@@ -1364,6 +1369,8 @@ module.exports = {
   isPureGreetingWithoutInquiry,
   isHumanAttentionRequest,
   extractWasiPropertyIdentifiers,
+  extractMultiportalPropertyIdentifiers,
+  isExtendedInfoOrPhotoRequest,
   searchZoneOrFeatureMatches,
   isVenezuelaRenaceCreditQuery,
   evaluateVenezuelaRenaceCredit,

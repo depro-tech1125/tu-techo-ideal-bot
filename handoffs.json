@@ -25,6 +25,9 @@
     "25950688": {
       "timestamp": 1793653616958
     },
+    "26102140": {
+      "activeAutomationPropertyId": "REF-035"
+    },
     "88001101": {
       "activeAutomationPropertyId": "REF-012"
     },
@@ -65,7 +68,7 @@
       "activeAutomationPropertyId": "REF-003"
     },
     "lead_human_1": {
-      "lastHumanIntervention": 1793848769585,
+      "lastHumanIntervention": 1793852181824,
       "attentionRequested": false,
       "activeAutomationPropertyId": null
     }
@@ -84,6 +87,9 @@
     },
     "1356": {
       "timestamp": 1793653616958
+    },
+    "1422": {
+      "activeAutomationPropertyId": "REF-035"
     },
     "talk_int_03": {
       "lastHumanIntervention": 1793800218632,
@@ -140,7 +146,7 @@
       "activeAutomationPropertyId": "REF-003"
     },
     "talk_human_1": {
-      "lastHumanIntervention": 1793848769585,
+      "lastHumanIntervention": 1793852181824,
       "attentionRequested": false,
       "activeAutomationPropertyId": null
     }
@@ -158,8 +164,11 @@
     "50487838": {
       "timestamp": 1793653616958
     },
+    "50636642": {
+      "activeAutomationPropertyId": "REF-035"
+    },
     "contact_human_1": {
-      "lastHumanIntervention": 1793848769585,
+      "lastHumanIntervention": 1793852181824,
       "attentionRequested": false,
       "activeAutomationPropertyId": null
     }
