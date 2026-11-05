@@ -222,7 +222,7 @@ function isHumanAttentionRequest(text) {
     /(?:quiero|deseo|decidido\s*a)\s*(?:comprar|adquirir|alquilar)\s*(?:este|esta|el|la)\s*(?:propiedad|inmueble|apartamento|casa|local|oficina)/i,
 
     // 3. Hablar con asesor / agente humano directamente
-    /quiero\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|hablar\s*con\s*(?:el\s*)?(?:asesor|agente|humano|encargado|dueño|propietario|ustedes))/i,
+    /(?:solicito|necesito|deseo|quiero|pido|comun[ií]came|p[aá]same)?\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|hablar\s*(?:directamente\s*)?con|contactar\s*(?:directamente\s*)?a)\s*(?:un\s*|el\s*|los\s*)?(?:asesor|agente|humano|encargado|dueño|propietario|robert|ustedes)/i,
     /p[aá]same\s*(?:con\s*)?(?:el\s*)?(?:asesor|agente|humano)/i,
     /podemos\s*(?:reunirnos|hacer\s*una\s*llamada|hacer\s*una\s*videollamada)/i,
 
@@ -421,6 +421,43 @@ function extractDeterministicPropertyFeature(userQuery, property) {
   }
 
   const q = normalizeText(userQuery);
+
+  
+  // 0. DISPONIBILIDAD DETERMINISTA DE LA PROPIEDAD EN CONTEXTO (PROMPT COMPLEMENTARIO V5.0)
+  if (/(?:est[aá]\s*disponible|sigue\s*disponible|se\s*encuentra\s*disponible|est[aá]\s*libre|sigue\s*libre|disponibilidad)/i.test(q)) {
+    const isAvail = isPropertyAvailable(property);
+    const op = (property.OPERACION || 'venta').toLowerCase().includes('alquiler') ? 'alquiler' : 'venta';
+    if (isAvail) {
+      return {
+        matched: true,
+        hasData: true,
+        answer: `Sí, la propiedad se encuentra disponible para ${op}.`,
+        evidence: `ESTATUS: ${property.ESTATUS}`
+      };
+    } else {
+      return {
+        matched: true,
+        hasData: true,
+        answer: UNAVAILABLE_RESPONSE,
+        evidence: `ESTATUS: ${property.ESTATUS}`
+      };
+    }
+  }
+
+  // CONSULTA DUAL PRECIO + METRAJE
+  const isDualPriceMetraje = /(?:precio|costo|canon|cuanto\s*(?:cuesta|vale)).*(?:metros|metraje|superficie|m2|m²)|(?:metros|metraje|superficie|m2|m²).*(?:precio|costo|canon|cuanto\s*(?:cuesta|vale))/i.test(q);
+  if (isDualPriceMetraje) {
+    const metraje = extractPropertyMetraje(property);
+    const precio = extractPropertyPrice(property);
+    if (metraje && precio) {
+      return {
+        matched: true,
+        hasData: true,
+        answer: `Su precio es de ${precio} y cuenta con ${metraje}.`,
+        evidence: `Metraje: ${metraje}, Precio: ${precio}`
+      };
+    }
+  }
 
   // 1. GASTOS DE MANTENIMIENTO / CONDOMINIO
   if (/(?:condominio|mantenimiento|alicuota|gasto\s*comun)/i.test(q)) {
@@ -1048,6 +1085,109 @@ function isExtendedInfoOrPhotoRequest(text) {
   return photoPattern.test(norm) || extendedInfoPattern.test(norm);
 }
 
+
+// ============================================================================
+// GENERADOR DE RESPUESTA COMERCIAL CONFIRMADA Y BREVE (PROMPT COMPLEMENTARIO V5.0)
+// ============================================================================
+function extractPropertyZone(prop) {
+  if (!prop) return 'Caracas';
+  if (prop.ZONA && prop.ZONA.trim()) return prop.ZONA.trim();
+  if (prop.UBICACION && prop.UBICACION.trim()) return prop.UBICACION.trim();
+
+  const caracasZones = [
+    'Los Palos Grandes', 'Los Samanes', 'Lomas del Sol', 'La Candelaria', 'Prados del Este',
+    'La Boyera', 'Chacao', 'Altamira', 'El Hatillo', 'La California Norte', 'La California Sur',
+    'La California', 'Alta Florida', 'La Florida', 'Las Mercedes', 'San Bernardino', 'Valle Arriba',
+    'Colinas de Bello Monte', 'Bello Monte', 'Santa Fe', 'El Encantado', 'La Castellana',
+    'Campo Alegre', 'Los Ruices', 'Macaracuay', 'San Antonio de los Altos', 'Maracay'
+  ];
+
+  const urls = [
+    prop.Wasi_URL, prop.Wasi,
+    prop['Pagina Web_URL'], prop['Pagina Web'],
+    prop['Mercado Libre_URL'], prop['Mercado Libre'],
+    prop.LINK_FOTOS, prop.LINK_FOTOS_URL
+  ].filter(Boolean);
+
+  for (const u of urls) {
+    const uClean = u.replace(/[-_]/g, ' ').toLowerCase();
+    for (const z of caracasZones) {
+      const zRegex = new RegExp('\\b' + z.toLowerCase().replace(/[-_]/g, ' ') + '\\b', 'i');
+      if (zRegex.test(uClean)) return z;
+    }
+  }
+
+  const desc = (prop.DESCRIPCION_BREVE || '').toLowerCase();
+  for (const z of caracasZones) {
+    const zRegex = new RegExp('\\b' + z.toLowerCase() + '\\b', 'i');
+    if (zRegex.test(desc)) return z;
+  }
+
+  return 'Caracas';
+}
+
+function extractPropertyMetraje(prop) {
+  if (!prop) return null;
+  const desc = prop.DESCRIPCION_BREVE || '';
+  const mFicha = desc.match(/Metraje:\s*([^.\n]+)/i);
+  if (mFicha && mFicha[1] && !mFicha[1].includes('No especificado')) {
+    return mFicha[1].trim();
+  }
+  const tMatch = desc.match(/(\d+(?:[.,]\d+)?\s*(?:m²|m2|metros(?:\s*cuadrados)?)\s*(?:de\s*)?terreno)/i);
+  const cMatch = desc.match(/(\d+(?:[.,]\d+)?\s*(?:m²|m2|metros(?:\s*cuadrados)?)\s*(?:de\s*)?construcci[oó]n)/i);
+  if (tMatch && cMatch) {
+    return `${tMatch[1]} y ${cMatch[1]}`;
+  }
+  const mGen = desc.match(/(\d+(?:[.,]\d+)?\s*(?:m²|m2|metros(?:\s*cuadrados)?))/i);
+  return mGen ? mGen[1].trim() : null;
+}
+
+function extractPropertyPrice(prop) {
+  if (!prop) return null;
+  if (prop.PRECIO) {
+    const raw = String(prop.PRECIO).replace(/^[\$€\s]+/, '').replace(/^USD\s*/i, '').trim();
+    return 'USD ' + raw;
+  }
+  const desc = prop.DESCRIPCION_BREVE || '';
+  const isAlquiler = /alquiler|renta/i.test(prop.OPERACION || '');
+  const feat = extractDeterministicPropertyFeature(isAlquiler ? 'cual es el canon' : 'cual es el precio de venta', prop);
+  if (feat && feat.hasData && feat.answer) {
+    const raw = feat.answer.replace(/^[\$€\s]+/, '').replace(/^USD\s*/i, '').trim();
+    return 'USD ' + raw;
+  }
+  const mFicha = desc.match(/(?:Precio|Canon):\s*([^.\n]+)/i);
+  if (mFicha && mFicha[1] && !mFicha[1].includes('No especificado')) {
+    const raw = mFicha[1].replace(/^[\$€\s]+/, '').replace(/^USD\s*/i, '').trim();
+    return 'USD ' + raw;
+  }
+  const mPrice = desc.match(/\$\s*([\d.,]+)/);
+  if (mPrice) return 'USD ' + mPrice[1].replace(/[.,;:]+$/, '').trim();
+  return null;
+}
+
+function buildConfirmedPropertyAvailabilityResponse(prop) {
+  if (!prop) return AVAILABILITY_RESPONSE;
+  const tipoRaw = (prop.TIPO || 'inmueble').trim().toLowerCase();
+  const feminineTypes = ['casa', 'oficina', 'quinta', 'parcela', 'habitacion', 'habitación', 'propiedad'];
+  const article = feminineTypes.some(t => tipoRaw.includes(t)) ? 'la' : 'el';
+  const zona = extractPropertyZone(prop);
+  const operacion = (prop.OPERACION || 'Venta').trim().toLowerCase();
+  const opStr = (operacion === 'alquiler' || operacion === 'renta') ? 'alquiler' : 'venta';
+
+  let msg = `¡Hola! Sí, ${article} ${tipoRaw} en ${zona} se encuentra disponible para ${opStr}.`;
+  const metraje = extractPropertyMetraje(prop);
+  const precio = extractPropertyPrice(prop);
+
+  if (metraje && precio) {
+    msg += ` Cuenta con ${metraje} y su precio es de ${precio}.`;
+  } else if (metraje) {
+    msg += ` Cuenta con ${metraje}.`;
+  } else if (precio) {
+    msg += ` Su precio es de ${precio}.`;
+  }
+  return msg;
+}
+
 async function evaluateCentralDecisionPipeline(context) {
   const {
     userText = '',
@@ -1230,7 +1370,7 @@ async function evaluateCentralDecisionPipeline(context) {
         logEntry.diagnosticCode = wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT';
         logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} verificada (${wasiExtraction.matchLevel || 'EXACT'}) con equivalencia exacta Disponible en Google Sheets.`;
         logEntry.action = 'RESPOND';
-        logEntry.text = AVAILABILITY_RESPONSE;
+        logEntry.text = buildConfirmedPropertyAvailabilityResponse(targetProperty);
 
         // Guardar contexto aislado por talkId y leadId
         if (contextManager) {
@@ -1240,7 +1380,7 @@ async function evaluateCentralDecisionPipeline(context) {
           handoffManager.activateAutomation(leadId, talkId, contactId, targetProperty.ID_PROPIEDAD);
         }
 
-        return { shouldRespond: true, text: AVAILABILITY_RESPONSE, log: logEntry, targetProperty };
+        return { shouldRespond: true, text: logEntry.text, log: logEntry, targetProperty };
       } else {
         if (isPropertyExplicitlyUnavailable(targetProperty)) {
           logEntry.typeDetected = 'PROPERTY_LINK_NOT_AVAILABLE';
@@ -1482,6 +1622,10 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
 }
 
 module.exports = {
+  buildConfirmedPropertyAvailabilityResponse,
+  extractPropertyZone,
+  extractPropertyMetraje,
+  extractPropertyPrice,
   AVAILABILITY_RESPONSE,
   UNAVAILABLE_RESPONSE,
   isPropertyExplicitlyUnavailable,

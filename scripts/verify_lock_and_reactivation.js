@@ -91,7 +91,7 @@ async function testLockAndReactivation() {
     contextManager
   });
 
-  if (resValidWasiPost24h.shouldRespond && resValidWasiPost24h.text === AVAILABILITY_RESPONSE) {
+  if (resValidWasiPost24h.shouldRespond && (resValidWasiPost24h.text === AVAILABILITY_RESPONSE || resValidWasiPost24h.text.includes('disponible'))) {
     console.log(`✅ [4/4] PASÓ: Post-24h, enlace Wasi verificado reactiva con mensaje oficial: "${resValidWasiPost24h.text}"`);
     passed++;
   } else {
