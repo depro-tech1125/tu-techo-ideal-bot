@@ -1107,6 +1107,7 @@ async function evaluateCentralDecisionPipeline(context) {
 
   if (handoff.isLocked) {
     logEntry.typeDetected = 'HUMAN_LOCKED';
+    logEntry.diagnosticCode = 'HUMAN_LOCK_ACTIVE';
     logEntry.hoursElapsed = handoff.hoursElapsed;
     logEntry.deltaMs = handoff.lastIntervention ? (currentTime - handoff.lastIntervention) : null;
     logEntry.reason = handoff.isFailClosed
@@ -1176,31 +1177,48 @@ async function evaluateCentralDecisionPipeline(context) {
   }
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 5: MENSAJES CON VARIAS PROPIEDADES -> DERIVAR A HUMANO EN SILENCIO
+  // PRIORIDAD 5: MENSAJES CON VARIAS PROPIEDADES O COINCIDENCIA AMBIGUA -> DERIVAR A HUMANO
   // --------------------------------------------------------------------------
   if (wasiExtraction.count > 1) {
     logEntry.typeDetected = 'MULTIPLE_PROPERTIES';
+    logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
     logEntry.reason = `Mensaje contiene ${wasiExtraction.count} propiedades diferentes. Prohibido mezclar fichas. Derivado a humano.`;
     logEntry.action = 'SILENCE';
+    logEntry.diagnostics = wasiExtraction.diagnostics;
+    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
+    return { shouldRespond: false, text: null, log: logEntry };
+  }
+
+  if (wasiExtraction.matchLevel === 'PROPERTY_MATCH_AMBIGUOUS') {
+    logEntry.typeDetected = 'PROPERTY_MATCH_AMBIGUOUS';
+    logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
+    logEntry.reason = `Coincidencia ambigua o contradictoria en enlace recibido (${wasiExtraction.diagnostics?.detail?.reason || 'Múltiples opciones'}). Derivado a humano.`;
+    logEntry.action = 'SILENCE';
+    logEntry.diagnostics = wasiExtraction.diagnostics;
     if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
   // --------------------------------------------------------------------------
-  // PRIORIDAD 6 Y 7: ENLACE WASI / IDENTIFICADOR DE PROPIEDAD UNÍVOCO
+  // PRIORIDAD 6 Y 7: ENLACE INMOBILIARIO / IDENTIFICADOR DE PROPIEDAD UNÍVOCO
+  // (Nivel 1 Exacto o Nivel 2 Cross-Portal verificado)
   // --------------------------------------------------------------------------
   let targetProperty = null;
 
   if (wasiExtraction.count === 1) {
     targetProperty = wasiExtraction.matches[0];
     if (!targetProperty) {
-      logEntry.typeDetected = 'WASI_LINK_NOT_FOUND';
+      logEntry.typeDetected = wasiExtraction.isWasiSpecific ? 'WASI_LINK_NOT_FOUND' : (wasiExtraction.matchLevel === 'PROPERTY_MATCH_AMBIGUOUS' ? 'PROPERTY_MATCH_AMBIGUOUS' : 'PROPERTY_NOT_FOUND');
+      logEntry.diagnosticCode = wasiExtraction.matchLevel || 'PROPERTY_NOT_FOUND';
       logEntry.reason = `Enlace o identificador ${wasiExtraction.codes[0]} no existe en Google Sheets. Prohibido inventar.`;
       logEntry.action = 'SILENCE';
+      logEntry.diagnostics = wasiExtraction.diagnostics;
       return { shouldRespond: false, text: null, log: logEntry };
     }
 
     logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
+    logEntry.matchLevel = wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT';
+    logEntry.diagnostics = wasiExtraction.diagnostics;
 
     // Comprobación de estatus en tiempo real
     const isAvail = isPropertyAvailable(targetProperty);
@@ -1208,8 +1226,9 @@ async function evaluateCentralDecisionPipeline(context) {
 
     if (isWasiInitialShare) {
       if (isAvail) {
-        logEntry.typeDetected = 'WASI_LINK_AVAILABLE';
-        logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} verificada con equivalencia exacta Disponible en Google Sheets.`;
+        logEntry.typeDetected = wasiExtraction.isWasiSpecific ? 'WASI_LINK_AVAILABLE' : (wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT');
+        logEntry.diagnosticCode = wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT';
+        logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} verificada (${wasiExtraction.matchLevel || 'EXACT'}) con equivalencia exacta Disponible en Google Sheets.`;
         logEntry.action = 'RESPOND';
         logEntry.text = AVAILABILITY_RESPONSE;
 
@@ -1225,12 +1244,14 @@ async function evaluateCentralDecisionPipeline(context) {
       } else {
         if (isPropertyExplicitlyUnavailable(targetProperty)) {
           logEntry.typeDetected = 'PROPERTY_LINK_NOT_AVAILABLE';
+          logEntry.diagnosticCode = 'PROPERTY_STATUS_UNAVAILABLE';
           logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} con estatus verificado no disponible ("${targetProperty.ESTATUS}"). Comunicando estado real.`;
           logEntry.action = 'RESPOND';
           logEntry.text = UNAVAILABLE_RESPONSE;
           return { shouldRespond: true, text: UNAVAILABLE_RESPONSE, log: logEntry, targetProperty };
         } else {
-          logEntry.typeDetected = 'WASI_LINK_NOT_AVAILABLE';
+          logEntry.typeDetected = wasiExtraction.isWasiSpecific ? 'WASI_LINK_NOT_AVAILABLE' : 'PROPERTY_STATUS_UNAVAILABLE';
+          logEntry.diagnosticCode = 'PROPERTY_STATUS_UNAVAILABLE';
           logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} con estatus no verificable o ambiguo ("${targetProperty.ESTATUS}"). Silencio seguro.`;
           logEntry.action = 'SILENCE';
           return { shouldRespond: false, text: null, log: logEntry };
@@ -1416,7 +1437,7 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
     messageObj.element_type === 'note' ||
     authorType === 'internal'
   ) {
-    return { isBot: false, isHuman: false, isHumanAdvisor: false, isInternalNote: true, isUncertain: false, source: 'INTERNAL_NOTE', reason: 'KOMMO_INTERNAL_NOTE' };
+    return { isBot: false, isHuman: false, isHumanAdvisor: false, isInternalNote: true, isUncertain: false, source: 'INTERNAL_NOTE', reason: 'KOMMO_INTERNAL_NOTE', diagnosticCode: 'INTERNAL_NOTE_IGNORED' };
   }
 
   // 1. Detección segura de Bot / Salesbot / App (Salesbot #3, Salesbot #100766, Bot ID configurado):

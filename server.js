@@ -4379,7 +4379,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     if (!lockResult.allowed) {
       console.log(`[Idempotency] Message key [${msgKey}] already processed or in-flight (${lockResult.reason}). Skipping duplicate.`);
       if (isSync && !res.headersSent) {
-        return res.status(200).json({ status: 'ok', handled: 'IDEMPOTENCY_REJECTED', reason: lockResult.reason });
+        return res.status(200).json({ status: 'ok', handled: 'IDEMPOTENCY_REJECTED', reason: lockResult.reason, diagnosticCode: 'DUPLICATE_EVENT' });
       }
       return;
     }
