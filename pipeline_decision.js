@@ -1028,7 +1028,7 @@ function isExtendedInfoOrPhotoRequest(text) {
   const photoPattern = /(?:fotos?|fotograf[ií]as?|im[aá]genes?|galer[ií]a)/i;
 
   // Patrones de solicitud de más información / detalles completos / ficha ampliada
-  const extendedInfoPattern = /(?:m[aá]s\s*info(?:rmaci[oó]n)?|informaci[oó]n\s*ampliada|informaci[oó]n\s*adicional|ver\s*m[aá]s\s*detalles?|detalles?\s*completos?|caracter[ií]sticas?\s*completas?|ficha\s*completa|enlace\s*(?:de|del)?\s*inmueble|link\s*(?:de|del)?\s*inmueble|ubicaci[oó]n\s*y\s*descripci[oó]n\s*ampliada)/i;
+  const extendedInfoPattern = /(?:m[aá]s\s*info(?:rmaci[oó]n)?|informaci[oó]n\s*(?:ampliada|adicional|completa)|ver\s*m[aá]s\s*detalles?|detalles?\s*completos?|caracter[ií]sticas?\s*completas?|ficha\s*(?:completa|t[eé]cnica)|enlace\s*(?:de\s*(?:la\s*)?|del\s*)?(?:propiedad|inmueble)|link\s*(?:de\s*(?:la\s*)?|del\s*)?(?:propiedad|inmueble)|ubicaci[oó]n\s*y\s*descripci[oó]n\s*ampliada)/i;
 
   return photoPattern.test(norm) || extendedInfoPattern.test(norm);
 }
@@ -1274,7 +1274,7 @@ async function evaluateCentralDecisionPipeline(context) {
         !/^https?:\/\/(?:www\.)?rexup\.net\/?$/i.test(fotoLink);
 
       if (isValidRexup) {
-        const responseText = `¡Claro! Aquí puedes consultar más fotografías e información de la propiedad: ${fotoLink}`;
+        const responseText = `¡Claro! Aquí puedes consultar más fotografías e información de la propiedad:\n\n${fotoLink}`;
         logEntry.typeDetected = 'PROPERTY_EXTENDED_INFO_LINK_FOTOS';
         logEntry.reason = `Enlace de fotos e información ampliada (Rexup) recuperado dinámicamente de Google Sheets para ${targetProperty.ID_PROPIEDAD}: ${fotoLink}`;
         logEntry.action = 'RESPOND';
