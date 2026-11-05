@@ -7,7 +7,7 @@
  * 2. Página externa accesible con identificador idéntico y datos coincidentes -> 100% éxito
  * 3. Página accesible sin identificador con 95% de coincidencia -> Asigna REF correspondiente
  * 4. Página accesible con datos coincidentes al 89% o 60% -> Rechaza / Silencio seguro
- * 5. Coincidencia al 90% pero contradicción crítica (precio $300k vs $130k) -> Rechaza
+ * 5. Precio externo difiere ($300k vs $130k) -> Excluido de scoring, asigna REF-007, Sheets prevalece
  * 6. Página inaccesible pero con ID unívoco en URL (Wasi 10441563) -> Fallback resiliente
  * 7. Página inaccesible sin identificador en URL -> Silencio seguro
  * 8. Dos candidatos similares sin margen de unicidad (>= 15 pts) -> Ambigüedad y derivación
@@ -205,14 +205,15 @@ async function runExternalValidationSuite() {
   }
 
   // ==========================================================================
-  // ESCENARIO 5: Coincidencia con contradicción crítica (Precio $300.000 vs $130.000)
-  // Aunque tipo, zona y metraje coincidan, precio diff > 10% anula la coincidencia (Score 0).
+  // ESCENARIO 5: Precio externo diferente ($300.000 vs $130.000 en Sheets)
+  // El precio está totalmente excluido del scoring de identidad: no anula la propiedad.
+  // Identifica REF-007 (>= 90%), registra EXTERNAL_PRICE_DIFFERS_SHEETS y responde con precio oficial de Sheets ($130.000).
   // ==========================================================================
   const htmlContradictionPrice = `
     <html>
       <head><title>Apartamento en venta Los Palos Grandes 106 m2 - $300.000</title></head>
       <body>
-        <p>Apartamento en venta en Los Palos Grandes. Metraje: 106 m2. Precio: $300.000 USD.</p>
+        <p>Apartamento en venta en Los Palos Grandes. Metraje: 106 m2. Precio: $300.000 USD. 2 habitaciones, pozo de agua.</p>
       </body>
     </html>
   `;
@@ -226,11 +227,15 @@ async function runExternalValidationSuite() {
     simulatedHtml: htmlContradictionPrice
   });
 
-  if (!res5.shouldRespond && res5.log.action === 'SILENCE') {
-    console.log('✅ [PASS 5/15] Página con contradicción crítica ($300.000 vs $130.000) -> Rechazada inmediatamente sin responder.');
+  const price5AuditOk = res5.log.priceAudit?.code === 'EXTERNAL_PRICE_DIFFERS_SHEETS' ||
+                        res5.log.diagnostics?.priceAudit?.code === 'EXTERNAL_PRICE_DIFFERS_SHEETS';
+  const price5SheetsPrevailed = res5.text?.includes('USD 130.000') && !res5.text?.includes('300.000');
+
+  if (res5.shouldRespond && res5.targetProperty?.ID_PROPIEDAD === 'REF-007' && price5AuditOk && price5SheetsPrevailed) {
+    console.log('✅ [PASS 5/15] Precio externo difiere ($300.000 vs $130.000) -> Identidad confirmada REF-007 (exclusión de precio), auditoría EXTERNAL_PRICE_DIFFERS_SHEETS y Sheets prevalece.');
     passed++;
   } else {
-    console.error('❌ [FAIL 5/15] No rechazó contradicción crítica de precio:', res5);
+    console.error('❌ [FAIL 5/15] Falló resolución con precio externo diferente:', res5);
   }
 
   // ==========================================================================
@@ -328,8 +333,8 @@ async function runExternalValidationSuite() {
   }
 
   // ==========================================================================
-  // ESCENARIO 9: Precio externo diferente al de Sheets (Tolerancia 5%)
-  // La respuesta debe construirse exclusivamente con los datos de Google Sheets.
+  // ESCENARIO 9: Precio externo diferente al de Sheets ($128.000 vs $130.000)
+  // Prevalece estrictamente Google Sheets ("USD 130.000") y registra EXTERNAL_PRICE_DIFFERS_SHEETS.
   // ==========================================================================
   const htmlPriceDiff = `
     <html>
@@ -349,16 +354,19 @@ async function runExternalValidationSuite() {
     simulatedHtml: htmlPriceDiff
   });
 
+  const price9AuditOk = res9.log.priceAudit?.code === 'EXTERNAL_PRICE_DIFFERS_SHEETS' ||
+                        res9.log.diagnostics?.priceAudit?.code === 'EXTERNAL_PRICE_DIFFERS_SHEETS';
   const price9Ok = res9.shouldRespond &&
     res9.targetProperty?.ID_PROPIEDAD === 'REF-007' &&
     res9.text.includes('USD 130.000') &&
-    !res9.text.includes('128.000');
+    !res9.text.includes('128.000') &&
+    price9AuditOk;
 
   if (price9Ok) {
-    console.log('✅ [PASS 9/15] Precio externo difiere ($128.000) -> Prevalece estrictamente Google Sheets ("USD 130.000").');
+    console.log('✅ [PASS 9/15] Precio externo difiere ($128.000) -> Prevalece estrictamente Google Sheets ("USD 130.000") y registra EXTERNAL_PRICE_DIFFERS_SHEETS.');
     passed++;
   } else {
-    console.error('❌ [FAIL 9/15] No prevaleció precio de Google Sheets:', res9);
+    console.error('❌ [FAIL 9/15] No prevaleció precio de Google Sheets o falló auditoría:', res9);
   }
 
   // ==========================================================================

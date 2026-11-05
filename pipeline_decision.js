@@ -1423,8 +1423,12 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.diagnostics = {
       score: extResolution.score,
       details: extResolution.details,
-      extractedAttrs: extResolution.extractedAttrs
+      extractedAttrs: extResolution.extractedAttrs,
+      priceAudit: extResolution.priceAudit || null
     };
+    if (extResolution.priceAudit) {
+      logEntry.priceAudit = extResolution.priceAudit;
+    }
   } else if (wasiExtraction.count === 1) {
     targetProperty = wasiExtraction.matches[0];
     if (!targetProperty) {
