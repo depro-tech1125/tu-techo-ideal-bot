@@ -847,6 +847,71 @@ function hasExplicitRealEstateIntent(text, imageUrl = null) {
 // ==========================================
 // 📢 DETECCIÓN DE MENSAJES Y PALABRAS CLAVE DE CAMPAÑA META (ADS)
 // ==========================================
+// ==========================================
+// 💬 DETECCIÓN DE COMENTARIOS PÚBLICOS DE FACEBOOK (EXCLUSIÓN ESTRICTA)
+// ==========================================
+// Distingue expresamente los mensajes privados de Messenger de los comentarios públicos de Facebook.
+// No se automatizan comentarios públicos en publicaciones: silencio absoluto (0 mensajes, 0 alertas).
+function isFacebookPublicComment(body, messageObj) {
+  if (!body && !messageObj) return false;
+
+  if (messageObj) {
+    if (messageObj.is_comment === true || messageObj.is_comment === "true" || messageObj.is_comment === 1 || messageObj.is_comment === "1") {
+      return true;
+    }
+    if (messageObj.item === "comment" || messageObj.type === "comment" || messageObj.message_type === "comment") {
+      return true;
+    }
+    if (typeof messageObj.origin === "string" && /comment/i.test(messageObj.origin)) {
+      return true;
+    }
+  }
+
+  if (body) {
+    if (body.comment || body["message[add][0][is_comment]"] === "true" || body["message[add][0][is_comment]"] === "1" || body["message[add][0][is_comment]"] === true) {
+      return true;
+    }
+    if (body.event === "comment_add" || body.event === "new_comment" || body.event === "facebook_comment") {
+      return true;
+    }
+    if (body["message[add][0][item]"] === "comment" || body["message[add][0][type]"] === "comment") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// ==========================================
+// 🌐 IDENTIFICACIÓN EXACTA DEL CANAL DE COMUNICACIÓN (FACEBOOK, INSTAGRAM, WHATSAPP)
+// ==========================================
+function resolveCommunicationChannel(talkOrigin, talkSourceId, clientPhone, clientName, messageObj) {
+  const origin = (talkOrigin || messageObj?.origin || "").toLowerCase();
+  const sourceId = String(talkSourceId || messageObj?.source_id || "");
+
+  // 1. Facebook Messenger confirmado por origen de talk o source_id de Kommo
+  if (origin === "facebook" || origin.includes("facebook") || origin.includes("messenger") || sourceId === "44070" || sourceId === "44072") {
+    return "Facebook Messenger";
+  }
+
+  // 2. Instagram Direct confirmado por origen de talk o source_id de Kommo
+  if (origin.includes("instagram") || sourceId === "83712" || sourceId === "83714") {
+    return "Instagram";
+  }
+
+  // 3. WhatsApp confirmado por origen de talk, source_id o número telefónico válido
+  if (origin.includes("wa") || origin.includes("whatsapp") || sourceId === "83710" || (clientPhone && String(clientPhone).length > 5)) {
+    return "WhatsApp";
+  }
+
+  // 4. Heurística secundaria por nombre de usuario (@username típico de Instagram)
+  if (clientName && clientName.startsWith("@")) {
+    return "Instagram";
+  }
+
+  return "Facebook Messenger / Redes Sociales";
+}
+
 function isMetaCampaignKeyword(text) {
   if (!text || typeof text !== 'string') return false;
   const q = normalizeText(text);
@@ -1689,7 +1754,7 @@ function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedP
     propDescription = `${matchedProperty.ID_PROPIEDAD} - ${matchedProperty.TIPO || "Inmueble"} en ${matchedProperty.ZONA || "Caracas"}${wasiInfo}`;
   }
 
-  const cleanPhone = clientPhone ? clientPhone : "No disponible";
+  const cleanPhone = clientPhone ? clientPhone : (channel === "Facebook Messenger" ? "No disponible (Facebook Messenger - Chat privado)" : "No disponible");
   const detectedInterest = interestType || (
     /visita|cita|reuni[oó]n|ver\s*(?:la|el)?\s*propiedad|conocer/i.test(userText) ? "Agendar una visita" :
     /reservar|apartar/i.test(userText) ? "Reserva de inmueble" :
@@ -1702,6 +1767,7 @@ function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedP
   return `🚨 *ALERTA COMERCIAL - TU TECHO IDEAL* 🚨\n\n` +
     `Un cliente necesita atención prioritaria.\n\n` +
     `👤 *Cliente:* ${clientName || "Cliente"}\n` +
+    `🌐 *Canal:* ${channel || "WhatsApp"}\n` +
     `📱 *Teléfono:* ${cleanPhone}\n` +
     `🏢 *Propiedad:* ${propDescription}\n` +
     `🎯 *Interés detectado:* ${detectedInterest}\n` +
@@ -4205,6 +4271,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         talk_id: body['message[add][0][talk_id]'],
         contact_id: body['message[add][0][contact_id]'],
         type: body['message[add][0][type]'],
+        origin: body['message[add][0][origin]'],
+        source_id: body['message[add][0][source_id]'],
+        is_comment: body['message[add][0][is_comment]'],
+        item: body['message[add][0][item]'],
         author: {
           type: body['message[add][0][author][type]'],
           name: body['message[add][0][author][name]']
@@ -4394,19 +4464,25 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       activeProcessingTalks.add(currentTalkId);
     }
 
-    // Resolver Lead ID
+    // Resolver Lead ID, Canal y Origen
     let leadId = messageObj.entity_id || messageObj.element_id;
+    let talkOrigin = messageObj.origin || null;
+    let talkSourceId = messageObj.source_id || null;
 
-    if (!leadId && messageObj.talk_id) {
+    if (messageObj.talk_id) {
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           const talkRes = await axios.get(`https://${process.env.KOMMO_SUBDOMAIN}.kommo.com/api/v4/talks/${messageObj.talk_id}`, {
             headers: { Authorization: process.env.KOMMO_TOKEN },
             timeout: 5000
           });
-          if (talkRes.data?.entity_id) {
-            leadId = talkRes.data.entity_id;
-            break;
+          if (talkRes.data) {
+            if (talkRes.data.origin) talkOrigin = talkRes.data.origin;
+            if (talkRes.data.source_id) talkSourceId = talkRes.data.source_id;
+            if (!leadId && talkRes.data.entity_id) {
+              leadId = talkRes.data.entity_id;
+              break;
+            }
           }
         } catch (err) {
           if (attempt === 3) console.warn('[Webhook] Could not resolve lead from talk_id:', err.message);
@@ -4472,11 +4548,13 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
     const currentLeadId = String(leadId);
 
+    // Identificar canal exacto de la conversación (Facebook Messenger, Instagram, WhatsApp)
+    const detectedChannel = resolveCommunicationChannel(talkOrigin, talkSourceId, clientPhone, clientName, messageObj);
+
     // 🛑 FILTRO 4.2: Ignorar si el mensaje procede del propio Robert Jiménez (Broker / Admin) o de su chat de alertas
     const isRobertChat = currentLeadId === '7882504' ||
       String(messageObj.contact_id) === '18822786' ||
-      clientPhone.includes('4143115105') ||
-      clientPhone.includes('4223115105');
+      (clientPhone && (clientPhone.includes('4143115105') || clientPhone.includes('4223115105')));
     if (isRobertChat) {
       console.log(`[Webhook] Mensaje procedente del chat o número de Robert (${clientPhone || currentLeadId}). El bot no responde a Robert.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
@@ -4507,6 +4585,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       console.log(`\n========================================`);
       console.log(`[Processing New Message]`);
+      console.log(`Canal: ${detectedChannel} (Origin: ${talkOrigin || 'n/a'}, Source: ${talkSourceId || 'n/a'})`);
       console.log(`Lead ID: ${currentLeadId}`);
       console.log(`Cliente: ${clientName}`);
       console.log(`Message: "${userText}"`);
@@ -4594,7 +4673,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
         // Si fue una solicitud de atención humana o nota de voz, alertar a Robert para que atienda al cliente
         if (pipelineResult.log.typeDetected === 'HUMAN_ATTENTION_REQUEST' || isVoiceNoteOrAudio(body, messageObj, userText)) {
-          let channel = clientPhone ? 'WhatsApp' : (clientName.startsWith('@') ? 'Instagram' : 'WhatsApp / Redes Sociales');
+          let channel = detectedChannel;
           let interestType = 'Atención comercial prioritaria';
           if (isVoiceNoteOrAudio(body, messageObj, userText)) {
             interestType = 'Nota de voz / Audio recibido';
@@ -5350,6 +5429,8 @@ module.exports = {
   isPropertyLinkRequest,
   isInstagramStoryOrRestricted,
   isMetaCampaignKeyword,
+  isFacebookPublicComment,
+  resolveCommunicationChannel,
   isStandaloneInmobiliariaTuTechoIdeal,
   isPureGreeting,
   isAvailabilityWithoutProperty,

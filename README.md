@@ -60,6 +60,13 @@ Para identificar propiedades a partir de enlaces externos, el sistema extrae sem
 - Resolución DNS previa con verificación de rangos IP privados (RFC 1918), loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`) y metadata de proveedores de nube (`metadata.google.internal`, `169.254.169.254`).
 - Límite de descarga estricto (512 KB), timeout rápido (3.5s) y sanitización estática de HTML contra ataques de prompt injection.
 
+### 7. Soporte Multicanal: Facebook Messenger, Instagram Direct y WhatsApp
+- **Identificación Inequívoca de Canal:** El backend reconoce el canal exacto a partir de `origin` (`facebook`, `instagram_business`, `com.amocrm.amocrmwa`) y `source_id` de Kommo CRM (`resolveCommunicationChannel`).
+- **Exclusión Estricta de Comentarios Públicos:** Distinción expresa de mensajes privados de Messenger frente a comentarios públicos en posts (`isFacebookPublicComment`). Los comentarios públicos se descartan silenciosamente (0 mensajes al cliente, 0 alertas a Robert).
+- **Blindaje Anti-Enrutamiento Cruzado:** Toda conversación de Messenger recibe su respuesta exclusivamente en Messenger mediante Kommo Salesbot; nunca se redirige la respuesta del cliente a WhatsApp.
+- **Auto-Aceptación de Leads Entrantes:** Prospectos nuevos en "Leads Entrantes" (`status_id: 108871567`) se promueven a "Contacto inicial" (`status_id: 108871571`, asignado a Robert `15568119`) habilitando Salesbot en todos los canales.
+- **Alertas Gerenciales con Origen de Canal:** Alertas comerciales a Robert especifican claramente `🌐 *Canal:* Facebook Messenger` y enlace directo para atender al cliente en Kommo CRM.
+
 ---
 
 ## 🏗️ ARQUITECTURA DEL SISTEMA

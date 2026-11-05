@@ -63,3 +63,13 @@ El microservicio reemplaza la dispersión de reglas previas por un **Pipeline de
 - **`POST /api/staging/test-pipeline-evaluation`:** Evaluación determinista del pipeline en Staging con soporte de tiempo simulado (requiere `x-staging-auth`).
 - **Guardián de Aislamiento:** Las rutas de prueba exigen estrictamente `NODE_ENV === 'staging'`, hostname autorizado `tu-techo-ideal-staging.onrender.com` y autenticación segura con `crypto.timingSafeEqual`. En producción devuelven HTTP 404/401.
 
+
+
+## 13. AUTOMATIZACIÓN DE FACEBOOK MESSENGER Y GESTIÓN MULTICANAL
+
+Tu Techo Ideal V5.0 implementa soporte nativo desacoplado para **Facebook Messenger** integrado en Kommo CRM:
+1. **Canal de Origen Inequívoco:** Mediante `resolveCommunicationChannel`, el sistema detecta `origin: "facebook"` o `source_id: 44070 / 44072`.
+2. **Exclusión de Comentarios Públicos:** Mediante `isFacebookPublicComment`, se filtran los comentarios en publicaciones, garantizando que el asistente virtual opere exclusivamente en mensajes privados (inbox 1 a 1).
+3. **Flujo de Respuesta:** El bot procesa el mensaje con el inventario de Google Sheets, actualiza el campo `2103996` (`Respuesta_IA`) y dispara Salesbot (`POST /api/v4/bots/100766/run`), el cual entrega la respuesta dentro de la misma conversación en Messenger.
+4. **Auto-Aceptación de Leads:** La función `ensureLeadInActivePipeline` auto-acepta prospectos en "Leads Entrantes" (`status_id: 108871567`) pasándolos a "Contacto inicial" (`status_id: 108871571`, `responsible_user_id: 15568119`) permitiendo la ejecución de Salesbot.
+5. **Alertas a Robert:** Si el cliente solicita visita, reserva o atención humana, se alerta a Robert por WhatsApp con la etiqueta `🌐 *Canal:* Facebook Messenger` y enlace directo para atender el chat en Kommo.
