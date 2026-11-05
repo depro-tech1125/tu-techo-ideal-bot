@@ -6,4 +6,4 @@ audit_state.json
 
 lead_context.json
 
-handoffs.json
+# handoffs.json (versioned for persistent context on Render)

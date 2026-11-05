@@ -1,0 +1,167 @@
+{
+  "leads": {
+    "25092108": {
+      "activeAutomationPropertyId": "REF-003"
+    },
+    "25685884": {
+      "lastHumanIntervention": 1793736413000,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    },
+    "25685885": {
+      "attentionRequested": true,
+      "attentionRequestedAt": 1793743599465
+    },
+    "25685886": {
+      "lastHumanIntervention": 1793800218630,
+      "timestamp": 1793800218630
+    },
+    "25947084": {
+      "timestamp": 1793653472267
+    },
+    "25949592": {
+      "timestamp": 1793650608632
+    },
+    "25950688": {
+      "timestamp": 1793653616958
+    },
+    "88001101": {
+      "activeAutomationPropertyId": "REF-012"
+    },
+    "88001105": {
+      "lastHumanIntervention": 1793747051791,
+      "timestamp": 1793747051791,
+      "attentionRequested": true,
+      "attentionRequestedAt": 1793800205754
+    },
+    "88001106": {
+      "activeAutomationPropertyId": "REF-012"
+    },
+    "88001107": {
+      "lastHumanIntervention": 1793800206786,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    },
+    "88001108": {
+      "lastHumanIntervention": 1793710207706,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": "REF-062"
+    },
+    "lead_qc_1": {
+      "activeAutomationPropertyId": "REF-005"
+    },
+    "lead_qc_3": {
+      "activeAutomationPropertyId": "REF-001"
+    },
+    "lead_qc_5": {
+      "lastHumanIntervention": 1793843411180,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    },
+    "lead_qc_6": {
+      "activeAutomationPropertyId": "REF-062"
+    },
+    "lead_admin_test_1": {
+      "activeAutomationPropertyId": "REF-003"
+    },
+    "lead_human_1": {
+      "lastHumanIntervention": 1793848769585,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    }
+  },
+  "talks": {
+    "1149": {
+      "lastHumanIntervention": 1793803418255,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": "REF-003"
+    },
+    "1351": {
+      "timestamp": 1793653472267
+    },
+    "1354": {
+      "timestamp": 1793650608632
+    },
+    "1356": {
+      "timestamp": 1793653616958
+    },
+    "talk_int_03": {
+      "lastHumanIntervention": 1793800218632,
+      "timestamp": 1793800218632
+    },
+    "talk_int_01": {
+      "lastHumanIntervention": 1793736413000,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    },
+    "talk_int_02": {
+      "attentionRequested": true,
+      "attentionRequestedAt": 1793743599465
+    },
+    "talk_stg_01": {
+      "activeAutomationPropertyId": "REF-012"
+    },
+    "talk_stg_05": {
+      "lastHumanIntervention": 1793747051795,
+      "timestamp": 1793747051795
+    },
+    "talk_stg_06_cred": {
+      "activeAutomationPropertyId": "REF-012"
+    },
+    "talk_stg_07": {
+      "lastHumanIntervention": 1793800206786,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    },
+    "talk_stg_08": {
+      "lastHumanIntervention": 1793710207706,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": "REF-062"
+    },
+    "talk_stg_05_meet": {
+      "attentionRequested": true,
+      "attentionRequestedAt": 1793800205754
+    },
+    "qc_talk_1": {
+      "activeAutomationPropertyId": "REF-005"
+    },
+    "qc_talk_dual": {
+      "activeAutomationPropertyId": "REF-001"
+    },
+    "qc_talk_handoff": {
+      "lastHumanIntervention": 1793843411180,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    },
+    "qc_talk_lomas": {
+      "activeAutomationPropertyId": "REF-062"
+    },
+    "talk_admin_test_1": {
+      "activeAutomationPropertyId": "REF-003"
+    },
+    "talk_human_1": {
+      "lastHumanIntervention": 1793848769585,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    }
+  },
+  "contacts": {
+    "49554440": {
+      "activeAutomationPropertyId": "REF-003"
+    },
+    "50483574": {
+      "timestamp": 1793653472267
+    },
+    "50486046": {
+      "timestamp": 1793650608632
+    },
+    "50487838": {
+      "timestamp": 1793653616958
+    },
+    "contact_human_1": {
+      "lastHumanIntervention": 1793848769585,
+      "attentionRequested": false,
+      "activeAutomationPropertyId": null
+    }
+  }
+}
