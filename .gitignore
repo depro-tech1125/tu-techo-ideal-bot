@@ -2,6 +2,7 @@ node_modules
 .env
 *.log
 .DS_Store
+*.zip
 audit_state.json
 
 lead_context.json
