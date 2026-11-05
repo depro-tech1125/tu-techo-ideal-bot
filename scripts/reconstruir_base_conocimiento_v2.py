@@ -1127,3 +1127,4 @@ print(f"✅ AUDITORIA_DATOS_69_PROPIEDADES.md actualizado: {AUDIT_REPORT}")
 print("\n" + "="*70)
 print("RECONSTRUCCIÓN SEMÁNTICA V2 FINALIZADA AL 100%")
 print("="*70)
+
