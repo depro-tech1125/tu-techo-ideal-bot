@@ -722,7 +722,7 @@ class HandoffManager {
             hoursElapsed,
             lastIntervention: remoteResult.lastHumanTimestamp,
             hadPreviousIntervention: true,
-            activeAutomationPropertyId: null
+            activeAutomationPropertyId: (entry && entry.activeAutomationPropertyId) || null
           };
         }
       } catch (err) {
@@ -742,7 +742,7 @@ class HandoffManager {
       hoursElapsed: 999,
       lastIntervention: null,
       hadPreviousIntervention: false,
-      activeAutomationPropertyId: null
+      activeAutomationPropertyId: (entry && entry.activeAutomationPropertyId) || null
     };
   }
 }
@@ -1044,7 +1044,8 @@ async function evaluateCentralDecisionPipeline(context) {
     contextManager = null,
     activePropertyContext = null,
     currentTime = Date.now(),
-    aiEvaluator = null
+    aiEvaluator = null,
+    propertyRecoveryFn = null
   } = context;
 
   const logEntry = {
@@ -1236,6 +1237,17 @@ async function evaluateCentralDecisionPipeline(context) {
     if (!targetProperty && handoff && handoff.activeAutomationPropertyId && Array.isArray(properties)) {
       const match = properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (handoff.activeAutomationPropertyId || '').toUpperCase());
       if (match) targetProperty = adaptProperty(match);
+    }
+    // Resiliente remoto: si aún no se tiene en RAM ni en disco (ej: tras reinicio de Render o git desincronizado), recuperar de Kommo CRM
+    if (!targetProperty && propertyRecoveryFn && typeof propertyRecoveryFn === 'function') {
+      try {
+        const recovered = await propertyRecoveryFn({ leadId, talkId, contactId, properties });
+        if (recovered) {
+          targetProperty = adaptProperty(recovered);
+          if (contextManager) contextManager.saveContext(talkId, leadId, targetProperty);
+          if (handoffManager) handoffManager.activateAutomation(leadId, talkId, contactId, targetProperty.ID_PROPIEDAD);
+        }
+      } catch (e) {}
     }
   }
 

@@ -29,6 +29,8 @@ const {
   isExtendedInfoOrPhotoRequest
 } = require('./pipeline_decision.js');
 
+const { recoverActivePropertyFromKommo, tagLeadWithProperty } = require('./lib/kommo_property_recovery.js');
+
 const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
 
 // ============================================================================
@@ -4570,7 +4572,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         properties,
         handoffManager: centralHandoffManager,
         contextManager: centralContextManager,
-        currentTime
+        currentTime,
+        propertyRecoveryFn: recoverActivePropertyFromKommo
       });
 
       console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
@@ -4715,6 +4718,11 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         talkId: currentTalkId,
         isControlledDispatch
       });
+
+      // Persistencia permanente en Kommo CRM para tolerancia a reinicios de Render
+      if (pipelineResult.targetProperty && pipelineResult.targetProperty.ID_PROPIEDAD) {
+        tagLeadWithProperty(currentLeadId, pipelineResult.targetProperty.ID_PROPIEDAD).catch(() => {});
+      }
 
       if (isControlledDispatch) {
         authorizedControlledPair.currentDispatches++;

@@ -1,7 +1,7 @@
 {
   "leads": {
     "25092108": {
-      "activeAutomationPropertyId": "REF-003"
+      "activeAutomationPropertyId": "REF-035"
     },
     "25685884": {
       "lastHumanIntervention": 1793736413000,
@@ -91,6 +91,9 @@
     "1422": {
       "activeAutomationPropertyId": "REF-035"
     },
+    "1423": {
+      "activeAutomationPropertyId": "REF-035"
+    },
     "talk_int_03": {
       "lastHumanIntervention": 1793800218632,
       "timestamp": 1793800218632
@@ -153,7 +156,7 @@
   },
   "contacts": {
     "49554440": {
-      "activeAutomationPropertyId": "REF-003"
+      "activeAutomationPropertyId": "REF-035"
     },
     "50483574": {
       "timestamp": 1793653472267
