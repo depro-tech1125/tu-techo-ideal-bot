@@ -413,3 +413,4 @@ runCommercialControlTests().catch(err => {
   console.error('Error ejecutando suite de control comercial:', err);
   process.exit(1);
 });
+

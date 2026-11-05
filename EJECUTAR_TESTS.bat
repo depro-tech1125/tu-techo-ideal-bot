@@ -5,7 +5,7 @@ color 0B
 
 echo ==============================================================================
 echo                 TU TECHO IDEAL V5.0 - VALIDACION DEL SISTEMA
-echo             Ejecucion de las Suites de Prueba Automatizadas (187 Tests)
+echo             Ejecucion de las Suites de Prueba Automatizadas (202 Tests)
 echo ==============================================================================
 echo.
 
@@ -14,58 +14,63 @@ if not exist node_modules (
     call npm install
 )
 
-echo [1/10] Ejecutando: Suite de Alertas de Cierre a Robert (Fase 1 Deliverable D)...
+echo [1/11] Ejecutando: Suite de Alertas de Cierre a Robert (Fase 1 Deliverable D)...
 node scripts/test_alertas_robert_fase1.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [2/10] Ejecutando: Suite de Resiliencia y Atencion a Solicitudes Repetidas (Caso 08:24)...
+echo [2/11] Ejecutando: Suite de Resiliencia y Atencion a Solicitudes Repetidas (Caso 08:24)...
 node scripts/test_reproducir_caso_0824.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [3/10] Ejecutando: Suite de Enlace Directo Rexup LINK_FOTOS (Sin kommo.cc)...
+echo [3/11] Ejecutando: Suite de Enlace Directo Rexup LINK_FOTOS (Sin kommo.cc)...
 node scripts/test_link_fotos_directo_sin_kommo_cc.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [4/10] Ejecutando: Suite Maestra de Aceptacion Comercial (50 Escenarios)...
+echo [4/11] Ejecutando: Suite Maestra de Aceptacion Comercial (50 Escenarios)...
 node scripts/test_master_50_acceptance_scenarios.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [5/10] Ejecutando: Suite de Reconocimiento Multiportal y Fotos...
+echo [5/11] Ejecutando: Suite de Reconocimiento Multiportal y Fotos...
 node scripts/test_multiportal_and_photos.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [6/10] Ejecutando: Suite de Idempotencia y Despacho Unico...
+echo [6/11] Ejecutando: Suite de Idempotencia y Despacho Unico...
 node scripts/test_idempotency_and_single_dispatch.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [7/10] Ejecutando: Suite de Nueva Logica Inmobiliaria V5.0 (44 Escenarios)...
+echo [7/11] Ejecutando: Suite de Nueva Logica Inmobiliaria V5.0 (44 Escenarios)...
 node test_suite_nueva_logica.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [8/10] Ejecutando: Verificacion de Bloqueo Humano 12h y Reactivacion...
+echo [8/11] Ejecutando: Verificacion de Bloqueo Humano 12h y Reactivacion...
 node scripts/verify_lock_and_reactivation.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [9/10] Ejecutando: Suite de Resolucion Inteligente Multiportal V5.0 (20 Escenarios + Caso Dayana REF-007)...
+echo [9/11] Ejecutando: Suite de Resolucion Inteligente Multiportal V5.0 (20 Escenarios + Caso Dayana REF-007)...
 node scripts/test_resolucion_inteligente_multiportal.js
 if %errorlevel% neq 0 goto :error
 
 echo.
-echo [10/10] Ejecutando: Suite de Control de Respuestas Comerciales y Transferencia Humana (14 Escenarios)...
+echo [10/11] Ejecutando: Suite de Control de Respuestas Comerciales y Transferencia Humana (14 Escenarios)...
 node scripts/test_control_respuestas_y_transferencia_humana.js
 if %errorlevel% neq 0 goto :error
 
 echo.
+echo [11/11] Ejecutando: Suite de Validacion Real de Publicaciones Externas al 90%% (15 Escenarios + SSRF)...
+node scripts/test_validacion_publicaciones_externas_90.js
+if %errorlevel% neq 0 goto :error
+
+echo.
 echo ==============================================================================
-echo       TODAS LAS PRUEBAS (187/187) FUERON SUPERADAS CON EXITO (100%%)
+echo       TODAS LAS PRUEBAS (202/202) FUERON SUPERADAS CON EXITO (100%%)
 echo ==============================================================================
 echo El sistema cumple al 100%% con los requisitos comerciales: El bot informa. Robert vende.
 pause

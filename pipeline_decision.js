@@ -257,6 +257,18 @@ function extractMultiportalPropertyIdentifiers(text, properties = []) {
 const extractWasiPropertyIdentifiers = extractMultiportalPropertyIdentifiers;
 
 // ============================================================================
+// 4.B. LECTOR SEGURO DE PUBLICACIONES EXTERNAS Y COMPARADOR AL 90%
+// ============================================================================
+const {
+  resolvePropertyFromUrlOrContent,
+  fetchPublicPublication,
+  extractPublicationAttributes,
+  calculateWeightedMatchScore,
+  matchPublicationAgainstProperties,
+  isSafeUrl
+} = require('./lib/external_publication_reader');
+
+// ============================================================================
 // 5. BÚSQUEDA INTERNA MULTICRITERIO POR ZONA (UBICACIÓN + TIPO + OPERACIÓN)
 // ============================================================================
 function searchZoneOrFeatureMatches(queryText, properties = []) {
@@ -1296,7 +1308,63 @@ async function evaluateCentralDecisionPipeline(context) {
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
-  // Extraer enlaces Wasi o identificadores presentes en el mensaje
+  // --------------------------------------------------------------------------
+  // PRIORIDAD 3.C: LECTURA DE CONTENIDO EXTERNO Y VALIDACIÓN MULTIATRIBUTO AL 90%
+  // Si el mensaje contiene un enlace HTTP/HTTPS, se consulta la página pública de forma segura,
+  // se extraen sus atributos verificables y se comparan contra Google Sheets con ponderación >= 90%.
+  // --------------------------------------------------------------------------
+  // Comprobación previa de múltiples enlaces en el mismo mensaje
+  const allUrlsInText = textClean.match(/https?:\/\/[^\s<>"'{}|\\^`[\]]+/gi) || [];
+  if (allUrlsInText.length > 1) {
+    logEntry.typeDetected = 'MULTIPLE_PROPERTIES';
+    logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
+    logEntry.reason = `Mensaje contiene ${allUrlsInText.length} enlaces diferentes. Prohibido mezclar fichas. Derivado a humano.`;
+    logEntry.action = 'SILENCE';
+    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
+    return { shouldRespond: false, text: null, log: logEntry };
+  }
+
+  let extResolution = null;
+  if (allUrlsInText.length === 1) {
+    const incomingUrl = allUrlsInText[0];
+    try {
+      extResolution = await resolvePropertyFromUrlOrContent(incomingUrl, properties, {
+        talkId,
+        bypassCache: false,
+        simulatedHtml: context.simulatedHtml !== undefined ? context.simulatedHtml : null
+      });
+    } catch (err) {
+      extResolution = { resolved: false, accessible: false, reason: 'READER_EXCEPTION: ' + err.message };
+    }
+  }
+
+  if (extResolution && extResolution.isAmbiguous) {
+    logEntry.typeDetected = 'PROPERTY_MATCH_AMBIGUOUS';
+    logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
+    logEntry.reason = extResolution.reason || 'Coincidencia ambigua entre múltiples propiedades.';
+    logEntry.action = 'SILENCE';
+    logEntry.diagnostics = { score: extResolution.score, reason: extResolution.reason };
+    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
+    return { shouldRespond: false, text: null, log: logEntry };
+  }
+
+  if (extResolution && extResolution.accessible && !extResolution.resolved) {
+    const isWasiUrl = /wasi\.co\//i.test(textClean);
+    logEntry.typeDetected = isWasiUrl ? 'WASI_LINK_NOT_FOUND' : 'PROPERTY_NOT_FOUND';
+    logEntry.diagnosticCode = (extResolution.reason && extResolution.reason.includes('SCORE_BELOW_THRESHOLD'))
+      ? 'SCORE_BELOW_THRESHOLD_90'
+      : 'PROPERTY_CONTENT_CONTRADICTION';
+    logEntry.reason = `Contenido de página externa consultado pero no alcanza el 90% requerido (${extResolution.reason}). Silencio seguro.`;
+    logEntry.action = 'SILENCE';
+    logEntry.diagnostics = {
+      score: extResolution.score,
+      reason: extResolution.reason,
+      extractedAttrs: extResolution.extractedAttrs
+    };
+    return { shouldRespond: false, text: null, log: logEntry };
+  }
+
+  // Extraer enlaces Wasi o identificadores presentes en el mensaje (Mecanismo Resiliente)
   const wasiExtraction = extractWasiPropertyIdentifiers(textClean, properties);
 
   // --------------------------------------------------------------------------
@@ -1307,8 +1375,10 @@ async function evaluateCentralDecisionPipeline(context) {
   const knownConversationProperty = (contextManager && contextManager.getContext(talkId, leadId)) ||
     (handoff && handoff.activeAutomationPropertyId && Array.isArray(properties) ? properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (handoff.activeAutomationPropertyId || '').toUpperCase()) : null);
 
+  const hasVerifiedExternalTarget = !!(extResolution && extResolution.accessible && extResolution.resolved && extResolution.candidate);
+
   if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= HANDOFF_LOCK_HOURS && !handoff.activeAutomationPropertyId && !knownConversationProperty) {
-    if (wasiExtraction.count === 0) {
+    if (!hasVerifiedExternalTarget && wasiExtraction.count === 0) {
       logEntry.typeDetected = 'POST_12H_REQUIRES_WASI_LINK';
       logEntry.reason = `Transcurridas ${HANDOFF_LOCK_HOURS}h tras intervención humana, pero el cliente no envió enlace Wasi nuevo. Silencio seguro.`;
       logEntry.action = 'SILENCE';
@@ -1319,7 +1389,7 @@ async function evaluateCentralDecisionPipeline(context) {
   // --------------------------------------------------------------------------
   // PRIORIDAD 5: MENSAJES CON VARIAS PROPIEDADES O COINCIDENCIA AMBIGUA -> DERIVAR A HUMANO
   // --------------------------------------------------------------------------
-  if (wasiExtraction.count > 1) {
+  if (!hasVerifiedExternalTarget && wasiExtraction.count > 1) {
     logEntry.typeDetected = 'MULTIPLE_PROPERTIES';
     logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
     logEntry.reason = `Mensaje contiene ${wasiExtraction.count} propiedades diferentes. Prohibido mezclar fichas. Derivado a humano.`;
@@ -1329,7 +1399,7 @@ async function evaluateCentralDecisionPipeline(context) {
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
-  if (wasiExtraction.matchLevel === 'PROPERTY_MATCH_AMBIGUOUS') {
+  if (!hasVerifiedExternalTarget && wasiExtraction.matchLevel === 'PROPERTY_MATCH_AMBIGUOUS') {
     logEntry.typeDetected = 'PROPERTY_MATCH_AMBIGUOUS';
     logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
     logEntry.reason = `Coincidencia ambigua o contradictoria en enlace recibido (${wasiExtraction.diagnostics?.detail?.reason || 'Múltiples opciones'}). Derivado a humano.`;
@@ -1341,11 +1411,21 @@ async function evaluateCentralDecisionPipeline(context) {
 
   // --------------------------------------------------------------------------
   // PRIORIDAD 6 Y 7: ENLACE INMOBILIARIO / IDENTIFICADOR DE PROPIEDAD UNÍVOCO
-  // (Nivel 1 Exacto o Nivel 2 Cross-Portal verificado)
+  // (Nivel 0 Contenido Externo 90%, Nivel 1 Exacto o Nivel 2 Cross-Portal verificado)
   // --------------------------------------------------------------------------
   let targetProperty = null;
 
-  if (wasiExtraction.count === 1) {
+  if (hasVerifiedExternalTarget) {
+    targetProperty = extResolution.candidate;
+    logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
+    logEntry.matchLevel = extResolution.matchType || 'PROPERTY_MATCH_CONTENT_VERIFIED';
+    logEntry.diagnosticCode = extResolution.matchType || 'PROPERTY_MATCH_CONTENT_VERIFIED';
+    logEntry.diagnostics = {
+      score: extResolution.score,
+      details: extResolution.details,
+      extractedAttrs: extResolution.extractedAttrs
+    };
+  } else if (wasiExtraction.count === 1) {
     targetProperty = wasiExtraction.matches[0];
     if (!targetProperty) {
       logEntry.typeDetected = wasiExtraction.isWasiSpecific ? 'WASI_LINK_NOT_FOUND' : (wasiExtraction.matchLevel === 'PROPERTY_MATCH_AMBIGUOUS' ? 'PROPERTY_MATCH_AMBIGUOUS' : 'PROPERTY_NOT_FOUND');
@@ -1359,16 +1439,18 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
     logEntry.matchLevel = wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT';
     logEntry.diagnostics = wasiExtraction.diagnostics;
+  }
 
+  if (targetProperty) {
     // Comprobación de estatus en tiempo real
     const isAvail = isPropertyAvailable(targetProperty);
     const isWasiInitialShare = /compartiste\s*en\s*la\s*red|interesado\s*en\s*el\s*inmueble|podr[ií]amos\s*conversar|disponib/i.test(normalizeText(textClean)) || textClean.includes('http');
 
     if (isWasiInitialShare) {
       if (isAvail) {
-        logEntry.typeDetected = wasiExtraction.isWasiSpecific ? 'WASI_LINK_AVAILABLE' : (wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT');
-        logEntry.diagnosticCode = wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT';
-        logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} verificada (${wasiExtraction.matchLevel || 'EXACT'}) con equivalencia exacta Disponible en Google Sheets.`;
+        logEntry.typeDetected = hasVerifiedExternalTarget ? (extResolution.matchType || 'PROPERTY_MATCH_CONTENT_VERIFIED') : (wasiExtraction.isWasiSpecific ? 'WASI_LINK_AVAILABLE' : (wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT'));
+        logEntry.diagnosticCode = hasVerifiedExternalTarget ? (extResolution.matchType || 'PROPERTY_MATCH_CONTENT_VERIFIED') : (wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT');
+        logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} verificada (${logEntry.matchLevel}) con equivalencia exacta Disponible en Google Sheets.`;
         logEntry.action = 'RESPOND';
         logEntry.text = buildConfirmedPropertyAvailabilityResponse(targetProperty);
 
@@ -1390,7 +1472,7 @@ async function evaluateCentralDecisionPipeline(context) {
           logEntry.text = UNAVAILABLE_RESPONSE;
           return { shouldRespond: true, text: UNAVAILABLE_RESPONSE, log: logEntry, targetProperty };
         } else {
-          logEntry.typeDetected = wasiExtraction.isWasiSpecific ? 'WASI_LINK_NOT_AVAILABLE' : 'PROPERTY_STATUS_UNAVAILABLE';
+          logEntry.typeDetected = (wasiExtraction.isWasiSpecific || /wasi\.co\//i.test(textClean)) ? 'WASI_LINK_NOT_AVAILABLE' : 'PROPERTY_STATUS_UNAVAILABLE';
           logEntry.diagnosticCode = 'PROPERTY_STATUS_UNAVAILABLE';
           logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} con estatus no verificable o ambiguo ("${targetProperty.ESTATUS}"). Silencio seguro.`;
           logEntry.action = 'SILENCE';
@@ -1399,7 +1481,6 @@ async function evaluateCentralDecisionPipeline(context) {
       }
     }
   }
-
   // --------------------------------------------------------------------------
   // PRIORIDAD 4: BÚSQUEDA MULTICRITERIO POR ZONA (UBICACIÓN + TIPO + OPERACIÓN)
   // (Solo si no hubo enlace puntual ni contexto activo)
