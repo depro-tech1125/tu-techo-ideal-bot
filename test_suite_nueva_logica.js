@@ -167,6 +167,7 @@ axios.post = async function(url, data, config) {
 };
 const {
   AVAILABILITY_RESPONSE,
+  UNAVAILABLE_RESPONSE,
   evaluateCentralDecisionPipeline,
   HandoffManager,
   DeduplicationManager,
@@ -759,9 +760,9 @@ async function runTests() {
 
   recordResult(
     26,
-    'Propiedad cambia de Disponible a Reservado -> Se detecta cambio en tiempo real y guarda SILENCIO',
-    res26a.shouldRespond === true && res26b.shouldRespond === false && res26b.log.typeDetected === 'WASI_LINK_NOT_AVAILABLE',
-    `Inicial: ${res26a.text}, Posterior: Respondió=${res26b.shouldRespond} (${res26b.log.typeDetected})`
+    'Propiedad cambia de Disponible a Reservado -> Se detecta cambio en tiempo real y comunica estado real (sin afirmar disponible)',
+    res26a.shouldRespond === true && res26b.shouldRespond === true && res26b.text === UNAVAILABLE_RESPONSE && res26b.log.typeDetected === 'PROPERTY_LINK_NOT_AVAILABLE',
+    `Inicial: ${res26a.text}, Posterior: Respondió=${res26b.shouldRespond} ("${res26b.text}", ${res26b.log.typeDetected})`
   );
 
   // --------------------------------------------------------------------------

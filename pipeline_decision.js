@@ -46,6 +46,16 @@ const AUTHORIZED_COLUMNS = Object.freeze([
 // ============================================================================
 const AVAILABILITY_RESPONSE = 'Bienvenido a Tu Techo Ideal, sí, disponible.';
 
+const UNAVAILABLE_RESPONSE = 'El inmueble consultado no se encuentra disponible actualmente.';
+
+function isPropertyExplicitlyUnavailable(property) {
+  if (!property || typeof property !== 'object') return false;
+  const raw = (property.ESTATUS || '').toString().trim();
+  const norm = normalizeText(raw);
+  return /^(?:no\s*disponible|no\s*disp|alquilad[oa]|vendid[oa]|retirad[oa]|reservad[oa])$/i.test(norm);
+}
+
+
 // ============================================================================
 // CONSTANTES CENTRALIZADAS OFICIALES: BLOQUEO POR INTERVENCIÓN HUMANA (12 HORAS)
 // ============================================================================
@@ -148,7 +158,9 @@ function isSocialMediaEventOrMention(text) {
     /comparti[oó] una publicaci[oó]n/i,
     /comparti[oó] un reel/i,
     /ha enviado un archivo adjunto/i,
-    /notificaci[oó]n de instagram/i
+    /notificaci[oó]n de instagram/i,
+    /coment[oó] (?:en tu )?(?:reel|publicaci[oó]n|historia|post|foto)/i,
+    /ha comentado tu (?:reel|publicaci[oó]n|historia|post|foto)/i
   ];
 
   return mentionPatterns.some(pattern => pattern.test(norm));
@@ -523,6 +535,21 @@ function extractDeterministicPropertyFeature(userQuery, property) {
       return { matched: true, hasData: true, answer, evidence };
     }
     return { matched: true, hasData: false, reason: 'Dato de baños no especificado en Sheets.' };
+  }
+
+  // 5.B CUBÍCULOS / AMBIENTES / OFICINAS / DISTRIBUCIÓN
+  if (/(?:cuantos?\s*(?:cub[ií]culos?|ambientes?|oficinas?)|distribuci[oó]n)/i.test(q)) {
+    const cubMatch = desc.match(/(\d+|un|uno|dos|tres|cuatro|cinco)\s*cub[ií]culos?/i);
+    if (cubMatch) {
+      const num = wordToNumber(cubMatch[1]);
+      const evidence = cubMatch[0];
+      const answer = `Cuenta con ${num} cubículos`;
+      return { matched: true, hasData: true, answer, evidence };
+    }
+    const distMatch = desc.match(/distribuid[oa]\s*en\s*([^.]+)/i);
+    if (distMatch) {
+      return { matched: true, hasData: true, answer: `Distribuido en ${distMatch[1].trim()}`, evidence: distMatch[0] };
+    }
   }
 
   // 6. AMENIDADES NO INCLUIDAS / CARACTERÍSTICAS ESPECÍFICAS
@@ -1165,10 +1192,18 @@ async function evaluateCentralDecisionPipeline(context) {
 
         return { shouldRespond: true, text: AVAILABILITY_RESPONSE, log: logEntry, targetProperty };
       } else {
-        logEntry.typeDetected = 'WASI_LINK_NOT_AVAILABLE';
-        logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} estatus no equivalente a Disponible ("${targetProperty.ESTATUS}"). Silencio seguro.`;
-        logEntry.action = 'SILENCE';
-        return { shouldRespond: false, text: null, log: logEntry };
+        if (isPropertyExplicitlyUnavailable(targetProperty)) {
+          logEntry.typeDetected = 'PROPERTY_LINK_NOT_AVAILABLE';
+          logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} con estatus verificado no disponible ("${targetProperty.ESTATUS}"). Comunicando estado real.`;
+          logEntry.action = 'RESPOND';
+          logEntry.text = UNAVAILABLE_RESPONSE;
+          return { shouldRespond: true, text: UNAVAILABLE_RESPONSE, log: logEntry, targetProperty };
+        } else {
+          logEntry.typeDetected = 'WASI_LINK_NOT_AVAILABLE';
+          logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} con estatus no verificable o ambiguo ("${targetProperty.ESTATUS}"). Silencio seguro.`;
+          logEntry.action = 'SILENCE';
+          return { shouldRespond: false, text: null, log: logEntry };
+        }
       }
     }
   }
@@ -1239,13 +1274,14 @@ async function evaluateCentralDecisionPipeline(context) {
         !/^https?:\/\/(?:www\.)?rexup\.net\/?$/i.test(fotoLink);
 
       if (isValidRexup) {
+        const responseText = `¡Claro! Aquí puedes consultar más fotografías e información de la propiedad: ${fotoLink}`;
         logEntry.typeDetected = 'PROPERTY_EXTENDED_INFO_LINK_FOTOS';
         logEntry.reason = `Enlace de fotos e información ampliada (Rexup) recuperado dinámicamente de Google Sheets para ${targetProperty.ID_PROPIEDAD}: ${fotoLink}`;
         logEntry.action = 'RESPOND';
-        logEntry.text = fotoLink;
+        logEntry.text = responseText;
         logEntry.calledAI = false;
         logEntry.tokensUsed = 0;
-        return { shouldRespond: true, text: fotoLink, log: logEntry, targetProperty };
+        return { shouldRespond: true, text: responseText, log: logEntry, targetProperty };
       } else {
         logEntry.typeDetected = 'PROPERTY_EXTENDED_INFO_SIN_LINK';
         logEntry.reason = `No existe enlace válido de fotos/Rexup documentado en Google Sheets para ${targetProperty.ID_PROPIEDAD}. Silencio seguro.`;
@@ -1280,8 +1316,16 @@ async function evaluateCentralDecisionPipeline(context) {
     // C. OTRAS PREGUNTAS SOBRE LA PROPIEDAD (Metros, habitaciones, baños, estacionamiento, gas)
     logEntry.calledAI = true;
     const evaluatorFn = aiEvaluator || evaluatePropertyQuestionWithClaude;
-    const aiResult = await evaluatorFn(textClean, targetProperty);
-    logEntry.tokensUsed = aiResult.tokensUsed;
+    let aiResult;
+    try {
+      aiResult = await evaluatorFn(textClean, targetProperty);
+      logEntry.tokensUsed = aiResult?.tokensUsed || 0;
+    } catch (e) {
+      logEntry.typeDetected = 'AI_PROVIDER_ERROR_FALLBACK';
+      logEntry.reason = 'Error en proveedor de IA (' + e.message + '). Silencio seguro para proteger política de no invención.';
+      logEntry.action = 'SILENCE';
+      return { shouldRespond: false, text: null, log: logEntry };
+    }
 
     if (!aiResult.isSinDato && aiResult.text) {
       logEntry.typeDetected = 'PROPERTY_FEATURE_ANSWERED';
@@ -1316,36 +1360,53 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
   const outText = (messageObj.text || messageObj.value || '').trim();
   const authorType = (messageObj.author?.type || '').toLowerCase();
   const authorName = (messageObj.author?.name || '').toLowerCase();
+  const authorId = String(messageObj.author?.id || '').trim();
   const createdBy = messageObj.created_by !== undefined && messageObj.created_by !== null ? Number(messageObj.created_by) : null;
-  const botId = process.env.KOMMO_BOT_ID || '100766';
+  const botId = String(process.env.KOMMO_BOT_ID || '100766').trim();
+  const KNOWN_BOT_IDS = new Set(['3', '100766', botId]);
 
-  // 1. Detección de Asesor Humano desde Kommo Web UI (prioridad de autor humano explícito):
-  if (authorType === 'user' && createdBy !== null && createdBy > 0) {
-    return { isBot: false, isHuman: true, isHumanAdvisor: true, isUncertain: false, source: 'KOMMO_WEB', reason: 'KOMMO_WEB', userId: createdBy };
+  // 0. Exclusión estricta de Notas Internas y Eventos Administrativos (nunca inician bloqueo humano)
+  if (
+    messageObj.is_internal === true ||
+    messageObj.params?.is_internal === true ||
+    messageObj.type === 'note' ||
+    messageObj.message_type === 'note' ||
+    messageObj.element_type === 'note' ||
+    authorType === 'internal'
+  ) {
+    return { isBot: false, isHuman: false, isHumanAdvisor: false, isInternalNote: true, isUncertain: false, source: 'INTERNAL_NOTE', reason: 'KOMMO_INTERNAL_NOTE' };
   }
 
-  // 2. Detección segura de Bot / Salesbot / App:
-  if (['bot', 'salesbot', 'app', 'system'].includes(authorType)) {
-    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_AUTHOR_TYPE', reason: 'KOMMO_AUTHOR_BOT' };
-  }
-  if (authorName === 'salesbot' || authorName.includes('bot') || String(messageObj.author?.id) === String(botId)) {
-    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_ID_OR_NAME', reason: 'KOMMO_BOT_ID_OR_NAME' };
+  // 1. Detección segura de Bot / Salesbot / App (Salesbot #3, Salesbot #100766, Bot ID configurado):
+  if (
+    ['bot', 'salesbot', 'app', 'system'].includes(authorType) ||
+    authorName.includes('salesbot') ||
+    authorName.includes('bot') ||
+    KNOWN_BOT_IDS.has(authorId)
+  ) {
+    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_AUTHOR_OR_SALESBOT', reason: 'KOMMO_BOT_OR_SALESBOT' };
   }
   if (recentBotDispatchedFn && typeof recentBotDispatchedFn === 'function' && recentBotDispatchedFn(outText, messageObj.entity_id || messageObj.element_id || messageObj.talk_id)) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_DISPATCHED_ECHO', reason: 'BOT_DISPATCHED_ECHO' };
   }
 
-  // Detección intrínseca de respuestas estándar del bot (precios, metrajes, disponibilidad):
+  // Detección intrínseca de respuestas estándar del bot (precios, metrajes, disponibilidad, fotos):
   const normOutPattern = normalizeText(outText);
   if (
     /^\$[\d.,]+/i.test(normOutPattern) ||
     /(?:cuenta con|tiene)\s*\d+.*(?:m²|m2|metros)/i.test(normOutPattern) ||
     normOutPattern.includes('bienvenido a tu techo ideal') ||
+    normOutPattern.includes('no se encuentra disponible') ||
     normOutPattern.includes('rexup.net') ||
     normOutPattern === 'si' || normOutPattern === 'no' ||
     normOutPattern === 'si, disponible.' || normOutPattern === 'si, disponible'
   ) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_KNOWN_PATTERN_ECHO', reason: 'BOT_KNOWN_PATTERN_ECHO' };
+  }
+
+  // 2. Detección de Asesor Humano desde Kommo Web UI (prioridad de autor humano explícito):
+  if (authorType === 'user' && createdBy !== null && createdBy > 0) {
+    return { isBot: false, isHuman: true, isHumanAdvisor: true, isUncertain: false, source: 'KOMMO_WEB', reason: 'KOMMO_WEB', userId: createdBy };
   }
 
   // 3. Detección de Asesor Humano desde WhatsApp Móvil:
@@ -1359,6 +1420,8 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
 
 module.exports = {
   AVAILABILITY_RESPONSE,
+  UNAVAILABLE_RESPONSE,
+  isPropertyExplicitlyUnavailable,
   HANDOFF_LOCK_HOURS,
   HANDOFF_LOCK_MS,
   AUTHORIZED_COLUMNS,

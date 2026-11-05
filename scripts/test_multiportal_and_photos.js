@@ -23,6 +23,7 @@ const {
   evaluateCentralDecisionPipeline,
   adaptProperty,
   classifyOutgoingMessage,
+  UNAVAILABLE_RESPONSE,
   ConversationContextManager,
   HandoffManager
 } = require('../pipeline_decision');
@@ -194,9 +195,9 @@ async function runSuite() {
 
   assertTest(
     6,
-    'Propiedad no disponible (ESTATUS === "No Disponible") -> Silencio seguro',
-    res6.shouldRespond === false && res6.log.action === 'SILENCE',
-    `Acción: ${res6.log.action}, Tipo: ${res6.log.typeDetected}, Razón: ${res6.log.reason}`
+    'Propiedad no disponible (ESTATUS === "No Disponible") -> Comunica brevemente estado real sin afirmar disponible',
+    res6.shouldRespond === true && res6.text === UNAVAILABLE_RESPONSE && res6.log.typeDetected === 'PROPERTY_LINK_NOT_AVAILABLE',
+    `Acción: ${res6.log.action}, Respuesta: "${res6.text}", Tipo: ${res6.log.typeDetected}`
   );
 
   // --------------------------------------------------------------------------
@@ -220,11 +221,12 @@ async function runSuite() {
 
   assertTest(
     7,
-    'Solicitud de información ampliada mediante LINK_FOTOS -> Retorna enlace Rexup exacto de Google Sheets',
+    'Solicitud de información ampliada mediante LINK_FOTOS -> Mensaje profesional con enlace Rexup exacto de Google Sheets',
     res7.shouldRespond === true &&
-    res7.text === expectedRexupLink &&
+    res7.text.includes(expectedRexupLink) &&
+    res7.text.includes('¡Claro! Aquí puedes consultar más fotografías') &&
     res7.log.typeDetected === 'PROPERTY_EXTENDED_INFO_LINK_FOTOS',
-    `Enlace entregado: "${res7.text}" (Exactitud con Google Sheets Col E: 100%)`
+    `Mensaje entregado: "${res7.text}" (Exactitud con Google Sheets Col E: 100%)`
   );
 
   // --------------------------------------------------------------------------
