@@ -346,6 +346,132 @@ function indexPropertiesVocabulary(properties) {
   console.log(`[Memoria Virtual] Indexadas ${properties.length} propiedades y ${virtualPropertyVocabulary.size} palabras descriptivas en memoria.`);
 }
 
+function parseXlsxBufferToProperties(buffer) {
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet || !sheet['!ref']) return [];
+  const range = XLSX.utils.decode_range(sheet['!ref']);
+
+  const headers = [];
+  for (let C = range.s.c; C <= range.e.c; ++C) {
+    const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
+    const headerVal = (cell && cell.v !== undefined && cell.v !== null) ? String(cell.v).trim() : '';
+    headers.push(headerVal || `col_${C}`);
+  }
+
+  const records = [];
+  for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+    const row = {};
+    let hasData = false;
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const header = headers[C];
+      if (!header) continue;
+      const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+      const cell = sheet[cellRef];
+      let val = (cell && cell.v !== undefined && cell.v !== null) ? String(cell.v).trim() : '';
+
+      // Extraer hipervínculo nativo si existe en la celda
+      if (cell && cell.l && cell.l.Target) {
+        row[header + '_URL'] = cell.l.Target;
+        if (!val || val.startsWith('🏢') || val.startsWith('📷') || val.startsWith('🔗') || val.startsWith('🌐')) {
+          val = cell.l.Target;
+        }
+      }
+      row[header] = val;
+      if (val) hasData = true;
+    }
+
+    const propId = (row['ID_PROPIEDAD'] || row['id_propiedad'] || row['ID'] || '').trim();
+    if (hasData && propId) {
+      row['ID_PROPIEDAD'] = propId;
+      // Extraer código WASI (número de 6 a 9 dígitos de URL o texto plano)
+      const wasiUrl = (row['Wasi_URL'] || row['Wasi'] || row['WASI'] || row['Link Wasi'] || '').trim();
+      const wasiMatch = wasiUrl.match(/\/(\d{6,9})(?:[^\d]|$)/) || wasiUrl.match(/^\s*(\d{6,9})\s*$/);
+      row['CODIGO_WASI'] = wasiMatch ? wasiMatch[1] : '';
+
+      // Limpieza de teléfono de asesor
+      let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || row['Telefono'] || '').replace(/[^0-9]/g, '');
+      if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
+        agentPhone = '58' + agentPhone;
+      } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
+        agentPhone = '58' + agentPhone.substring(1);
+      }
+      row['TELEFONO_ASESOR_CLEAN'] = agentPhone;
+
+      records.push(row);
+    }
+  }
+  return records;
+}
+
+// ==========================================
+// 🧪 CACHÉ AISLADA PARA HOJA DE PRUEBAS EN STAGING (OPCIÓN 1)
+// ==========================================
+const OFFICIAL_GOOGLE_SHEET_ID = '1cXZdjOck8rYUZdZUOWlhQMWxnyegipyVa081EkrRc_A';
+const GOOGLE_SHEET_TEST_URL_REGEX = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]{20,80})(?:\/[^?#]*)?(?:\?[^#]*)?(?:#.*)?$/;
+
+let stagingTestSheetCache = {
+  sheetId: null,
+  properties: null,
+  lastFetchTime: 0
+};
+
+/**
+ * Valida y obtiene las propiedades de una Google Sheet de prueba independiente.
+ * Aislamiento estricto:
+ * 1. NUNCA modifica cachedProperties global.
+ * 2. NUNCA modifica virtualPropertyVocabulary ni virtualWordToPropertiesMap.
+ * 3. NUNCA escribe en properties_cache.json de producción.
+ * 4. Rechaza expresamente el ID de la hoja oficial.
+ * 5. Protegido contra SSRF validando dominio y extrayendo únicamente el sheetId.
+ */
+async function getStagingTestProperties(testSheetUrl, forceRefresh = false) {
+  if (!testSheetUrl || typeof testSheetUrl !== 'string') {
+    throw new Error('test_sheet_url es obligatorio y debe ser una cadena de texto.');
+  }
+
+  if (typeof forceRefresh !== 'boolean') {
+    throw new Error('test_sheet_force_refresh debe ser un valor booleano (true o false).');
+  }
+
+  const trimmedUrl = testSheetUrl.trim();
+  const match = trimmedUrl.match(GOOGLE_SHEET_TEST_URL_REGEX);
+  if (!match) {
+    throw new Error('test_sheet_url inválida. Debe ser una URL legítima de Google Sheets (https://docs.google.com/spreadsheets/d/...).');
+  }
+
+  const sheetId = match[1];
+  if (sheetId === OFFICIAL_GOOGLE_SHEET_ID) {
+    throw new Error('Prohibido: No se permite usar la Google Sheet oficial como test_sheet_url para pruebas aisladas.');
+  }
+
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    stagingTestSheetCache.sheetId === sheetId &&
+    stagingTestSheetCache.properties &&
+    (now - stagingTestSheetCache.lastFetchTime) < CACHE_TTL_MS
+  ) {
+    return stagingTestSheetCache.properties;
+  }
+
+  // Descarga segura construyendo la URL XLSX exclusivamente con el ID validado
+  const xlsxUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+  const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer', timeout: 10000 });
+  const records = parseXlsxBufferToProperties(response.data);
+
+  console.log(`[Staging Test Sheet] Extraídas ${records.length} propiedades de prueba desde ${sheetId} (Caché aislada).`);
+
+  stagingTestSheetCache = {
+    sheetId,
+    properties: records,
+    lastFetchTime: now
+  };
+
+  return records;
+}
+
 async function getAvailableProperties(forceRefresh = false) {
   const now = Date.now();
   if (!forceRefresh && cachedProperties && (now - lastPropertiesFetchTime) < CACHE_TTL_MS) {
@@ -364,58 +490,7 @@ async function getAvailableProperties(forceRefresh = false) {
     }
 
     const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer', timeout: 10000 });
-    const workbook = XLSX.read(response.data, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const range = XLSX.utils.decode_range(sheet['!ref']);
-
-    const headers = [];
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
-      headers.push(cell ? String(cell.v).trim() : `col_${C}`);
-    }
-
-    const records = [];
-    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-      const row = {};
-      let hasData = false;
-      for (let C = range.s.c; C <= range.e.c; ++C) {
-        const header = headers[C];
-        if (!header) continue;
-        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-        const cell = sheet[cellRef];
-        let val = cell ? (cell.v !== undefined ? String(cell.v).trim() : '') : '';
-
-        // Extraer hipervínculo nativo si existe en la celda
-        if (cell && cell.l && cell.l.Target) {
-          row[header + '_URL'] = cell.l.Target;
-          // Si el texto visual es un emoji o placeholder (ej: "🏢 Ver en Wasi"), colocar el URL real
-          if (!val || val.startsWith('🏢') || val.startsWith('📷') || val.startsWith('🔗') || val.startsWith('🌐')) {
-            val = cell.l.Target;
-          }
-        }
-        row[header] = val;
-        if (val) hasData = true;
-      }
-
-      if (hasData && row['ID_PROPIEDAD']) {
-        // Extraer código WASI (número de 7 a 9 dígitos)
-        const wasiUrl = row['Wasi_URL'] || row['Wasi'] || '';
-        const wasiMatch = wasiUrl.match(/\/(\d{7,9})(?:\?|$)/);
-        row['CODIGO_WASI'] = wasiMatch ? wasiMatch[1] : '';
-
-        // Limpieza de teléfono de asesor
-        let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || '').replace(/[^0-9]/g, '');
-        if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
-          agentPhone = '58' + agentPhone;
-        } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
-          agentPhone = '58' + agentPhone.substring(1);
-        }
-        row['TELEFONO_ASESOR_CLEAN'] = agentPhone;
-
-        records.push(row);
-      }
-    }
+    const records = parseXlsxBufferToProperties(response.data);
 
     console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con hipervínculos y códigos Wasi reales.`);
     try {
@@ -5049,7 +5124,9 @@ app.post('/api/staging/test-pipeline-evaluation', requireStagingAuth, async (req
       talk_id,
       contact_id,
       offset_ms,
-      simulated_now
+      simulated_now,
+      test_sheet_url,
+      test_sheet_force_refresh
     } = req.body || {};
 
     const currentLeadId = lead_id ? String(lead_id) : null;
@@ -5072,7 +5149,32 @@ app.post('/api/staging/test-pipeline-evaluation', requireStagingAuth, async (req
       }
     }
 
-    const properties = await getAvailableProperties();
+    // Validación estricta del tipo booleano de test_sheet_force_refresh
+    if (test_sheet_force_refresh !== undefined && typeof test_sheet_force_refresh !== 'boolean') {
+      return res.status(400).json({
+        status: 'error',
+        error: 'Invalid parameter',
+        message: 'test_sheet_force_refresh debe ser un valor booleano (true o false).'
+      });
+    }
+
+    // Aislamiento estricto: si se proporciona test_sheet_url en Staging, usar la caché aislada de prueba
+    let properties;
+    let isTestSheetActive = false;
+    if (test_sheet_url) {
+      try {
+        properties = await getStagingTestProperties(test_sheet_url, test_sheet_force_refresh === true);
+        isTestSheetActive = true;
+      } catch (sheetErr) {
+        return res.status(400).json({
+          status: 'error',
+          error: 'Invalid test_sheet_url',
+          message: sheetErr.message
+        });
+      }
+    } else {
+      properties = await getAvailableProperties();
+    }
 
     const pipelineResult = await evaluateCentralDecisionPipeline({
       userText,
@@ -5101,6 +5203,7 @@ app.post('/api/staging/test-pipeline-evaluation', requireStagingAuth, async (req
       lead_id: currentLeadId,
       talk_id: currentTalkId,
       user_text: userText,
+      test_sheet_active: isTestSheetActive,
       decision: pipelineResult.log,
       text: pipelineResult.text
     });
@@ -5262,5 +5365,11 @@ module.exports = {
   isAuthorizedStagingTestRequest,
   verifyStagingAuthHeader,
   ALLOWED_STAGING_HOSTNAMES,
-  ALLOWED_SIMULATED_TIME_ROUTES
+  ALLOWED_SIMULATED_TIME_ROUTES,
+  parseXlsxBufferToProperties,
+  getStagingTestProperties,
+  OFFICIAL_GOOGLE_SHEET_ID,
+  GOOGLE_SHEET_TEST_URL_REGEX,
+  getStagingTestSheetCache: () => stagingTestSheetCache,
+  app
 };
