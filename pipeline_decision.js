@@ -1331,6 +1331,18 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_DISPATCHED_ECHO', reason: 'BOT_DISPATCHED_ECHO' };
   }
 
+  // Detección intrínseca de respuestas estándar del bot (precios, metrajes, disponibilidad):
+  const normOutPattern = normalizeText(outText);
+  if (
+    /^\$[\d.,]+/i.test(normOutPattern) ||
+    /(?:cuenta con|tiene)\s*\d+.*(?:m²|m2|metros)/i.test(normOutPattern) ||
+    normOutPattern.includes('bienvenido a tu techo ideal') ||
+    normOutPattern === 'si' || normOutPattern === 'no' ||
+    normOutPattern === 'si, disponible.' || normOutPattern === 'si, disponible'
+  ) {
+    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_KNOWN_PATTERN_ECHO', reason: 'BOT_KNOWN_PATTERN_ECHO' };
+  }
+
   // 3. Detección de Asesor Humano desde WhatsApp Móvil:
   if ((authorType === 'user' || createdBy === 0) && outText.length > 0) {
     return { isBot: false, isHuman: true, isHumanAdvisor: true, isUncertain: false, source: 'WHATSAPP_MOBILE', reason: 'WHATSAPP_MOBILE' };

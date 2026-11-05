@@ -2267,8 +2267,13 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
     norm.includes('hola, bienvenido a tu techo ideal') ||
     norm.includes('hola! gracias por comunicarte con, tu techo ideal') ||
     norm.includes('somos barbara bravo y robert jimenez') ||
+    norm.includes('cuenta con') ||
+    norm.includes('de terreno') ||
+    norm.includes('de construccion') ||
     norm.includes('tiene 110 m2') ||
     norm.includes('tiene 110 m²') ||
+    /tiene\s*\d+(?:[.,]\d+)?\s*m²/i.test(norm) ||
+    /^\$[\d.,]+/i.test(norm) ||
     norm === 'si, disponible' ||
     norm === 'si disponible' ||
     norm === 'no, disponible' ||
@@ -4266,16 +4271,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     // Se procesa inmediatamente antes de cualquier filtro para que NINGÚN mensaje humano pase desapercibido.
     if (messageObj.type === 'outgoing') {
       const outText = (messageObj.text || messageObj.value || '').trim();
-      const outClassification = classifyOutgoingMessage(messageObj, (text, id) => isRecentBotDispatchedMessage(text, id || messageObj.entity_id || messageObj.element_id || messageObj.talk_id));
-
-      if (outClassification.isBot) {
-        console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado (${outClassification.source}, "${outText.substring(0, 40)}..."). Skipping echo.`);
-        if (isSync && !res.headersSent) {
-          return res.status(200).json({ status: 'ok', handled: 'BOT_OUTGOING_ECHO' });
-        }
-        return;
-      }
-
       let outLeadId = messageObj.entity_id || messageObj.element_id;
       const outTalkId = messageObj.talk_id;
       const outContactId = messageObj.contact_id;
@@ -4288,6 +4283,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           });
           outLeadId = talkRes.data?.entity_id;
         } catch (e) {}
+      }
+
+      const outClassification = classifyOutgoingMessage(messageObj, (text, id) => isRecentBotDispatchedMessage(text, outLeadId || id || outTalkId));
+
+      if (outClassification.isBot) {
+        console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado (${outClassification.source}, "${outText.substring(0, 40)}..."). Skipping echo.`);
+        if (isSync && !res.headersSent) {
+          return res.status(200).json({ status: 'ok', handled: 'BOT_OUTGOING_ECHO' });
+        }
+        return;
       }
 
       console.log(`[HUMAN INTERVENTION DETECTED IN WEBHOOK] Intervención saliente detectada (${outClassification.source}, Lead #${outLeadId}, Talk #${outTalkId}, Contact #${outContactId}): "${outText}". Activando handoff total por ${HANDOFF_LOCK_HOURS} horas y deteniendo Salesbot.`);
