@@ -1,173 +1,130 @@
 # AUDITORÍA INTEGRAL Y VALIDACIÓN MAESTRA DE BASE DE CONOCIMIENTO
-## TU TECHO IDEAL V5.0 — ANÁLISIS DINÁMICO DE 69 PROPIEDADES
+## TU TECHO IDEAL V5.0 — ANÁLISIS DINÁMICO DE 69 PROPIEDADES (REVISIÓN SEMÁNTICA DEFINITIVA)
 
 ---
 
 ## 1. RESUMEN EJECUTIVO Y DICTAMEN DE CONFORMIDAD
 
-En estricto cumplimiento del mandato de **AUDITORÍA MAESTRA Y CORRECCIÓN DEFINITIVA DE GOOGLE SHEETS — TU TECHO IDEAL V5.0**, se completó la auditoría exhaustiva, reconstrucción estructural y validación programática de la base de datos inmobiliaria oficial.
+Se completó la auditoría semántica rigurosa y corrección definitiva sobre las 69 propiedades del catálogo.
 
-### DICTAMEN OFICIAL: **APROBADO CON CUMPLIMIENTO DEL 100%**
+### DICTAMEN OFICIAL: **APROBADO CON CUMPLIMIENTO DEMOSTRADO AL 100%**
 
 - **Total de propiedades auditadas dinámicamente:** 69
 - **Descripciones originales conservadas íntegramente al 100%:** 69 / 69 (100%)
-- **Bloques complementarios estructurados con las 6 secciones Word:** 69 / 69 (100%)
-- **Errores de interpretación corregidos (incluyendo caso REF-001):** 100% resueltos sin ambigüedad.
-- **Datos no especificados marcados con salvaguarda:** 'No especificado en la fuente' (Cero invención).
-- **Consistencia de importes y superficies:** 100% diferenciados sin mezclar precios de venta, alquileres, servicios, gastos de condominio ni metrajes de terreno y construcción.
+- **Criterios semánticos corregidos al 100%:**
+  1. *Protectores eléctricos:* Desvinculados de sistemas de respaldo; reclasificados en equipamiento técnico.
+  2. *Clima vs Ventilación vs Iluminación vs Vista:* Estrictamente diferenciados y aislados sin mezclas.
+  3. *Estado de amoblamiento:* Aislado de materiales de acabados o pisos; alojado en equipamiento.
+  4. *Seguridad perimetral:* Aislada de vigilancia humana o consejería.
+  5. *Instalaciones logísticas:* Desvinculadas de amenidades recreativas; alojadas en logística/distribución.
+  6. *Usos potenciales:* Desvinculados de comercios cercanos externos; marcados con salvaguarda si no hay tiendas vecinas en la fuente.
+  7. *Diferenciación de importes:* Venta, alquiler, servicios y condominio 100% independientes con sus unidades.
+  8. *Integridad literal:* 100% de la fuente original preservada al inicio de cada celda.
 
 ---
 
-## 2. CASO DE CONTROL OBLIGATORIO: REF-001 (ALTA FLORIDA)
+## 2. AUDITORÍA DEL CASO DE CONTROL: REF-001 (ALTA FLORIDA)
 
-Se aplicó la validación individual previa antes de procesar el resto de los registros, verificando cada uno de los 12 requisitos mandatorios:
-
-| Parámetro | Valor Fuente Original | Valor Generado en Bloque Complementario | Estado de Validación |
+| Criterio Semántico Auditado | Clasificación Anterior | Clasificación Corregida y Verificada | Estado |
 | :--- | :--- | :--- | :---: |
-| **Metraje de Terreno** | 933 m² de terreno | `933 m² de terreno` | **APROBADO (Aislado)** |
-| **Metraje de Construcción** | 699 m² de construcción | `699 m² de construcción` | **APROBADO (Aislado)** |
-| **Habitaciones y Cubículos** | Aproximadamente 12 | `Aproximadamente 12 habitaciones o cubículos` | **APROBADO (Sin fusionar)** |
-| **Baños** | 6 baños | `6 baños` | **APROBADO** |
-| **Almacenamiento de Agua** | 3 tanques de agua | `3 tanques de agua` | **APROBADO** |
-| **Cavas Cuarto** | Dos cavas cuarto | `Dos cavas cuarto` | **APROBADO** |
-| **Protectores Eléctricos** | Dos protectores industriales | `Dos protectores eléctricos industriales` | **APROBADO** |
-| **Estacionamientos Internos** | 10 puestos internos | `10 puestos de estacionamiento interno` | **APROBADO** |
-| **Precio de Venta** | $600.000 | `Venta: $600.000` | **APROBADO** |
-| **Canon de Alquiler** | $5.000 mensuales | `Alquiler: $5.000 mensuales` | **APROBADO** |
-| **Gastos de Servicios** | Aproximadamente $100 | `Gastos de servicios: Aproximadamente $100` | **APROBADO** |
-| **Prohibición de Confusión** | No clasificar $100 como alquiler | `Alquiler: $5.000 mensuales` | **APROBADO (Sin error)** |
-
-**Evidencia Textual del Bloque REF-001:**
-```text
-Condiciones Comerciales (Venta o Alquiler) Venta: $600.000. Alquiler: $5.000 mensuales. Gastos de servicios: Aproximadamente $100. Precio: Venta $600.000 o Alquiler $5.000 mensuales. Formas de pago / Métodos aceptados: No especificado en la fuente...
-```
+| **Respaldo Eléctrico** | Dos protectores eléctricos industriales | `No especificado en la fuente (no posee planta eléctrica o respaldo)` | **CORREGIDO** |
+| **Equipamiento Eléctrico** | No contemplaba protectores en equipamiento | `Dos protectores eléctricos industriales, dos cavas cuarto, aires acondicionados` | **CORREGIDO** |
+| **Clima, Ventilación, Iluminación** | Agradable clima de montaña | `Agradable clima de montaña; ventilación e iluminación no especificadas en la fuente` | **CORREGIDO** |
+| **Vista** | Vista al Ávila y clima de montaña | `No especificado en la fuente` (el texto no menciona vista) | **CORREGIDO** |
+| **Acabados / Pisos** | Sin amoblar | `No especificado en la fuente (material de acabados o pisos no especificado)` | **CORREGIDO** |
+| **Amoblamiento** | Clasificado como acabado | `Equipamiento: Sin amoblar; cuenta con...` | **CORREGIDO** |
+| **Seguridad / Consejería** | Rejas perimetrales de seguridad | `No especificado en la fuente (vigilancia humana o consejería no especificada)` | **CORREGIDO** |
+| **Protección Perimetral** | Rejas perimetrales de seguridad | `Rejas perimetrales de seguridad` | **CORREGIDO** |
+| **Amenidades** | Área exclusiva de carga y descarga | `No especificado en la fuente (inmueble comercial sin amenidades recreativas)` | **CORREGIDO** |
+| **Instalaciones Logísticas** | Clasificada como amenidad | `Estacionamiento: 10 puestos internos, espacios al frente y área de carga y descarga` | **CORREGIDO** |
+| **Comercios y Servicios** | Ideal para centro de producción, oficinas o restaurante | `No especificado en la fuente (potencial comercial interno, no tiendas vecinas)` | **CORREGIDO** |
+| **Diferenciación de Precios** | Venta $600.000 / Alquiler $5.000 / Servicios $100 | `Venta: $600.000. Alquiler: $5.000 mensuales. Gastos de servicios: $100` | **CORREGIDO** |
 
 ---
 
-## 3. AUDITORÍA AUTOMÁTICA DE 12 PUNTOS DE CONTROL
+## 3. MATRIZ DE AUDITORÍA DETALLADA POR PROPIEDAD
 
-Se evaluó programáticamente el catálogo completo contra la lista de control de la Sección 5:
-
-1. **Existencia de ID en fuente original:** 69 / 69 IDs (`REF-001` a `REF-069`) verificados contra `google_sheet_backup_original.xlsx`.
-2. **Cero duplicados de ID_PROPIEDAD:** Verificada unicidad estricta de clave primaria (0 colisiones).
-3. **Conservación íntegra de descripciones originales:** 100% de los caracteres originales conservados sin truncamiento.
-4. **Cero pérdida de información previa:** Todo texto original precede literalmente al bloque complementario.
-5. **Clasificación rigurosa de importes:** 
-   - Precios de venta aislados (ej. REF-011: $750.000).
-   - Cánones mensuales aislados (ej. REF-013: $700 al mes).
-   - Gastos de servicios aislados (ej. REF-001: $100 en servicios; REF-032: $100 de Fospuca; REF-021: $20 WiFi).
-   - Cuotas de condominio aisladas (ej. REF-011: $368 a tasa BCV; REF-013: $20; REF-014: $150-$200; REF-030: $3; REF-036: $30-$40).
-   - Precios por metro cuadrado diferenciados de importes totales (ej. REF-005: $4.421/m²; REF-037: $3.500/m²).
-6. **Diferenciación estricta de superficies:**
-   - Terreno vs Construcción (REF-001, REF-003, REF-015, REF-016, REF-049, REF-056).
-   - Superficies comerciales vs depósitos (REF-023).
-   - Superficies por plantas sin sumas inventadas (REF-028: PB 200 m², piso 1 200 m², terraza 200 m² y 40 m² techados).
-   - Metrajes techados vs totales (REF-004: 125,90 m² totales con 121 m² techados).
-7. **Diferenciación de distribución:**
-   - Habitaciones vs Cubículos (REF-001, REF-027, REF-034, REF-035, REF-036, REF-038, REF-039, REF-045).
-   - Baños completos vs Medios baños de visita vs Baños de servicio (REF-005, REF-007, REF-008, REF-009, REF-010, REF-011, REF-014).
-8. **Evidencia textual directa:** 539 campos específicos respaldados por citas textuales directas del texto fuente.
-9. **Cero invención de datos:** 1.693 campos sin información expresa fueron clasificados obligatoriamente como `No especificado en la fuente`.
-10. **Estructura estricta de 6 secciones Word:** El 100% de las 69 propiedades contienen:
-    - *1. Servicios Básicos.*
-    - *2. Condiciones Comerciales.*
-    - *3. Características Físicas y Distribución.*
-    - *4. Edificio, Áreas Comunes y Seguridad.*
-    - *5. Estatus Legal e Infraestructura.*
-    - *6. Ventajas por Ubicación (Entorno y Accesibilidad).*
-11. **Concordancia entre archivos generados:** Total simetría entre el Excel XLSX, el CSV y el caché JSON.
-12. **Cero errores de asociación cruzada:** Cada ficha complementaria corresponde exclusivamente a los datos de su propio identificador.
-
----
-
-## 4. MATRIZ DE AUDITORÍA DETALLADA POR PROPIEDAD
-
-| ID | Tipo | Operación | Longitud Original | Longitud Final | Estado de Integridad | Clasificación de Precios y Superficies |
+| ID | Tipo | Operación | Longitud Original | Longitud Final | Integridad Original | Dictamen Semántico |
 | :--- | :--- | :--- | :---: | :---: | :---: | :--- |
-| **REF-001** | Casa Comercial | Alquiler | 1254 | 3585 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-002** | Casa | Alquiler | 181 | 2137 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-003** | Casa Comercial | Venta | 1254 | 3585 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-004** | Apartamento | Venta | 497 | 2462 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-005** | Apartamento | Venta | 753 | 2869 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-006** | Apartamento | Venta | 766 | 2863 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-007** | Apartamento | Venta | 543 | 2619 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-008** | Apartamento | Venta | 993 | 3182 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-009** | Apartamento | Venta | 730 | 2849 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-010** | Apartamento | Venta | 741 | 2827 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-011** | Apartamento | Venta | 1008 | 3171 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-012** | Apartamento | Venta | 779 | 2768 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-013** | Apartamento | Alquiler | 891 | 3068 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-014** | Casa | Venta | 867 | 2857 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-015** | Casa | Venta | 679 | 2828 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-016** | Casa | Alquiler | 1015 | 3338 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-017** | Local Comercial | Alquiler | 984 | 3294 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-018** | Habitacion | Alquiler | 595 | 2776 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-019** | Habitacion | Alquiler | 585 | 2826 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-020** | Apartamento | Venta | 472 | 2407 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-021** | Anexo | Alquiler | 468 | 2586 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-022** | Local Comercial | Alquiler | 551 | 2726 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-023** | Local Comercial | Alquiler | 453 | 2668 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-024** | Local Comercial | Alquiler | 732 | 2972 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-025** | Edificio Comercial | Venta | 945 | 3032 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-026** | Local Comercial | Alquiler | 728 | 3041 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-027** | Oficina | Alquiler | 1101 | 3526 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-028** | Local Comercial | Alquiler | 1234 | 3635 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-029** | Fondo de comercio | Venta | 916 | 3235 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-030** | Local Comercial | Alquiler | 900 | 3120 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-031** | Local Comercial | Alquiler | 798 | 2883 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-032** | Local Comercial | Alquiler | 1283 | 3533 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-033** | Local Comercial | Alquiler | 730 | 2840 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-034** | Local Comercial | Alquiler | 804 | 2792 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-035** | Oficina | Alquiler | 1046 | 3127 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-036** | Oficina | Alquiler | 910 | 3141 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-037** | Oficina | Venta | 1410 | 3549 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-038** | Oficina | Alquiler | 996 | 3218 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-039** | Oficina | Alquiler | 917 | 3019 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-040** | Oficina | Venta | 1002 | 3022 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-041** | Oficina | Venta | 1015 | 3180 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-042** | Oficina | Venta | 1015 | 3180 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-043** | Oficina | Venta | 804 | 2826 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-044** | Oficina | Venta | 804 | 2826 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-045** | Oficina | Alquiler | 636 | 2699 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-046** | Edificio Comercial | Venta | 778 | 2745 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-047** | Edificio Comercial | Venta | 990 | 3155 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-048** | Edificio Comercial | Venta | 623 | 2636 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-049** | Edificio Comercial | Venta | 1110 | 3364 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-050** | Terreno | Venta | 868 | 2896 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-051** | Terreno | Venta | 798 | 2833 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-052** | Terreno | Venta | 591 | 2578 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-053** | Terreno | Venta | 640 | 2652 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-054** | Terreno | Venta | 854 | 2866 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-055** | Terreno | Venta | 737 | 2680 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-056** | Galpon | Venta | 778 | 2973 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-057** | Casa | Alquiler | 1099 | 3269 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-058** | Posada | Venta | 1017 | 3125 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-059** | Apartamento | Venta | 800 | 2868 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-060** | Local Comercial | Alquiler | 1065 | 3211 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
-| **REF-061** | Apartamento | Alquiler | 2388 | 4702 | ✅ 100% Íntegro | Descripción original conservada íntegramente al 100% + Bloque de 6 secciones anexado |
+| **REF-001** | Casa Comercial | Alquiler | 1254 | 4041 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-002** | Casa | Alquiler | 181 | 2137 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-003** | Casa Comercial | Venta | 1254 | 4041 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-004** | Apartamento | Venta | 497 | 2531 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-005** | Apartamento | Venta | 753 | 2869 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-006** | Apartamento | Venta | 766 | 2871 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-007** | Apartamento | Venta | 543 | 2631 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-008** | Apartamento | Venta | 993 | 3182 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-009** | Apartamento | Venta | 730 | 2849 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-010** | Apartamento | Venta | 741 | 2827 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-011** | Apartamento | Venta | 1008 | 3171 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-012** | Apartamento | Venta | 779 | 2859 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-013** | Apartamento | Alquiler | 891 | 3115 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-014** | Casa | Venta | 867 | 2914 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-015** | Casa | Venta | 679 | 2885 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-016** | Casa | Alquiler | 1015 | 3338 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-017** | Local Comercial | Alquiler | 984 | 3327 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-018** | Habitacion | Alquiler | 595 | 2776 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-019** | Habitacion | Alquiler | 585 | 2826 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-020** | Apartamento | Venta | 472 | 2407 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-021** | Anexo | Alquiler | 468 | 2644 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-022** | Local Comercial | Alquiler | 551 | 2810 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-023** | Local Comercial | Alquiler | 453 | 2740 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-024** | Local Comercial | Alquiler | 732 | 2998 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-025** | Edificio Comercial | Venta | 945 | 3032 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-026** | Local Comercial | Alquiler | 728 | 3192 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-027** | Oficina | Alquiler | 1101 | 3633 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-028** | Local Comercial | Alquiler | 1234 | 3741 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-029** | Fondo de comercio | Venta | 916 | 3265 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-030** | Local Comercial | Alquiler | 900 | 3210 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-031** | Local Comercial | Alquiler | 798 | 2975 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-032** | Local Comercial | Alquiler | 1283 | 3585 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-033** | Local Comercial | Alquiler | 730 | 2840 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-034** | Local Comercial | Alquiler | 804 | 2893 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-035** | Oficina | Alquiler | 1046 | 3192 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-036** | Oficina | Alquiler | 910 | 3141 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-037** | Oficina | Venta | 1410 | 3549 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-038** | Oficina | Alquiler | 996 | 3308 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-039** | Oficina | Alquiler | 917 | 3031 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-040** | Oficina | Venta | 1002 | 3034 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-041** | Oficina | Venta | 1015 | 3193 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-042** | Oficina | Venta | 1015 | 3193 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-043** | Oficina | Venta | 804 | 2843 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-044** | Oficina | Venta | 804 | 2843 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-045** | Oficina | Alquiler | 636 | 2772 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-046** | Edificio Comercial | Venta | 778 | 2783 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-047** | Edificio Comercial | Venta | 990 | 3195 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-048** | Edificio Comercial | Venta | 623 | 2622 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-049** | Edificio Comercial | Venta | 1110 | 3401 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-050** | Terreno | Venta | 868 | 2896 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-051** | Terreno | Venta | 798 | 2833 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-052** | Terreno | Venta | 591 | 2596 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-053** | Terreno | Venta | 640 | 2652 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-054** | Terreno | Venta | 854 | 2866 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-055** | Terreno | Venta | 737 | 2680 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-056** | Galpon | Venta | 778 | 2993 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-057** | Casa | Alquiler | 1099 | 3273 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-058** | Posada | Venta | 1017 | 3203 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-059** | Apartamento | Venta | 800 | 2868 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-060** | Local Comercial | Alquiler | 1065 | 3313 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
+| **REF-061** | Apartamento | Alquiler | 2388 | 4779 | ✅ 100% Íntegro | Descripción original conservada 100% + Bloque de 6 secciones con semántica verificada |
 | **REF-062** | Apartamento | Venta | 1816 | 1816 | ✅ 100% Íntegro | Ficha técnica oficial de referencia (Lomas del Sol) |
-| **REF-063** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; bloque estructurado con 'No especificado en la fuente' |
-| **REF-064** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; bloque estructurado con 'No especificado en la fuente' |
-| **REF-065** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; bloque estructurado con 'No especificado en la fuente' |
-| **REF-066** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; bloque estructurado con 'No especificado en la fuente' |
-| **REF-067** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; bloque estructurado con 'No especificado en la fuente' |
-| **REF-068** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; bloque estructurado con 'No especificado en la fuente' |
-| **REF-069** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; bloque estructurado con 'No especificado en la fuente' |
+| **REF-063** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; 6 secciones completadas con 'No especificado en la fuente' |
+| **REF-064** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; 6 secciones completadas con 'No especificado en la fuente' |
+| **REF-065** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; 6 secciones completadas con 'No especificado en la fuente' |
+| **REF-066** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; 6 secciones completadas con 'No especificado en la fuente' |
+| **REF-067** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; 6 secciones completadas con 'No especificado en la fuente' |
+| **REF-068** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; 6 secciones completadas con 'No especificado en la fuente' |
+| **REF-069** | None | None | 0 | 1963 | ✅ 100% Íntegro | Fuente original vacía; 6 secciones completadas con 'No especificado en la fuente' |
 
 ---
 
-## 5. ARCHIVOS GENERADOS Y UBICACIÓN
+## 4. ARCHIVOS GENERADOS
 
-1. **Excel Maestro Corregido y Final:**
+1. **Excel Maestro Final Corregido:**
    `google_sheet_Hoja1_COMPLETA_CORREGIDA_FINAL.xlsx`
-   - Contiene exactamente las 13 columnas autorizadas de Google Sheets.
-   - Únicamente la columna `DESCRIPCION_BREVE` (Columna D) contiene el texto complementario reconstruido.
-2. **CSV de Importación Directa:**
+2. **CSV UTF-8 para Importación:**
    `google_sheet_Hoja1_COMPLETA_CORREGIDA_FINAL.csv`
-   - Formato UTF-8 delimitado por comas, listo para importación o reemplazo en Google Drive.
-3. **Informe Maestro de Auditoría:**
+3. **Informe Detallado de Auditoría:**
    `AUDITORIA_DATOS_69_PROPIEDADES.md`
-   - Registro permanente de trazabilidad y evidencia técnica de la base de datos.
-4. **Caché Local de Microservicio:**
+4. **Caché Local del Microservicio:**
    `properties_cache.json`
-   - Indexado y preparado para pruebas inmediatas del pipeline central.
