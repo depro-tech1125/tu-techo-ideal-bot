@@ -453,9 +453,35 @@ function extractDeterministicPropertyFeature(userQuery, property) {
 
   // 2. METRAJE / SUPERFICIE / ÁREA
   if (/(?:cuantos\s*metros|metraje|superficie|area\s*del|area\s*total|cuantos\s*m2|m2|m²)/i.test(q)) {
-    const hasTerreno = /terreno/i.test(desc) && /construcci[oó]n/i.test(desc);
-    if (hasTerreno && !/terreno|construcci/i.test(q)) {
-      return { matched: true, hasData: false, reason: 'Información de metraje ambigua (especifica terreno o construcción).' };
+    const isTerrenoQuery = /terreno/i.test(q);
+    const isConstruccionQuery = /construcci[oó]n/i.test(q);
+
+    const tMatch = desc.match(/(\d+(?:[.,]\d+)?)\s*(?:m²|m2|metros(?:\s*cuadrados)?)\s*(?:de\s*)?terreno/i) || desc.match(/terreno\s*(?:de\s*)?(\d+(?:[.,]\d+)?)\s*(?:m²|m2|metros(?:\s*cuadrados)?)/i);
+    const cMatch = desc.match(/(\d+(?:[.,]\d+)?)\s*(?:m²|m2|metros(?:\s*cuadrados)?)\s*(?:de\s*)?construcci[oó]n/i) || desc.match(/construcci[oó]n\s*(?:de\s*)?(\d+(?:[.,]\d+)?)\s*(?:m²|m2|metros(?:\s*cuadrados)?)/i);
+
+    // Si ambos datos están documentados (terreno y construcción):
+    if (tMatch && cMatch) {
+      if (isTerrenoQuery && !isConstruccionQuery) {
+        return { matched: true, hasData: true, answer: `Tiene ${tMatch[1]} m² de terreno`, evidence: tMatch[0].trim() };
+      }
+      if (isConstruccionQuery && !isTerrenoQuery) {
+        return { matched: true, hasData: true, answer: `Tiene ${cMatch[1]} m² de construcción`, evidence: cMatch[0].trim() };
+      }
+      // Pregunta genérica: responde ambos datos documentados
+      return {
+        matched: true,
+        hasData: true,
+        answer: `Cuenta con ${tMatch[1]} m² de terreno y ${cMatch[1]} m² de construcción.`,
+        evidence: `${tMatch[0].trim()} y ${cMatch[0].trim()}`
+      };
+    }
+
+    if (tMatch && isTerrenoQuery) {
+      return { matched: true, hasData: true, answer: `Tiene ${tMatch[1]} m² de terreno`, evidence: tMatch[0].trim() };
+    }
+
+    if (cMatch && isConstruccionQuery) {
+      return { matched: true, hasData: true, answer: `Tiene ${cMatch[1]} m² de construcción`, evidence: cMatch[0].trim() };
     }
 
     const matches = [];

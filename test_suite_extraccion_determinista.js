@@ -217,11 +217,27 @@ async function runRegressionSuite() {
   );
 
   // --------------------------------------------------------------------------
-  // 7. Valores Ambiguos (REF-001)
+  // 7. Valores Ambiguos y Respuestas Duales de Metraje (REF-001)
   // --------------------------------------------------------------------------
   contextManager.saveContext('talk_reg_7', 'lead_reg_7', ref001);
   const r7_amb_m2 = await evaluateCentralDecisionPipeline({
     userText: '¿Cuántos metros tiene?',
+    leadId: 'lead_reg_7',
+    talkId: 'talk_reg_7',
+    properties: allProps,
+    handoffManager,
+    contextManager
+  });
+  const r7_terreno = await evaluateCentralDecisionPipeline({
+    userText: '¿Cuántos metros de terreno tiene?',
+    leadId: 'lead_reg_7',
+    talkId: 'talk_reg_7',
+    properties: allProps,
+    handoffManager,
+    contextManager
+  });
+  const r7_construccion = await evaluateCentralDecisionPipeline({
+    userText: '¿Cuántos metros de construcción tiene?',
     leadId: 'lead_reg_7',
     talkId: 'talk_reg_7',
     properties: allProps,
@@ -244,14 +260,21 @@ async function runRegressionSuite() {
     handoffManager,
     contextManager
   });
-  const passed7 = r7_amb_m2.shouldRespond === false && r7_amb_m2.text === null &&
-                  r7_amb_price.shouldRespond === false && r7_amb_price.text === null &&
-                  r7_spec_price.shouldRespond === true && r7_spec_price.text === '$600.000';
+  const passed7 = r7_amb_m2.shouldRespond === true &&
+                  r7_amb_m2.text === 'Cuenta con 933 m² de terreno y 699 m² de construcción.' &&
+                  r7_terreno.shouldRespond === true &&
+                  r7_terreno.text === 'Tiene 933 m² de terreno' &&
+                  r7_construccion.shouldRespond === true &&
+                  r7_construccion.text === 'Tiene 699 m² de construcción' &&
+                  r7_amb_price.shouldRespond === false &&
+                  r7_amb_price.text === null &&
+                  r7_spec_price.shouldRespond === true &&
+                  r7_spec_price.text === '$600.000';
   record(
     7,
-    'Valores Ambiguos -> Silencio ante preguntas genéricas y respuesta ante pregunta específica',
+    'Metraje Dual (terreno + construcción) -> Responde ambos ante genérica y específico ante consulta puntual; Precio ambiguo silencio',
     passed7,
-    `Metraje ambiguo: ${r7_amb_m2.log.reason} | Precio ambiguo: ${r7_amb_price.log.reason} | Precio venta específico: "${r7_spec_price.text}"`
+    `Metraje genérico: "${r7_amb_m2.text}" | Terreno: "${r7_terreno.text}" | Constr: "${r7_construccion.text}" | Precio venta: "${r7_spec_price.text}"`
   );
 
   // --------------------------------------------------------------------------

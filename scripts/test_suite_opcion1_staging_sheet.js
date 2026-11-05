@@ -344,8 +344,8 @@ async function runTestSuiteOpcion1() {
     })()
   });
   assertTest(
-    'PRUEBA D (Aislamiento): REF-003 oficial responde "Tiene 933 m²" sin verse alterada por las pruebas',
-    rOficial.shouldRespond === true && rOficial.text === 'Tiene 933 m²',
+    'PRUEBA D (Aislamiento): REF-003 oficial responde "Tiene 699 m² de construcción" sin verse alterada por las pruebas',
+    rOficial.shouldRespond === true && rOficial.text === 'Tiene 699 m² de construcción',
     `Respuesta propiedad oficial: "${rOficial.text}"`
   );
 
