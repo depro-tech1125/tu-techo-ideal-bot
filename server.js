@@ -116,6 +116,9 @@ const centralHandoffManager = new HandoffManager(
 );
 const centralContextManager = new ConversationContextManager();
 
+// Control contra alertas duplicadas a Robert (ventana móvil de 5 minutos por lead e interés)
+const recentAlertsSentToRobert = new Map();
+
 // ============================================================================
 // 🎛️ CONTROLADOR DE DESPACHO RESTRINGIDO PARA STAGING (CONTROLLED DISPATCH)
 // ============================================================================
@@ -1675,100 +1678,71 @@ function isAvailabilityWithoutProperty(text, hasProperty) {
 // ==========================================
 // 📋 GENERADOR DE FORMATO GERENCIAL PARA ROBERT
 // ==========================================
-function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedProperty, userText, leadId }) {
-  const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+function buildRobertAlertText({ type, clientName, clientPhone, channel, matchedProperty, userText, leadId, interestType }) {
+  const subdomain = process.env.KOMMO_SUBDOMAIN || "tutechoidealrd";
   const leadUrl = leadId ? `https://${subdomain}.kommo.com/leads/detail/${leadId}` : null;
-  const nowFormatted = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
+  const nowFormatted = new Date().toLocaleString("es-VE", { timeZone: "America/Caracas" });
 
-  let propDescription = 'Búsqueda personalizada / Sin coincidencia en catálogo';
+  let propDescription = "No especificada en el mensaje / Consulta general";
   if (matchedProperty) {
-    const wasiInfo = matchedProperty.CODIGO_WASI ? ` | Wasi: ${matchedProperty.CODIGO_WASI}` : '';
-    propDescription = `${matchedProperty.TIPO} en ${matchedProperty.ZONA} (${matchedProperty.ID_PROPIEDAD}${wasiInfo})`;
+    const wasiInfo = matchedProperty.CODIGO_WASI ? ` | Wasi: ${matchedProperty.CODIGO_WASI}` : "";
+    propDescription = `${matchedProperty.ID_PROPIEDAD} - ${matchedProperty.TIPO || "Inmueble"} en ${matchedProperty.ZONA || "Caracas"}${wasiInfo}`;
   }
 
-  const cleanPhone = clientPhone ? ` (${clientPhone})` : '';
+  const cleanPhone = clientPhone ? clientPhone : "No disponible";
+  const detectedInterest = interestType || (
+    /visita|cita|reuni[oó]n|ver\s*(?:la|el)?\s*propiedad|conocer/i.test(userText) ? "Agendar una visita" :
+    /reservar|apartar/i.test(userText) ? "Reserva de inmueble" :
+    /firmar|contrato/i.test(userText) ? "Firma de contrato" :
+    /dinero|cerrar|concretar|comprar|alquilar/i.test(userText) ? "Alta intención de compra / Cierre comercial" :
+    type === "NOTA_DE_VOZ" ? "Nota de voz / Audio recibido" :
+    "Atención comercial prioritaria"
+  );
 
-  if (type === 'AGENDAR_CITA') {
-    return `📅 *SOLICITUD DE CITA / VISITA* 📅\n\n` +
-      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
-      `📱 *Canal:* ${channel}\n` +
-      `🏢 *Inmueble:* ${propDescription}\n` +
-      `💬 *Mensaje del cliente:*\n"${userText}"\n\n` +
-      `⚡ *Acción realizada:* Se respondió al cliente "Ok, ya consulto con mi jefe para agendar la cita." El bot se pausó para que coordines la visita personalmente.\n\n` +
-      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
-      `🕒 *Fecha y hora:* ${nowFormatted}`;
-  }
-
-  if (type === 'NO_EXISTE_EN_DESCRIPCION') {
-    return `🚨 *ALERTA URGENTE: CONSULTA SIN ACCESO A INFORMACIÓN* 🚨\n\n` +
-      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
-      `📱 *Canal:* ${channel}\n` +
-      `🏢 *Inmueble:* ${propDescription}\n` +
-      `💬 *Pregunta del cliente:*\n"${userText}"\n\n` +
-      `⚠️ *Diagnóstico:* No tenemos acceso a esta información en la base de datos o inventario.\n` +
-      `⚡ *Acción realizada:* Se envió el mensaje de cortesía: "Hola, bienvenido a Tu techo ideal, [saludo]. Voy a consultar y ya le doy informacion."\n` +
-      `🛑 *Estado del bot:* El bot se pausó automáticamente en este chat para que respondas tú personalmente.\n\n` +
-      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
-      `🕒 *Fecha y hora:* ${nowFormatted}`;
-  }
-
-  if (type === 'LIMITE_ALCANZADO') {
-    return `📋 *LÍMITE MÁXIMO DE RESPUESTAS ALCANZADO (${MAX_AI_RESPONSES_PER_LEAD}/${MAX_AI_RESPONSES_PER_LEAD})* 📋\n\n` +
-      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
-      `📱 *Canal:* ${channel}\n` +
-      `🏢 *Inmueble:* ${propDescription}\n` +
-      `💬 *Último mensaje recibido:*\n"${userText}"\n\n` +
-      `⚠️ *Diagnóstico:* El bot completó sus ${MAX_AI_RESPONSES_PER_LEAD} respuestas permitidas para este cliente.\n` +
-      `⚡ *Acción realizada:* La IA se pausó en este chat para que el equipo continúe la atención personalmente.\n\n` +
-      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
-      `🕒 *Fecha y hora:* ${nowFormatted}`;
-  }
-
-  if (type === 'NOTA_DE_VOZ') {
-    return `🎙️ *NOTA DE VOZ RECIBIDA - ATENCIÓN PERSONAL* 🎙️\n\n` +
-      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
-      `📱 *Canal:* ${channel}\n` +
-      `🏢 *Inmueble:* ${propDescription}\n` +
-      `💬 *Tipo de mensaje:* Nota de voz / Audio recibido\n\n` +
-      `⚡ *Acción realizada:* El bot no emitió respuesta al cliente (silencio absoluto) y pausó el chat para que escuches el audio y respondas personalmente.\n\n` +
-      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
-      `🕒 *Fecha y hora:* ${nowFormatted}`;
-  }
-
-  if (type === 'INSTAGRAM_STORY_OR_RESTRICTED') {
-    return `📸 *MENCIÓN EN HISTORIA / REEL DE INSTAGRAM* 📸\n\n` +
-      `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
-      `📱 *Canal:* Instagram Direct\n` +
-      `🏢 *Inmueble:* ${propDescription}\n` +
-      `💬 *Contenido:* Mención en historia o contenido multimedia con restricciones de Instagram.\n\n` +
-      `⚡ *Acción realizada:* El bot no emitió ningún mensaje automático (silencio absoluto) para respetar el cuadro de diálogo. Chat pausado para atención humana.\n\n` +
-      (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
-      `🕒 *Fecha y hora:* ${nowFormatted}`;
-  }
-
-  return `🔔 *ALERTA GERENCIAL TU TECHO IDEAL* 🔔\n\n` +
-    `👤 *Cliente:* ${clientName}${cleanPhone}\n` +
-    `📱 *Canal:* ${channel}\n` +
-    `🏢 *Inmueble:* ${propDescription}\n` +
-    `💬 *Mensaje:*\n"${userText}"\n\n` +
-    (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : '') +
+  return `🚨 *ALERTA COMERCIAL - TU TECHO IDEAL* 🚨\n\n` +
+    `Un cliente necesita atención prioritaria.\n\n` +
+    `👤 *Cliente:* ${clientName || "Cliente"}\n` +
+    `📱 *Teléfono:* ${cleanPhone}\n` +
+    `🏢 *Propiedad:* ${propDescription}\n` +
+    `🎯 *Interés detectado:* ${detectedInterest}\n` +
+    `💬 *Mensaje del cliente:*\n"${userText}"\n\n` +
+    `⚡ *Acción recomendada:* Contactar al cliente para continuar con el proceso comercial. El bot ha cedido el control a un humano.\n\n` +
+    (leadUrl ? `🔗 *Abrir chat en Kommo:*\n${leadUrl}\n\n` : "") +
     `🕒 *Fecha y hora:* ${nowFormatted}`;
 }
 
 // ==========================================
 // 📲 DISPATCH DIRECTO DE ALERTA WHATSAPP A ROBERT
 // ==========================================
-async function dispatchDirectWhatsAppToRobert(messageText) {
+async function dispatchDirectWhatsAppToRobert(messageText, leadId = null, interestType = null) {
   if (OBSERVATION_MODE) {
     console.log(`[OBSERVATION MODE] dispatchDirectWhatsAppToRobert interceptado. Cero alertas enviadas.`);
-    return null;
+    return { sent: false, reason: "OBSERVATION_MODE" };
   }
 
-  const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || '7882504';
-  const robertPhone = (process.env.ROBERT_WHATSAPP || '+584143115105').replace(/[^0-9]/g, '');
+  const robertLeadId = process.env.ROBERT_KOMMO_LEAD_ID || "7882504";
+  const robertPhone = (process.env.ROBERT_WHATSAPP || "+584143115105").replace(/[^0-9]/g, "");
+
+  // 1. Validación estricta del destinatario (Robert Jiménez)
+  if (!robertLeadId || !robertPhone || !robertPhone.startsWith("58") || robertPhone.length < 10) {
+    console.error(`[Security] Destinatario de alerta incorrecto o no autorizado (${robertPhone}). Despacho cancelado para proteger al usuario.`);
+    return { sent: false, reason: "INVALID_RECIPIENT" };
+  }
+
+  // 2. Control estricto contra alertas duplicadas (ventana de 5 minutos)
+  const now = Date.now();
+  if (leadId) {
+    const alertKey = `${leadId}_${interestType || "general"}`;
+    const lastSent = recentAlertsSentToRobert.get(alertKey);
+    if (lastSent && (now - lastSent < 5 * 60 * 1000)) {
+      console.log(`[Alert Dedup] Alerta de "${interestType || "general"}" para Lead #${leadId} ya fue enviada hace ${Math.round((now - lastSent)/1000)}s. Evitando alerta duplicada.`);
+      return { sent: false, reason: "DUPLICATE_ALERT_THROTTLED" };
+    }
+    recentAlertsSentToRobert.set(alertKey, now);
+  }
 
   console.log(`\n📲 [DISPATCH WHATSAPP DIRECTO A ROBERT]`);
-  console.log(`Destinatario: Robert Jiménez (${robertPhone}) | Kommo Lead #${robertLeadId}`);
+  console.log(`Destinatario: Robert Jiménez (+${robertPhone}) | Kommo Lead #${robertLeadId}`);
   console.log(`Mensaje:\n${messageText}\n`);
 
   try {
@@ -1779,31 +1753,15 @@ async function dispatchDirectWhatsAppToRobert(messageText) {
     // Limpieza de campo Respuesta_IA en el lead de Robert tras 25 segundos
     setTimeout(async () => {
       try {
-        await updateKommoLead(robertLeadId, ' ');
+        await updateKommoLead(robertLeadId, " ");
       } catch (e) { }
     }, 25000);
+    return { sent: true, leadId: robertLeadId, phone: robertPhone };
   } catch (e) {
-    console.warn('[WhatsApp to Robert Kommo Error]:', e.response?.data || e.message);
-  }
-
-  if (process.env.CALLMEBOT_API_KEY) {
-    try {
-      const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${robertPhone}&text=${encodeURIComponent(messageText)}&apikey=${process.env.CALLMEBOT_API_KEY}`;
-      await axios.get(callmebotUrl, { timeout: 8000 });
-      console.log(`[WhatsApp to Robert] Notificación enviada vía CallMeBot`);
-    } catch (e) {
-      console.warn('[WhatsApp to Robert CallMeBot Error]:', e.message);
-    }
-  }
-
-  if (process.env.WHATSAPP_GATEWAY_URL) {
-    try {
-      await axios.post(process.env.WHATSAPP_GATEWAY_URL, { phone: robertPhone, message: messageText }, { timeout: 8000 });
-      console.log(`[WhatsApp to Robert] Notificación enviada vía WhatsApp Gateway`);
-    } catch (e) { }
+    console.warn("[WhatsApp to Robert Kommo Error]:", e.response?.data || e.message);
+    return { sent: false, error: e.message };
   }
 }
-
 // ==========================================
 // 🔍 DETECCIÓN Y EMPAREJAMIENTO DE INMUEBLES
 // ==========================================
@@ -4637,16 +4595,30 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         // Si fue una solicitud de atención humana o nota de voz, alertar a Robert para que atienda al cliente
         if (pipelineResult.log.typeDetected === 'HUMAN_ATTENTION_REQUEST' || isVoiceNoteOrAudio(body, messageObj, userText)) {
           let channel = clientPhone ? 'WhatsApp' : (clientName.startsWith('@') ? 'Instagram' : 'WhatsApp / Redes Sociales');
+          let interestType = 'Atención comercial prioritaria';
+          if (isVoiceNoteOrAudio(body, messageObj, userText)) {
+            interestType = 'Nota de voz / Audio recibido';
+          } else if (/visita|cita|reuni[oó]n|ver\s*(?:la|el)?\s*propiedad|conocer/i.test(userText)) {
+            interestType = 'Agendar una visita';
+          } else if (/reservar|apartar/i.test(userText)) {
+            interestType = 'Reserva de inmueble';
+          } else if (/firmar|contrato/i.test(userText)) {
+            interestType = 'Firma de contrato';
+          } else if (/dinero|cerrar|concretar|comprar|alquilar/i.test(userText)) {
+            interestType = 'Alta intención de compra / Cierre comercial';
+          }
+
           const robertAlert = buildRobertAlertText({
-            type: 'AGENDAR_CITA',
+            type: isVoiceNoteOrAudio(body, messageObj, userText) ? 'NOTA_DE_VOZ' : 'AGENDAR_CITA',
             clientName,
             clientPhone,
             channel,
             matchedProperty: pipelineResult.targetProperty || null,
             userText: userText || '[Solicitud de atención / Nota de voz]',
-            leadId: currentLeadId
+            leadId: currentLeadId,
+            interestType
           });
-          await dispatchDirectWhatsAppToRobert(robertAlert);
+          await dispatchDirectWhatsAppToRobert(robertAlert, currentLeadId, interestType);
         }
 
         if (isSync && !res.headersSent) {
@@ -5371,6 +5343,7 @@ module.exports = {
   stopKommoSalesbot,
   ensureLeadInActivePipeline,
   dispatchDirectWhatsAppToRobert,
+  buildRobertAlertText,
   getAvailableProperties,
   matchWasiOrProperty,
   isStandaloneLinkWithoutQuestion,

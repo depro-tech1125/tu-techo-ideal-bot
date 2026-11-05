@@ -206,21 +206,36 @@ function isHumanAttentionRequest(text) {
   }
 
   const humanPatterns = [
-    // Presupuestos monetarios, capacidad de inversión o condiciones comerciales abiertas
-    /(?:presupuesto|inversi[oó]n|dispongo\s*de|cuento\s*con)\s*(?:de\s*)?[\$€]?\s*\d+/i,
+    // 1. Solicitud de visitas presenciales o citas comerciales
+    /(?:agendar|coordinar|programar|hacer|tener|solicitar|pautar)\s*(?:una\s*)?(?:visita|cita|reuni[oó]n|videollamada|llamada|encuentro|zoom|meet)/i,
+    /(?:quiero|deseo|me\s*gustar[ií]a|podr[ií]amos|podemos)\s*(?:ir\s*a\s*)?(?:visitar|conocer|ver)\s*(?:el|la|este|esta)?\s*(?:inmueble|propiedad|apartamento|casa|terreno|local|oficina|lugar)/i,
+    /quiero\s*ir\s*a\s*ver\b/i,
+    /cu[aá]ndo\s*podemos\s*(?:ir\s*a\s*)?(?:visitar|ver|conocer)/i,
 
-    // Reuniones, videollamadas, llamadas, citas comerciales
-    /(?:agendar|coordinar|hacer|programar|tener)\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|cita|encuentro|zoom|meet)/i,
-    /quiero\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|hablar\s*con\s*(?:el\s*)?(?:asesor|agente|ustedes))/i,
+    // 2. Alta intención de cierre comercial, reserva y firma de contrato
+    /(?:quiero|deseo|listo\s*para)\s*(?:reservar|apartar)\s*(?:el|la|este|esta)?\s*(?:inmueble|propiedad|apartamento|casa|local)?/i,
+    /(?:tengo\s*el\s*dinero|cuento\s*con\s*el\s*dinero|tengo\s*los\s*fondos|dinero\s*en\s*mano)\s*(?:y\s*)?(?:quiero|listo\s*para)?\s*(?:cerrar|comprar|pagar|concretar)?/i,
+    /(?:listo|preparado)\s*para\s*(?:firmar|cerrar|concretar|pagar)/i,
+    /(?:firmar|firma)\s*(?:del?\s*)?(?:contrato|documento|acuerdo|promesa)/i,
+    /(?:c[oó]mo\s*(?:hacemos|ser[ií]a)\s*para\s*)?(?:concretar|cerrar|formalizar)\s*(?:la\s*operaci[oó]n|el\s*trato|el\s*negocio|la\s*negociaci[oó]n|la\s*compra|el\s*alquiler)/i,
+    /(?:quiero|deseo|voy\s*a)\s*proceder\s*con\s*(?:el\s*alquiler|la\s*compra|la\s*negociaci[oó]n|la\s*reserva)/i,
+    /(?:quiero|deseo|decidido\s*a)\s*(?:comprar|adquirir|alquilar)\s*(?:este|esta|el|la)\s*(?:propiedad|inmueble|apartamento|casa|local|oficina)/i,
+
+    // 3. Hablar con asesor / agente humano directamente
+    /quiero\s*(?:una\s*)?(?:reuni[oó]n|videollamada|llamada|hablar\s*con\s*(?:el\s*)?(?:asesor|agente|humano|encargado|dueño|propietario|ustedes))/i,
+    /p[aá]same\s*(?:con\s*)?(?:el\s*)?(?:asesor|agente|humano)/i,
     /podemos\s*(?:reunirnos|hacer\s*una\s*llamada|hacer\s*una\s*videollamada)/i,
 
-    // Ofrecimiento de inmuebles para captación (vender o alquilar su propiedad)
+    // 4. Presupuestos monetarios, capacidad de inversión o condiciones comerciales abiertas
+    /(?:presupuesto|inversi[oó]n|dispongo\s*de|cuento\s*con)\s*(?:de\s*)?[\$€]?\s*\d+/i,
+
+    // 5. Ofrecimiento de inmuebles para captación (vender o alquilar su propiedad)
     /quiero\s*(?:vender|ofrecer|publicar|promocionar|captar)\s*(?:mi|un)\s*(?:inmueble|apartamento|casa|terreno|propiedad|local)/i,
     /quiero\s*alquilar\s*mi\s*(?:inmueble|apartamento|casa|propiedad|local)/i,
     /tengo\s*(?:un|una)\s*(?:inmueble|apartamento|casa|terreno|local)\s*para\s*(?:vender|alquilar|ofrecer)/i,
     /ustedes\s*me\s*pueden\s*(?:vender|alquilar)\s*mi\s*propiedad/i,
 
-    // Negociación comercial / ofertas / comisiones / contratos
+    // 6. Negociación comercial / ofertas / comisiones
     /(?:oferta|negociaci[oó]n|rebaja|descuento|comisi[oó]n|porcentaje|documentaci[oó]n|firmar|contrato)/i
   ];
 
@@ -1107,12 +1122,27 @@ async function evaluateCentralDecisionPipeline(context) {
   // --------------------------------------------------------------------------
   if (isHumanAttentionRequest(textClean)) {
     logEntry.typeDetected = 'HUMAN_ATTENTION_REQUEST';
-    logEntry.reason = 'El cliente solicitó reunión, llamada, negociación o captación de propiedad. Silencio y traspaso.';
+    logEntry.reason = 'El cliente solicitó visita, reunión, cierre comercial, negociación o atención personal. Silencio y traspaso.';
     logEntry.action = 'SILENCE';
     if (handoffManager) {
       handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
     }
-    return { shouldRespond: false, text: null, log: logEntry };
+    // Resolver contexto de propiedad si el cliente ya venía conversando sobre un inmueble o envió enlace
+    let conversationProperty = null;
+    const preExtraction = extractWasiPropertyIdentifiers(textClean, properties);
+    if (preExtraction.count === 1 && preExtraction.matches[0]) {
+      conversationProperty = preExtraction.matches[0];
+    } else if (contextManager) {
+      conversationProperty = contextManager.getContext(talkId, leadId);
+    }
+    if (!conversationProperty && handoff && handoff.activeAutomationPropertyId && Array.isArray(properties)) {
+      const match = properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (handoff.activeAutomationPropertyId || '').toUpperCase());
+      if (match) conversationProperty = adaptProperty(match);
+    }
+    if (conversationProperty) {
+      logEntry.propertyIdentified = conversationProperty.ID_PROPIEDAD;
+    }
+    return { shouldRespond: false, text: null, log: logEntry, targetProperty: conversationProperty };
   }
 
   // --------------------------------------------------------------------------
