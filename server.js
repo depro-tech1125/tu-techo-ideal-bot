@@ -236,38 +236,22 @@ function rateLimiter(req, res, next) {
 }
 app.use(rateLimiter);
 
-// Deduplicación, Mutex en Vuelo y Debounce por Lead para evitar envíos dobles y tokens perdidos
-const processedMessages = new Set();
-const leadLastProcessed = new Map();
-const lastLeadProcessedMessages = new Map(); // leadId -> { textHash, timestamp }
+// ============================================================================
+// GESTOR DE IDEMPOTENCIA PERSISTENTE, MUTEX EN VUELO Y TIMERS SEGUROS
+// ============================================================================
+const { IdempotencyManager } = require('./lib/idempotency_manager.js');
+const idempotencyManager = new IdempotencyManager();
+
 const activeProcessingLeads = new Set();
 const activeProcessingTalks = new Set();
+const leadCleanupTimers = new Map(); // leadId -> NodeJS.Timeout
 
-function isDuplicate(key) {
-  if (!key) return false;
-  if (processedMessages.has(key)) return true;
-  processedMessages.add(key);
-  setTimeout(() => processedMessages.delete(key), 900000); // 15 minutos en vez de 60 segundos
-  return false;
-}
-
-function isSameLeadMessageRecent(leadId, text) {
-  if (!leadId || !text) return false;
-  const clean = normalizeText(text).substring(0, 100);
-  const now = Date.now();
-  const last = lastLeadProcessedMessages.get(String(leadId));
-  if (last && last.text === clean && (now - last.timestamp) < 900000) { // 15 minutos
-    return true;
-  }
-  lastLeadProcessedMessages.set(String(leadId), { text: clean, timestamp: now });
-  if (lastLeadProcessedMessages.size > 2000) lastLeadProcessedMessages.clear();
-  return false;
-}
-
-function isDebounced(leadId) {
+// Debounce ultracorto (1.5 segundos) exclusivamente para ráfagas idénticas a nivel de socket
+const leadLastProcessed = new Map();
+function isRapidBurst(leadId) {
   const now = Date.now();
   const last = leadLastProcessed.get(String(leadId));
-  if (last && (now - last) < 15000) { // 15 segundos de cooldown estricto anti-doble procesamiento
+  if (last && (now - last) < 1500) {
     return true;
   }
   leadLastProcessed.set(String(leadId), now);
@@ -4205,6 +4189,8 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     res.status(200).send({ status: 'ok' });
   }
 
+  let msgKey = null;
+
   try {
     const body = req.body;
 
@@ -4418,13 +4404,15 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       return;
     }
 
-    // 🛑 FILTRO 4: Deduplicación Robusta por Message ID y Huella de Contenido
-    const rawId = messageObj.id || messageObj.message_id || messageObj.element_id;
-    const contentHash = `${normalizeText(userText).substring(0, 50)}_${userText.length}`;
-    const msgKey = rawId ? `id_${rawId}` : `talk_${messageObj.talk_id || 'none'}_${contentHash}`;
+    // 🛑 FILTRO 4: Deduplicación e Idempotencia Persistente por Message ID / Event ID
+    msgKey = idempotencyManager.resolveMessageKey(body, messageObj);
+    const lockResult = idempotencyManager.acquireLock(msgKey, messageObj.talk_id, messageObj.entity_id || messageObj.element_id);
 
-    if (isDuplicate(msgKey)) {
-      console.log(`[Webhook] Duplicate message key [${msgKey}]. Skipping.`);
+    if (!lockResult.allowed) {
+      console.log(`[Idempotency] Message key [${msgKey}] already processed or in-flight (${lockResult.reason}). Skipping duplicate.`);
+      if (isSync && !res.headersSent) {
+        return res.status(200).json({ status: 'ok', handled: 'IDEMPOTENCY_REJECTED', reason: lockResult.reason });
+      }
       return;
     }
 
@@ -4530,27 +4518,17 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
     // 🛑 FILTRO 5: Mutex Lock en Vuelo por Lead ID (Garantiza 0 duplicados y 0 tokens perdidos)
     if (activeProcessingLeads.has(currentLeadId)) {
-      console.log(`[Webhook] Lead #${currentLeadId} ya está en procesamiento activo. Skipping para evitar duplicar tokens de Claude.`);
+      console.log(`[Webhook] Lead #${currentLeadId} ya está en procesamiento activo en vuelo. Skipping petición concurrente.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
       if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'CONCURRENT_PROCESSING' });
       return;
     }
 
-    // 🛑 FILTRO 6: Debounce de 15 segundos por Lead (Bypassable en Staging/Modo Observación para pruebas sintéticas)
-    const bypassDebounce = OBSERVATION_MODE && (req.query.bypass_debounce === 'true' || req.headers['x-bypass-debounce'] === 'true');
-    if (!bypassDebounce && isDebounced(currentLeadId)) {
-      console.log(`[Webhook] Debounce activado para Lead #${currentLeadId} (ventana 15s). Skipping para evitar doble respuesta.`);
+    // 🛑 FILTRO 6: Ráfaga ultracorta (1.5s) anti-rebote a nivel de socket
+    if (isRapidBurst(currentLeadId)) {
+      console.log(`[Webhook] Ráfaga instantánea detectada para Lead #${currentLeadId} (<1.5s). Skipping rebote de red.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
-      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'DEBOUNCED' });
-      return;
-    }
-
-    // 🛑 FILTRO 6.1: Antiduplicado Estricto de Mensaje Reciente (Ventana 15 minutos)
-    // Si este mismo lead ya envió este mismo texto en los últimos 15 minutos, IGNORAR (previene reintentos de Kommo/Make).
-    if (!bypassDebounce && isSameLeadMessageRecent(currentLeadId, userText)) {
-      console.log(`[Webhook] Mensaje idéntico detectado recientemente para Lead #${currentLeadId} ("${userText.substring(0, 40)}..."). Skipping para evitar respuesta duplicada.`);
-      if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
-      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'DUPLICATE_MESSAGE' });
+      if (isSync && !res.headersSent) return res.status(200).json({ status: 'ok', handled: 'RAPID_BURST' });
       return;
     }
 
@@ -4611,6 +4589,12 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
           text: pipelineResult.text
         });
 
+        if (pipelineResult.shouldRespond && pipelineResult.text) {
+          idempotencyManager.markSent(msgKey, pipelineResult.text, { observation_mode: true });
+        } else {
+          idempotencyManager.markIgnored(msgKey, pipelineResult.log.reason || 'SILENCE_OBSERVATION');
+        }
+
         if (isSync && !res.headersSent) {
           return res.status(200).json({
             status: 'ok',
@@ -4633,6 +4617,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // Si el pipeline determinó silencio absoluto en modo normal o en despacho controlado
       if (!pipelineResult.shouldRespond || !pipelineResult.text) {
         console.log(`[Pipeline Silence] El bot guarda silencio absoluto y cede el control.`);
+        idempotencyManager.markIgnored(msgKey, pipelineResult.log.reason || 'SILENCE');
         await stopKommoSalesbot(currentLeadId);
         try {
           await updateKommoLead(currentLeadId, ' ');
@@ -4683,6 +4668,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       if (!preDispatchCheck.canDispatch) {
         console.warn(`[PRE-DISPATCH ABORT] ${preDispatchCheck.reason} Cancelando despacho a Kommo.`);
+        idempotencyManager.markIgnored(msgKey, preDispatchCheck.reason || 'PRE_DISPATCH_ABORT');
         await stopKommoSalesbot(currentLeadId, isControlledDispatch);
         try {
           await updateKommoLead(currentLeadId, ' ', isControlledDispatch);
@@ -4715,6 +4701,12 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // Disparar Salesbot ÚNICA VEZ
       console.log('[Processing] Triggering Salesbot single delivery...');
       await triggerKommoSalesbot(currentLeadId, isControlledDispatch);
+      idempotencyManager.markSent(msgKey, responseText, {
+        dispatched: true,
+        leadId: currentLeadId,
+        talkId: currentTalkId,
+        isControlledDispatch
+      });
 
       if (isControlledDispatch) {
         authorizedControlledPair.currentDispatches++;
@@ -4731,16 +4723,22 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       const responseNum = incrementLeadResponseCount(currentLeadId);
       console.log(`[Response Count] Lead #${currentLeadId} - Respuestas automáticas acumuladas: ${responseNum}/${MAX_AI_RESPONSES_PER_LEAD}`);
 
-      // 🛑 LIMPIEZA AUTOMÁTICA DEL CAMPO RESPUESTA_IA TRAS EL ENVÍO Y PARADA DE SALESBOT (45s)
-      setTimeout(async () => {
+      // 🛑 CONTROL DE DESPACHO SEGURO Y LIMPIEZA DEL CAMPO RESPUESTA_IA (60s)
+      // Cancelar cualquier temporizador previo de este lead para evitar que un timer anterior anule este despacho
+      if (leadCleanupTimers.has(currentLeadId)) {
+        clearTimeout(leadCleanupTimers.get(currentLeadId));
+        leadCleanupTimers.delete(currentLeadId);
+      }
+      const cleanupTimer = setTimeout(async () => {
         try {
+          leadCleanupTimers.delete(currentLeadId);
           await updateKommoLead(currentLeadId, ' ', isControlledDispatch);
-          await stopKommoSalesbot(currentLeadId, isControlledDispatch);
-          console.log(`[Anti-Duplicate] Campo Respuesta_IA vaciado y Salesbot detenido para Lead #${currentLeadId}`);
+          console.log(`[Safe Cleanup] Campo Respuesta_IA reiniciado tras ventana de 60s para Lead #${currentLeadId}`);
         } catch (e) {
-          console.warn('[Anti-Duplicate Clear Error]:', e.message);
+          console.warn('[Safe Cleanup Error]:', e.message);
         }
-      }, 45000);
+      }, 60000);
+      leadCleanupTimers.set(currentLeadId, cleanupTimer);
 
       console.log(`[Success] Message strictly processed 1 single time for Lead #${currentLeadId}!\n`);
 
@@ -4763,6 +4761,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     }
 
   } catch (err) {
+    if (msgKey) idempotencyManager.markFailed(msgKey, err.message);
     console.error('[Webhook Processing Error]:', err.response?.data || err.message);
     if (isSync && !res.headersSent) {
       return res.status(500).json({ status: 'error', error: err.message });
@@ -4799,6 +4798,8 @@ app.get('/health', async (req, res) => {
     claude_enabled: false,
     paid_fallback_disabled: true,
     credits_remaining_usd: 0.00,
+    idempotency: 'active',
+    idempotency_store_records: idempotencyManager.records.size,
     uptime_seconds: Math.floor(process.uptime())
   });
 });
