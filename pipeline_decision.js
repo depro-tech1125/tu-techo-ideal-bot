@@ -854,7 +854,13 @@ async function evaluatePropertyQuestionWithClaude(userQuestion, property) {
     return { text: null, tokensUsed: 0, isSinDato: true, reason: 'Sin API key configurada' };
   }
 
-  const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
+  // Modelo principal gratuito oficial: NVIDIA Nemotron 3.5 Lightning Free
+  const TARGET_FREE_MODEL = 'nvidia/nemotron-3.5-lightning:free';
+  let model = process.env.CLAUDE_MODEL || TARGET_FREE_MODEL;
+  // BLINDAJE ESTRICTO: Desactivar Claude y cualquier modelo de pago
+  if (!model || /claude|anthropic|sonnet|opus|haiku|gpt-4|o1|o3/i.test(model)) {
+    model = TARGET_FREE_MODEL;
+  }
 
   const systemPrompt = `Eres el asistente de interpretación de datos de "Tu Techo Ideal".
 Tu rol es extraer información exacta de la propiedad para responder la pregunta del cliente.
@@ -1006,8 +1012,15 @@ REGLAS ESTRICTAS:
 
     return { text: finalAnswer, tokensUsed, isSinDato: false, evidence: parsed.evidence };
   } catch (err) {
-    console.error('[Pipeline QA Error]:', err.message);
-    return { text: null, tokensUsed: 0, isSinDato: true, reason: err.message };
+    console.error('[AI/Nemotron Evaluation Warning]:', err.response?.data || err.message);
+    // BLINDAJE CONTRA FALLBACK DE PAGO:
+    // Cero llamadas a Claude u otros modelos de pago.
+    return {
+      text: null,
+      tokensUsed: 0,
+      isSinDato: true,
+      reason: 'Proveedor IA gratuito no disponible o límite de uso alcanzado. Silencio seguro sin invención (Cero fallback de pago).'
+    };
   }
 }
 

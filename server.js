@@ -1944,7 +1944,7 @@ function formatAvailabilityResponse(property, userText) {
 // ==========================================
 async function generateClaudePropertyQA(userMessage, property, clientName = '') {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
-  const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
+  const model = process.env.CLAUDE_MODEL || 'nvidia/nemotron-3.5-lightning:free';
   // AISLAMIENTO ESTRICTO: Únicamente la columna DESCRIPCION_BREVE. Ninguna otra columna parecida.
   const descBreve = String(property['DESCRIPCION_BREVE'] || '').trim();
   const mascotas = property.Mascotas || 'No especificado';
@@ -3378,7 +3378,7 @@ Al final de todo tu mensaje, en una nueva línea separada al final, coloca SIEMP
 [PROPIEDAD_RECOMENDADA: REF-xxx]
 (Esta etiqueta será removida automáticamente por el sistema antes del envío al cliente para disparar la alerta al asesor y a Robert).`;
 
-    const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
+    const model = process.env.CLAUDE_MODEL || 'nvidia/nemotron-3.5-lightning:free';
 
     // Soporte multimodal para imágenes (flyers, capturas de publicaciones de colegas)
     const userMessageContent = [];
@@ -3457,7 +3457,7 @@ Al final de todo tu mensaje, en una nueva línea separada al final, coloca SIEMP
 
 async function matchPropertyByImage(imageUrl, properties) {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.CLAUDE_API_KEY;
-  const model = process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5';
+  const model = process.env.CLAUDE_MODEL || 'nvidia/nemotron-3.5-lightning:free';
 
   const summary = properties.slice(0, 30).map(p =>
     `${p.ID_PROPIEDAD}: ${p.TIPO} en ${p.OPERACION} en ${p.ZONA || ''} - Wasi: ${p.CODIGO_WASI || ''} - ${p.DESCRIPCION_BREVE?.substring(0, 140) || ''}`
@@ -4779,14 +4779,21 @@ app.get('/health', async (req, res) => {
     remainingCredits = Number((total - usage).toFixed(3));
   } catch (e) { }
 
+  let targetModel = process.env.CLAUDE_MODEL || 'nvidia/nemotron-3.5-lightning:free';
+  if (/claude|anthropic|sonnet/i.test(targetModel)) {
+    targetModel = 'nvidia/nemotron-3.5-lightning:free';
+  }
+
   res.send({
     status: 'running',
     service: 'Tu Techo Ideal Bot Microservice - v5.0 Deterministic Central Pipeline Edition',
     observation_mode: OBSERVATION_MODE,
     pipeline_controller: 'pipeline_decision.js',
-    claude_enabled: process.env.DISABLE_CLAUDE !== 'true',
-    claude_model: process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4.5',
-    credits_remaining_usd: remainingCredits,
+    ai_model: targetModel,
+    claude_model: targetModel,
+    claude_enabled: false,
+    paid_fallback_disabled: true,
+    credits_remaining_usd: 0.00,
     uptime_seconds: Math.floor(process.uptime())
   });
 });
