@@ -30,6 +30,11 @@ const {
 } = require('./pipeline_decision.js');
 
 const { recoverActivePropertyFromKommo, tagLeadWithProperty } = require('./lib/kommo_property_recovery.js');
+const {
+  parseXlsxBufferToUniversalProperties,
+  parseRecordsToUniversalProperties,
+  UniversalSheetCacheManager
+} = require('./lib/universal_sheet_reader.js');
 
 const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
 
@@ -199,6 +204,12 @@ function recordStagingDecision(entry) {
     inquiry_type: entry.decision?.typeDetected || 'UNKNOWN',
     action: entry.decision?.action || 'UNKNOWN',
     property_id: entry.decision?.propertyIdentified || null,
+    sheet_row: entry.decision?.sheetRow || null,
+    schema_fingerprint: entry.decision?.schemaFingerprint || 'v5.1',
+    identification_method: entry.decision?.identificationMethod || null,
+    fields_used: entry.decision?.fieldsUsed || [],
+    validation_result: entry.decision?.validationResult || null,
+    block_reason: entry.decision?.blockReason || null,
     response_text: entry.text || null,
     called_ai: !!entry.decision?.calledAI,
     tokens_used: entry.decision?.tokensUsed || 0,
@@ -269,6 +280,7 @@ function isRapidBurst(leadId) {
 // 📊 GOOGLE SHEETS EN TIEMPO REAL & MEMORIA VIRTUAL VOCABULARIO
 // ==========================================
 let cachedProperties = null;
+let cachedSheetSchema = null;
 let lastPropertiesFetchTime = 0;
 const CACHE_TTL_MS = 60 * 1000; // 1 minuto de caché para alta velocidad y frescura
 const PROPERTIES_CACHE_FILE = path.join(__dirname, 'properties_cache.json');
@@ -337,63 +349,9 @@ function indexPropertiesVocabulary(properties) {
   console.log(`[Memoria Virtual] Indexadas ${properties.length} propiedades y ${virtualPropertyVocabulary.size} palabras descriptivas en memoria.`);
 }
 
-function parseXlsxBufferToProperties(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  if (!sheet || !sheet['!ref']) return [];
-  const range = XLSX.utils.decode_range(sheet['!ref']);
-
-  const headers = [];
-  for (let C = range.s.c; C <= range.e.c; ++C) {
-    const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
-    const headerVal = (cell && cell.v !== undefined && cell.v !== null) ? String(cell.v).trim() : '';
-    headers.push(headerVal || `col_${C}`);
-  }
-
-  const records = [];
-  for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-    const row = {};
-    let hasData = false;
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const header = headers[C];
-      if (!header) continue;
-      const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-      const cell = sheet[cellRef];
-      let val = (cell && cell.v !== undefined && cell.v !== null) ? String(cell.v).trim() : '';
-
-      // Extraer hipervínculo nativo si existe en la celda
-      if (cell && cell.l && cell.l.Target) {
-        row[header + '_URL'] = cell.l.Target;
-        if (!val || val.startsWith('🏢') || val.startsWith('📷') || val.startsWith('🔗') || val.startsWith('🌐')) {
-          val = cell.l.Target;
-        }
-      }
-      row[header] = val;
-      if (val) hasData = true;
-    }
-
-    const propId = (row['ID_PROPIEDAD'] || row['id_propiedad'] || row['ID'] || '').trim();
-    if (hasData && propId) {
-      row['ID_PROPIEDAD'] = propId;
-      // Extraer código WASI (número de 6 a 9 dígitos de URL o texto plano)
-      const wasiUrl = (row['Wasi_URL'] || row['Wasi'] || row['WASI'] || row['Link Wasi'] || '').trim();
-      const wasiMatch = wasiUrl.match(/\/(\d{6,9})(?:[^\d]|$)/) || wasiUrl.match(/^\s*(\d{6,9})\s*$/);
-      row['CODIGO_WASI'] = wasiMatch ? wasiMatch[1] : '';
-
-      // Limpieza de teléfono de asesor
-      let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || row['Telefono'] || '').replace(/[^0-9]/g, '');
-      if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
-        agentPhone = '58' + agentPhone;
-      } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
-        agentPhone = '58' + agentPhone.substring(1);
-      }
-      row['TELEFONO_ASESOR_CLEAN'] = agentPhone;
-
-      records.push(row);
-    }
-  }
-  return records;
+function parseXlsxBufferToProperties(buffer, options = {}) {
+  const result = parseXlsxBufferToUniversalProperties(buffer, options);
+  return result.properties;
 }
 
 // ==========================================
@@ -481,9 +439,19 @@ async function getAvailableProperties(forceRefresh = false) {
     }
 
     const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer', timeout: 10000 });
-    const records = parseXlsxBufferToProperties(response.data);
+    const parseResult = parseXlsxBufferToUniversalProperties(response.data, {
+      previousSchema: cachedSheetSchema,
+      logChanges: true
+    });
+    const records = parseResult.properties;
+    cachedSheetSchema = parseResult.schema;
 
-    console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con hipervínculos y códigos Wasi reales.`);
+    records._isStale = false;
+    records._source = 'LIVE_XLSX';
+    records._fetchedAt = now;
+    records._schemaFingerprint = parseResult.schema?.fingerprint || 'v5.1';
+
+    console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con enlaces universales.`);
     try {
       const cleanProps = records.map(p => {
         const copy = { ...p };
@@ -505,6 +473,9 @@ async function getAvailableProperties(forceRefresh = false) {
         const localData = JSON.parse(fs.readFileSync(PROPERTIES_CACHE_FILE, 'utf8'));
         if (Array.isArray(localData) && localData.length > 0) {
           console.log(`[Google Sheets Local Backup] Cargadas ${localData.length} propiedades con códigos Wasi desde ${PROPERTIES_CACHE_FILE}`);
+          localData._isStale = true;
+          localData._staleReason = 'GOOGLE_SHEETS_OFFLINE';
+          localData._source = 'LOCAL_FILE_FALLBACK';
           indexPropertiesVocabulary(localData);
           cachedProperties = localData;
           lastPropertiesFetchTime = now;
@@ -519,31 +490,21 @@ async function getAvailableProperties(forceRefresh = false) {
     try {
       const csvUrl = process.env.GOOGLE_SHEET_CSV_URL;
       const response = await axios.get(csvUrl, { timeout: 7000 });
-      const records = parse(response.data, {
+      const rawRecords = parse(response.data, {
         columns: true,
         skip_empty_lines: true,
         trim: true
       });
-      for (const row of records) {
-        if (!row.Wasi_URL && row.Wasi && row.Wasi.startsWith('http')) {
-          row.Wasi_URL = row.Wasi;
-        }
-        if (!row.CODIGO_WASI) {
-          const wasiUrl = row.Wasi_URL || row.Wasi || '';
-          const wasiMatch = wasiUrl.match(/\/(\d{7,9})(?:\?|$)/);
-          row.CODIGO_WASI = wasiMatch ? wasiMatch[1] : '';
-        }
-        if (!row.LINK_FOTOS_URL && row.LINK_FOTOS && row.LINK_FOTOS.startsWith('http')) {
-          row.LINK_FOTOS_URL = row.LINK_FOTOS;
-        }
-        let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || '').replace(/[^0-9]/g, '');
-        if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
-          agentPhone = '58' + agentPhone;
-        } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
-          agentPhone = '58' + agentPhone.substring(1);
-        }
-        row.TELEFONO_ASESOR_CLEAN = agentPhone;
-      }
+      const parseResult = parseRecordsToUniversalProperties(rawRecords, {
+        previousSchema: cachedSheetSchema,
+        logChanges: true
+      });
+      const records = parseResult.properties;
+      cachedSheetSchema = parseResult.schema;
+      records._isStale = false;
+      records._source = 'LIVE_CSV_FALLBACK';
+      records._fetchedAt = now;
+      records._schemaFingerprint = parseResult.schema?.fingerprint || 'v5.1';
       console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
       indexPropertiesVocabulary(records);
       cachedProperties = records;
@@ -551,6 +512,10 @@ async function getAvailableProperties(forceRefresh = false) {
       return records;
     } catch (errCsv) {
       console.error('[Google Sheets Fatal Error]:', errCsv.message);
+      if (cachedProperties && Array.isArray(cachedProperties)) {
+        cachedProperties._isStale = true;
+        cachedProperties._staleReason = 'GOOGLE_SHEETS_FATAL_ERROR';
+      }
       return cachedProperties || [];
     }
   }
@@ -1826,6 +1791,48 @@ async function dispatchDirectWhatsAppToRobert(messageText, leadId = null, intere
   } catch (e) {
     console.warn("[WhatsApp to Robert Kommo Error]:", e.response?.data || e.message);
     return { sent: false, error: e.message };
+  }
+}
+
+// ==========================================
+// 🔔 ALERTA INTERNA PARA ROBERT (PORTALES INMOBILIARIOS / ENLACES NO REGISTRADOS)
+// ==========================================
+async function dispatchInternalRobertAlert(alertObj, leadId = null) {
+  if (!alertObj || !alertObj.alertText) return { sent: false, reason: 'EMPTY_ALERT' };
+  console.log(`\n🔔 [ALERTA INTERNA ROBERT - ENLACE INMOBILIARIO]`);
+  console.log(alertObj.alertText);
+
+  if (OBSERVATION_MODE) {
+    console.log('[OBSERVATION MODE] dispatchInternalRobertAlert interceptado. Cero mutaciones en Kommo.');
+    return { sent: false, reason: 'OBSERVATION_MODE' };
+  }
+
+  if (!leadId) {
+    return { sent: false, reason: 'NO_LEAD_ID' };
+  }
+
+  try {
+    const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+    const rawToken = process.env.KOMMO_TOKEN || '';
+    if (!rawToken) return { sent: false, reason: 'NO_KOMMO_TOKEN' };
+    const token = rawToken.startsWith('Bearer ') ? rawToken : `Bearer ${rawToken}`;
+
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}/notes`, [
+      {
+        note_type: 'common',
+        params: {
+          text: `🔔 ALERTA INTERNA: ENLACE INMOBILIARIO NO REGISTRADO\n\n${alertObj.alertText}`
+        }
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Robert Internal Alert] Nota agregada con éxito al Lead #${leadId} en Kommo CRM.`);
+    return { sent: true };
+  } catch (err) {
+    console.warn(`[Robert Internal Alert Note Warning]: ${err.message}`);
+    return { sent: false, reason: err.message };
   }
 }
 // ==========================================
@@ -4622,6 +4629,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
 
+      // Alerta interna para Robert si se detectó un enlace inmobiliario no registrado (Escenario A o B)
+      if (pipelineResult.log.robertAlert) {
+        dispatchInternalRobertAlert({
+          alertText: pipelineResult.log.robertAlert,
+          data: pipelineResult.log.robertAlertData
+        }, currentLeadId).catch(err => {
+          console.warn('[Dispatch Internal Robert Alert Error]:', err.message);
+        });
+      }
+
       // ======================================================================
       // 3. MODO OBSERVACIÓN O DESPACHO CONTROLADO RESTRINGIDO PARA STAGING
       // ======================================================================
@@ -4664,6 +4681,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         }
         return;
       }
+
+      recordStagingDecision({
+        timestamp: Date.now(),
+        lead_id: currentLeadId,
+        talk_id: currentTalkId,
+        user_text: userText,
+        observation_mode: false,
+        decision: pipelineResult.log,
+        text: pipelineResult.text
+      });
 
       if (isControlledDispatch) {
         console.log(`[CONTROLLED DISPATCH AUTHORIZED] Conversación autorizada para prueba real de despacho en Staging (Lead #${currentLeadId}, Talk #${currentTalkId}). Despachando a Kommo...`);
@@ -4738,12 +4765,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // ======================================================================
       // 4. COMPROBACIÓN PREVIA AL DESPACHO (PRE-DISPATCH CHECK)
       // ======================================================================
-      const preDispatchCheck = await verifyPreDispatchSafety(
-        currentLeadId,
-        currentTalkId,
-        messageObj.contact_id ? String(messageObj.contact_id) : null,
-        centralHandoffManager
-      );
+      const preDispatchCheck = await verifyPreDispatchSafety({
+        leadId: currentLeadId,
+        talkId: currentTalkId,
+        contactId: messageObj.contact_id ? String(messageObj.contact_id) : null,
+        handoffManager: centralHandoffManager,
+        responseText,
+        targetProperty: pipelineResult.targetProperty,
+        properties,
+        decisionLog: pipelineResult.log
+      });
 
       if (!preDispatchCheck.canDispatch) {
         console.warn(`[PRE-DISPATCH ABORT] ${preDispatchCheck.reason} Cancelando despacho a Kommo.`);
@@ -5440,6 +5471,7 @@ module.exports = {
   stopKommoSalesbot,
   ensureLeadInActivePipeline,
   dispatchDirectWhatsAppToRobert,
+  dispatchInternalRobertAlert,
   buildRobertAlertText,
   getAvailableProperties,
   matchWasiOrProperty,
@@ -5468,6 +5500,7 @@ module.exports = {
   ALLOWED_STAGING_HOSTNAMES,
   ALLOWED_SIMULATED_TIME_ROUTES,
   parseXlsxBufferToProperties,
+  parseXlsxBufferToUniversalProperties,
   getStagingTestProperties,
   OFFICIAL_GOOGLE_SHEET_ID,
   GOOGLE_SHEET_TEST_URL_REGEX,

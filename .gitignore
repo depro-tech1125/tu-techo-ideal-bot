@@ -6,5 +6,23 @@ node_modules
 audit_state.json
 
 lead_context.json
+idempotency_store.json
+original_descriptions_dump.json
+*.xlsx
+plantilla_google_sheet_pruebas_staging.*
+ENTREGA FINAL/
+test_deterministic_*.js
+scripts/analizar_datos_*.py
+scripts/auditar_*.py
+scripts/auditoria_*.py
+scripts/generar_datos_verificados.py
+scripts/inspeccionar_parentesis.py
+scripts/poll_production_v5.js
+scripts/revisar_afirmaciones_negativas.py
+scripts/verificar_casos_especiales_live.py
+scripts/ejecutar_pruebas_live_staging_ref070.js
+scripts/execute_single_real_metraje_dispatch.js
+scripts/test_simulacion_ref070.js
+scripts/test_staging_cache_timing.js
 
 # handoffs.json (versioned for persistent context on Render)
