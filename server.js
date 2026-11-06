@@ -1771,6 +1771,48 @@ async function dispatchDirectWhatsAppToRobert(messageText, leadId = null, intere
     return { sent: false, error: e.message };
   }
 }
+
+// ==========================================
+// 🔔 ALERTA INTERNA PARA ROBERT (PORTALES INMOBILIARIOS / ENLACES NO REGISTRADOS)
+// ==========================================
+async function dispatchInternalRobertAlert(alertObj, leadId = null) {
+  if (!alertObj || !alertObj.alertText) return { sent: false, reason: 'EMPTY_ALERT' };
+  console.log(`\n🔔 [ALERTA INTERNA ROBERT - ENLACE INMOBILIARIO]`);
+  console.log(alertObj.alertText);
+
+  if (OBSERVATION_MODE) {
+    console.log('[OBSERVATION MODE] dispatchInternalRobertAlert interceptado. Cero mutaciones en Kommo.');
+    return { sent: false, reason: 'OBSERVATION_MODE' };
+  }
+
+  if (!leadId) {
+    return { sent: false, reason: 'NO_LEAD_ID' };
+  }
+
+  try {
+    const subdomain = process.env.KOMMO_SUBDOMAIN || 'tutechoidealrd';
+    const rawToken = process.env.KOMMO_TOKEN || '';
+    if (!rawToken) return { sent: false, reason: 'NO_KOMMO_TOKEN' };
+    const token = rawToken.startsWith('Bearer ') ? rawToken : `Bearer ${rawToken}`;
+
+    await axios.post(`https://${subdomain}.kommo.com/api/v4/leads/${leadId}/notes`, [
+      {
+        note_type: 'common',
+        params: {
+          text: `🔔 ALERTA INTERNA: ENLACE INMOBILIARIO NO REGISTRADO\n\n${alertObj.alertText}`
+        }
+      }
+    ], {
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+    console.log(`[Robert Internal Alert] Nota agregada con éxito al Lead #${leadId} en Kommo CRM.`);
+    return { sent: true };
+  } catch (err) {
+    console.warn(`[Robert Internal Alert Note Warning]: ${err.message}`);
+    return { sent: false, reason: err.message };
+  }
+}
 // ==========================================
 // 🔍 DETECCIÓN Y EMPAREJAMIENTO DE INMUEBLES
 // ==========================================
@@ -4565,6 +4607,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
 
       console.log(`[Pipeline Decision] Action: ${pipelineResult.log.action}, Type: ${pipelineResult.log.typeDetected}, Reason: ${pipelineResult.log.reason}`);
 
+      // Alerta interna para Robert si se detectó un enlace inmobiliario no registrado (Escenario A o B)
+      if (pipelineResult.log.robertAlert) {
+        dispatchInternalRobertAlert({
+          alertText: pipelineResult.log.robertAlert,
+          data: pipelineResult.log.robertAlertData
+        }, currentLeadId).catch(err => {
+          console.warn('[Dispatch Internal Robert Alert Error]:', err.message);
+        });
+      }
+
       // ======================================================================
       // 3. MODO OBSERVACIÓN O DESPACHO CONTROLADO RESTRINGIDO PARA STAGING
       // ======================================================================
@@ -5383,6 +5435,7 @@ module.exports = {
   stopKommoSalesbot,
   ensureLeadInActivePipeline,
   dispatchDirectWhatsAppToRobert,
+  dispatchInternalRobertAlert,
   buildRobertAlertText,
   getAvailableProperties,
   matchWasiOrProperty,

@@ -316,9 +316,75 @@ const {
   isSafeUrl
 } = require('./lib/external_publication_reader');
 
+const { defaultAlertManager } = require('./lib/unregistered_link_alert');
+
 // ============================================================================
-// 5. BÚSQUEDA INTERNA MULTICRITERIO POR ZONA (UBICACIÓN + TIPO + OPERACIÓN)
+// 5. EXTRACCIÓN DETERMINISTA DE ZONA Y BÚSQUEDA INTERNA MULTICRITERIO
 // ============================================================================
+function extractRequestedZone(queryText, properties = []) {
+  if (!queryText) return null;
+  const q = normalizeText(queryText);
+
+  // 1. Catálogo maestro de zonas conocidas de Caracas y regiones inmobiliarias
+  const baseCaracasZones = [
+    'prados del este', 'la boyera', 'los samanes', 'lomas del sol', 'la candelaria',
+    'las mercedes', 'los palos grandes', 'chacao', 'altamira', 'el hatillo',
+    'el encantado', 'la castellana', 'santa fe', 'baruta', 'maracay', 'oripoto',
+    'colinas de bello monte', 'san bernardino', 'el paraiso', 'valle arriba',
+    'alta florida', 'lomas de monteclaro', 'juan pablo ii', 'caricuao', 'el cafetal',
+    'san antonio de los altos', 'san antonio', 'guatire', 'guarenas', 'santa monica',
+    'la trinidad', 'terrazas del club hipico', 'cumbres de curumo', 'los ruices',
+    'los dos caminos', 'boleita', 'macaracuay', 'chuao', 'san roman',
+    'valle abajo', 'montalban', 'la vega', 'catia', 'antimano', 'la florida',
+    'sabana grande', 'plaza venezuela', 'los caobos', 'bellas artes', 'parque central',
+    'caracas', 'gran caracas', 'distrito capital'
+  ];
+
+  const zonePool = new Set(baseCaracasZones);
+  if (Array.isArray(properties)) {
+    for (const rawP of properties) {
+      const p = adaptProperty(rawP);
+      const z = extractPropertyZone(p);
+      if (z) {
+        const normZ = normalizeText(z);
+        if (normZ && normZ.length > 2) zonePool.add(normZ);
+      }
+    }
+  }
+
+  // Ordenar de mayor a menor longitud para evitar colisiones
+  const sortedZones = Array.from(zonePool).sort((a, b) => b.length - a.length);
+
+  for (const z of sortedZones) {
+    const escaped = z.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(^|\\s|[.,;!?¿¡])${escaped}($|\\s|[.,;!?¿¡])`, 'i');
+    if (regex.test(q)) {
+      return z;
+    }
+  }
+
+  // 2. Extracción sintáctica determinista para zonas desconocidas o sectores específicos
+  const locationPatterns = [
+    /(?:en|por|sector|zona|urbanizaci[oó]n|urb\.?|municipio)\s+([a-z0-9\s]{3,35}?)(?:\?|\.|\,|!|$|\b(?:con|de|que|precio|desde|hasta|para|atento|gracias|favor|por\s+favor|saludos)\b)/i
+  ];
+
+  for (const pattern of locationPatterns) {
+    const match = q.match(pattern);
+    if (match && match[1]) {
+      let candidate = match[1].trim();
+      const stopWords = ['venta', 'alquiler', 'renta', 'apartamento', 'apto', 'casa', 'oficina', 'inmueble', 'propiedad', 'este momento', 'general', 'linea', 'red', 'la red'];
+      if (!stopWords.includes(candidate) && !candidate.startsWith('venta') && !candidate.startsWith('alquiler')) {
+        candidate = candidate.replace(/^(?:el|la|los|las)\s+/i, '').trim();
+        if (candidate.length >= 3) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function searchZoneOrFeatureMatches(queryText, properties = []) {
   if (!queryText || !Array.isArray(properties) || properties.length === 0) {
     return { hasAvailableMatches: false, count: 0, candidates: [] };
@@ -329,7 +395,7 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
     return { hasAvailableMatches: false, count: 0, candidates: [] };
   }
 
-  const isSearchIntent = /(?:busco|buscando|quiero|necesito|interesad[oa]|informaci[oó]n\s*sobre|tienen?|alquiler|venta|comprar|alquilar|apartamento|casa|anexo|terreno|local|oficina|inmueble|qu[eé]\s*(?:tienen|opciones|propiedades))\b/i.test(q);
+  const isSearchIntent = /(?:busco|buscando|quiero|necesito|interesad[oa]|informaci[oó]n\s*sobre|hay\s*informaci[oó]n|tienen?|alquiler|venta|comprar|alquilar|apartamento|casa|anexo|terreno|local|oficina|inmueble|qu[eé]\s*(?:tienen|opciones|propiedades))\b/i.test(q);
   if (!isSearchIntent) return { hasAvailableMatches: false, count: 0, candidates: [] };
 
   // Detectar operación solicitada
@@ -348,23 +414,7 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
   else if (/local/i.test(q)) targetTipo = 'local';
   else if (/galp[oó]n/i.test(q)) targetTipo = 'galpon';
 
-  // Zonas conocidas de Caracas para coincidencia precisa
-  const caracasZones = [
-    'prados del este', 'la boyera', 'los samanes', 'lomas del sol', 'la candelaria',
-    'las mercedes', 'los palos grandes', 'chacao', 'altamira', 'el hatillo',
-    'el encantado', 'la castellana', 'santa fe', 'baruta', 'maracay', 'oripoto',
-    'colinas de bello monte', 'san bernardino', 'el paraiso', 'valle arriba',
-    'alta florida', 'lomas de monteclaro',
-    'caracas', 'gran caracas', 'distrito capital'
-  ];
-
-  let targetZone = null;
-  for (const z of caracasZones) {
-    if (q.includes(z)) {
-      targetZone = z;
-      break;
-    }
-  }
+  const targetZone = extractRequestedZone(queryText, properties);
 
   // Si no especificó al menos una zona concreta ni un tipo concreto, no considerar coincidencia de zona
   if (!targetZone && !targetTipo) {
@@ -385,11 +435,14 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
 
     // Verificación 1: Zona buscada en descripción oficial o URL de Wasi
     let zoneMatches = false;
-    if (isCaracasGeneral || !targetZone) {
+    if (isCaracasGeneral) {
       zoneMatches = !propDesc.includes('maracay');
-    } else {
+    } else if (targetZone) {
       const zoneSlug = targetZone.replace(/\s+/g, '-');
       zoneMatches = propDesc.includes(targetZone) || propWasi.includes(targetZone) || propWasi.includes(zoneSlug);
+    } else {
+      // Cliente no especificó zona alguna (targetZone === null), pero especificó targetTipo
+      zoneMatches = !propDesc.includes('maracay');
     }
     if (!zoneMatches) continue;
 
@@ -547,6 +600,17 @@ function extractDeterministicPropertyFeature(userQuery, property) {
     }
   }
 
+  // 0.B OPERACIÓN DETERMINISTA (VENTA O ALQUILER)
+  if (/(?:es\s*(?:en\s*|para\s*)?venta\s*o\s*alquiler|venta\s*o\s*alquiler|es\s*alquiler\s*o\s*venta|qu[eé]\s*operaci[oó]n|para\s*la\s*venta\s*o\s*alquiler)/i.test(q)) {
+    const op = (property.OPERACION || 'venta').toLowerCase().includes('alquiler') ? 'alquiler' : 'venta';
+    return {
+      matched: true,
+      hasData: true,
+      answer: `La propiedad se encuentra disponible para ${op}.`,
+      evidence: `OPERACION: ${property.OPERACION}`
+    };
+  }
+
   // CONSULTA DUAL PRECIO + METRAJE
   const isDualPriceMetraje = /(?:precio|costo|canon|cuanto\s*(?:cuesta|vale)).*(?:metros|metraje|superficie|m2|m²)|(?:metros|metraje|superficie|m2|m²).*(?:precio|costo|canon|cuanto\s*(?:cuesta|vale))/i.test(q);
   if (isDualPriceMetraje) {
@@ -633,7 +697,7 @@ function extractDeterministicPropertyFeature(userQuery, property) {
     const isAlquilerQuery = /alquiler|arrendamiento|canon/i.test(q);
 
     const ventaMatch = desc.match(/(?:precio\s*(?:de\s*venta)?\s*(?:de|es|:)?\s*(\$[\d.,]+))|(?:inversi[oó]n\s*(?:total)?\s*(?:de|es|:)?\s*(\$[\d.,]+))|por\s*(?:un\s*)?precio\s*(?:de)?\s*(\$[\d.,]+)|por\s*(?:una\s*)?inversi[oó]n\s*(?:total)?\s*(?:de)?\s*(\$[\d.,]+)/i);
-    const alquilerMatch = desc.match(/canon\s*(?:de\s*arrendamiento)?\s*(?:de|es|:)?\s*(\$[\d.,]+)|arrendamiento\s*de\s*(\$[\d.,]+)/i);
+    const alquilerMatch = desc.match(/canon\s*(?:de\s*(?:arrendamiento|alquiler))?\s*(?:de|es|:)?\s*(\$[\d.,]+)|arrendamiento\s*de\s*(\$[\d.,]+)/i);
 
     if (isVentaQuery && ventaMatch) {
       const val = cleanPriceString(ventaMatch[1] || ventaMatch[2] || ventaMatch[3] || ventaMatch[4]);
@@ -664,6 +728,13 @@ function extractDeterministicPropertyFeature(userQuery, property) {
     if (allPrices.length === 1) {
       const val = cleanPriceString(allPrices[0]);
       return { matched: true, hasData: true, answer: val, evidence: allPrices[0] };
+    }
+
+    if (property.PRECIO) {
+      const val = cleanPriceString(String(property.PRECIO));
+      if (val) {
+        return { matched: true, hasData: true, answer: val, evidence: `PRECIO: ${property.PRECIO}` };
+      }
     }
 
     return { matched: true, hasData: false, reason: 'Información de precio no disponible o ambigua.' };
@@ -1076,15 +1147,21 @@ class ConversationContextManager {
     const leadId = typeof leadIdOrProperty === 'string' || typeof leadIdOrProperty === 'number' ? leadIdOrProperty : null;
     if (talkId && prop) {
       this.talkContexts.set(String(talkId), prop);
-      const list = (this.talkHistories.get(String(talkId)) || []).filter(p => (p.ID_PROPIEDAD || '').toUpperCase() !== (prop.ID_PROPIEDAD || '').toUpperCase());
-      list.push(prop);
-      this.talkHistories.set(String(talkId), list);
+      const list = this.talkHistories.get(String(talkId)) || [];
+      const exists = list.some(p => (p.ID_PROPIEDAD || '').toUpperCase() === (prop.ID_PROPIEDAD || '').toUpperCase());
+      if (!exists) {
+        list.push(prop);
+        this.talkHistories.set(String(talkId), list);
+      }
     }
     if (leadId && prop) {
       this.leadContexts.set(String(leadId), prop);
-      const list = (this.leadHistories.get(String(leadId)) || []).filter(p => (p.ID_PROPIEDAD || '').toUpperCase() !== (prop.ID_PROPIEDAD || '').toUpperCase());
-      list.push(prop);
-      this.leadHistories.set(String(leadId), list);
+      const list = this.leadHistories.get(String(leadId)) || [];
+      const exists = list.some(p => (p.ID_PROPIEDAD || '').toUpperCase() === (prop.ID_PROPIEDAD || '').toUpperCase());
+      if (!exists) {
+        list.push(prop);
+        this.leadHistories.set(String(leadId), list);
+      }
     }
     if (prop) this.saveToDisk();
   }
@@ -1158,52 +1235,92 @@ function resolvePropertyFromHistoryOrContext({
     return { resolved: false, property: null, ambiguous: false };
   }
 
+  // Refrescar con la versión oficial más reciente de Google Sheets
+  const refreshProp = (p) => {
+    if (!p || !Array.isArray(properties) || properties.length === 0) return p;
+    const pId = (p.ID_PROPIEDAD || '').toUpperCase();
+    const found = properties.find(raw => {
+      const id1 = (raw.ID_PROPIEDAD || '').toUpperCase();
+      return id1 && id1 === pId;
+    });
+    return found ? adaptProperty(found) : p;
+  };
+
   const q = normalizeText(userText);
 
-  // 1. Detección de referencia ordinal explícita
-  const isFirst = /(?:primer[oa]?|inmueble\s*anterior|primera\s*opci[oó]n|el\s*anterior|el\s*otro)\b/i.test(q);
+  // 1. Detección de expresiones ordinales e históricas
+  const isPassedBefore = /(?:la\s*(?:propiedad\s*)?que\s*te\s*pas[eé]\s*antes|el\s*(?:inmueble\s*)?que\s*te\s*pas[eé]\s*antes|la\s*que\s*te\s*pas[eé]\s*antes|el\s*que\s*te\s*pas[eé]\s*antes)\b/i.test(q);
+  const isPrevious = /(?:el\s*anterior|la\s*anterior|inmueble\s*anterior|propiedad\s*anterior)\b/i.test(q);
+  const isFirst = /(?:primer[oa]|primera\s*opci[oó]n|primer\s*(?:inmueble|apartamento|casa|anexo|local))\b/i.test(q);
+  const isSecond = /(?:segund[oa]|segunda\s*opci[oó]n|segundo\s*(?:inmueble|apartamento|casa|anexo|local))\b/i.test(q);
   const isLast = /(?:[uú]ltim[oa]|actual|este\s*[uú]ltimo)\b/i.test(q);
-  const isSecond = /(?:segund[oa]|segunda\s*opci[oó]n)\b/i.test(q);
+  const isOther = /(?:el\s*otro|la\s*otra|el\s*otro\s*apartamento|la\s*otra\s*casa|el\s*otro\s*inmueble|la\s*otra\s*propiedad)\b/i.test(q);
 
-  if (isFirst && history.length > 1) {
-    return { resolved: true, property: history[0], source: 'history_first' };
-  }
-  if (isSecond && history.length >= 2) {
-    return { resolved: true, property: history[1], source: 'history_second' };
-  }
-  if (isLast && history.length > 0) {
-    return { resolved: true, property: history[history.length - 1], source: 'history_last' };
-  }
-
-  // Si pregunta por "primer inmueble" o "el otro" pero solo hay 1 inmueble o 0 en el historial:
-  if ((isFirst || /(?:el\s*otro\s*inmueble|la\s*otra\s*propiedad)\b/i.test(q)) && history.length <= 1) {
+  // Expresiones que exigen historial previo de al menos 2 inmuebles
+  if ((isPrevious || isPassedBefore || isOther) && history.length <= 1) {
     return { resolved: false, property: null, ambiguous: true };
   }
 
-  // 2. Detección de atributos que contradigan la propiedad activa actual pero coincidan con una del historial
+  // "la propiedad que te pasé antes" se refiere siempre a la propiedad previa o primera introducida
+  if (isPassedBefore && history.length >= 2) {
+    return { resolved: true, property: refreshProp(history[0]), source: 'history_passed_before' };
+  }
+
+  if (isPrevious && history.length >= 2) {
+    const activeId = (activeProperty?.ID_PROPIEDAD || '').toUpperCase();
+    const activeIdx = history.findIndex(p => (p.ID_PROPIEDAD || '').toUpperCase() === activeId);
+    const targetIdx = (activeIdx > 0) ? activeIdx - 1 : 0;
+    return { resolved: true, property: refreshProp(history[targetIdx]), source: 'history_previous' };
+  }
+
+  if (isFirst && history.length > 0) {
+    return { resolved: true, property: refreshProp(history[0]), source: 'history_first' };
+  }
+
+  if (isSecond && history.length >= 2) {
+    return { resolved: true, property: refreshProp(history[1]), source: 'history_second' };
+  }
+
+  if (isLast && history.length > 0) {
+    return { resolved: true, property: refreshProp(history[history.length - 1]), source: 'history_last' };
+  }
+
+  if (isOther && history.length >= 2) {
+    const activeId = (activeProperty?.ID_PROPIEDAD || '').toUpperCase();
+    const otherProp = history.find(p => (p.ID_PROPIEDAD || '').toUpperCase() !== activeId);
+    if (otherProp) {
+      return { resolved: true, property: refreshProp(otherProp), source: 'history_other' };
+    }
+  }
+
+  // 2. Detección por discriminación de Zona, Tipo o Referencia en historial
+  // Ejemplos: "el apartamento de La Candelaria", "el de Los Samanes", "la propiedad de Chacao"
   if (history.length > 1) {
     const activeZone = activeProperty ? normalizeText(extractPropertyZone(activeProperty) || '') : '';
     const activeTipo = activeProperty ? normalizeText(activeProperty.TIPO || '') : '';
+    const activeId = (activeProperty?.ID_PROPIEDAD || '').toUpperCase();
 
-    for (const historicProp of history) {
-      if (activeProperty && (historicProp.ID_PROPIEDAD || '').toUpperCase() === (activeProperty.ID_PROPIEDAD || '').toUpperCase()) {
-        continue;
+    for (const hProp of history) {
+      const hId = (hProp.ID_PROPIEDAD || '').toUpperCase();
+      const hZone = normalizeText(extractPropertyZone(hProp) || '');
+      const hTipo = normalizeText(hProp.TIPO || '');
+
+      const mentionsHZone = hZone && hZone.length > 2 && q.includes(hZone);
+      const mentionsHRef = hId && q.includes(hId.toLowerCase());
+
+      if (mentionsHRef || (mentionsHZone && (!activeZone || !q.includes(activeZone) || hId !== activeId))) {
+        return { resolved: true, property: refreshProp(hProp), source: 'history_attribute_match' };
       }
-      const hZone = normalizeText(extractPropertyZone(historicProp) || '');
-      const hTipo = normalizeText(historicProp.TIPO || '');
 
-      const matchesHZone = hZone && q.includes(hZone) && (!activeZone || !q.includes(activeZone));
-      const matchesHTipo = hTipo && q.includes(hTipo) && (!activeTipo || !q.includes(activeTipo));
-
-      if (matchesHZone || (matchesHTipo && !activeTipo.includes(hTipo))) {
-        return { resolved: true, property: historicProp, source: 'history_attribute_match' };
+      if (hId !== activeId && hTipo && q.includes(hTipo) && (!activeTipo || !q.includes(activeTipo))) {
+        return { resolved: true, property: refreshProp(hProp), source: 'history_attribute_match' };
       }
     }
   }
 
   // 3. Fallback: la propiedad activa por defecto
   if (activeProperty) {
-    return { resolved: true, property: activeProperty, source: 'active_context' };
+    return { resolved: true, property: refreshProp(activeProperty), source: 'active_context' };
   }
 
   return { resolved: false, property: null, ambiguous: false };
@@ -1662,6 +1779,10 @@ function extractPropertyPrice(prop) {
   }
   const mFicha = desc.match(/(?:Precio|Canon):\s*([^.\n]+)/i);
   if (mFicha && mFicha[1] && !mFicha[1].includes('No especificado')) {
+    const pMatch = mFicha[1].match(/\$\s*([\d.,]+)/);
+    if (pMatch) {
+      return 'USD ' + pMatch[1].replace(/[.,;:]+$/, '').trim();
+    }
     const raw = mFicha[1].replace(/^[\$€\s]+/, '').replace(/^USD\s*/i, '').trim();
     return 'USD ' + raw;
   }
@@ -1933,12 +2054,53 @@ async function evaluateCentralDecisionPipeline(context) {
       logEntry.reason = `Enlace o identificador ${wasiExtraction.codes[0]} no existe en Google Sheets. Prohibido inventar.`;
       logEntry.action = 'SILENCE';
       logEntry.diagnostics = wasiExtraction.diagnostics;
+
+      // Alerta interna para Robert (Escenario B: Enlace no registrado sin coincidencia en Google Sheets)
+      if (wasiExtraction.unregisteredUrls && wasiExtraction.unregisteredUrls.length > 0) {
+        for (const unreg of wasiExtraction.unregisteredUrls) {
+          const alertRes = defaultAlertManager.generateAlert({
+            scenario: 'UNMATCHED_LINK',
+            url: unreg.url,
+            publicationCode: unreg.publicationCode,
+            leadId,
+            talkId,
+            propertyId: null,
+            suggestedColumnName: defaultAlertManager.detectPortalName(unreg.url)
+          });
+          if (alertRes && !alertRes.isDuplicate) {
+            logEntry.robertAlert = alertRes.alertText;
+            logEntry.robertAlertData = alertRes.data;
+            break;
+          }
+        }
+      }
+
       return { shouldRespond: false, text: null, log: logEntry };
     }
 
     logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
     logEntry.matchLevel = wasiExtraction.matchLevel || 'PROPERTY_MATCH_EXACT';
     logEntry.diagnostics = wasiExtraction.diagnostics;
+
+    // Alerta interna para Robert (Escenario A: Enlace de portal no registrado que coincide con propiedad existente)
+    if (wasiExtraction.unregisteredUrls && wasiExtraction.unregisteredUrls.length > 0) {
+      for (const unreg of wasiExtraction.unregisteredUrls) {
+        const alertRes = defaultAlertManager.generateAlert({
+          scenario: 'MATCHED_UNREGISTERED',
+          url: unreg.url,
+          publicationCode: unreg.publicationCode,
+          leadId,
+          talkId,
+          propertyId: targetProperty.ID_PROPIEDAD,
+          suggestedColumnName: defaultAlertManager.detectPortalName(unreg.url)
+        });
+        if (alertRes && !alertRes.isDuplicate) {
+          logEntry.robertAlert = alertRes.alertText;
+          logEntry.robertAlertData = alertRes.data;
+          break;
+        }
+      }
+    }
   }
 
   if (targetProperty) {
@@ -1997,6 +2159,35 @@ async function evaluateCentralDecisionPipeline(context) {
       logEntry.action = 'RESPOND';
       logEntry.text = responseText;
       return { shouldRespond: true, text: responseText, log: logEntry };
+    } else if (zoneSearch.targetZone && !zoneSearch.hasAvailableMatches) {
+      // Verificar si la zona solicitada existe en alguna propiedad del inventario
+      const zoneExistsInAnyProperty = properties.some(raw => {
+        const p = adaptProperty(raw);
+        const z = normalizeText(extractPropertyZone(p) || '');
+        const desc = normalizeText(p.DESCRIPCION_BREVE || '');
+        const wasi = normalizeText(p.Wasi || '');
+        const tz = zoneSearch.targetZone;
+        return (z && z.includes(tz)) || desc.includes(tz) || wasi.includes(tz);
+      });
+
+      if (!zoneExistsInAnyProperty) {
+        // La zona solicitada (ej: Juan Pablo II) NO existe en el inventario oficial.
+        // Prohibido confirmar disponibilidad ("sí, disponible") o enviar inmuebles de otras zonas.
+        // Comunicar educadamente la ausencia de inmuebles en esa zona.
+        const absenceResponse = buildStructuredZoneSearchResults(zoneSearch);
+        logEntry.typeDetected = 'ZONE_SEARCH_NO_MATCH';
+        logEntry.reason = `Zona solicitada "${zoneSearch.targetZone}" no tiene inmuebles en Google Sheets. Informando educadamente sin confirmar disponibilidad ni enviar otras zonas.`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = absenceResponse;
+        return { shouldRespond: true, text: absenceResponse, log: logEntry };
+      } else {
+        // La zona existe en inventario pero el tipo u operación no coincide (ej: busca casa en Los Samanes donde solo hay apartamentos).
+        // Guarda silencio seguro y delega a la atención humana (Regla V5.0 Test 32).
+        logEntry.typeDetected = 'ZONE_OR_FEATURE_MISMATCH';
+        logEntry.reason = `Tipo u operación solicitada no coincide con las propiedades disponibles en "${zoneSearch.targetZone}". Silencio seguro.`;
+        logEntry.action = 'SILENCE';
+        return { shouldRespond: false, text: null, log: logEntry };
+      }
     }
   }
 
@@ -2271,6 +2462,7 @@ module.exports = {
   extractWasiPropertyIdentifiers,
   extractMultiportalPropertyIdentifiers,
   isExtendedInfoOrPhotoRequest,
+  extractRequestedZone,
   searchZoneOrFeatureMatches,
   buildStructuredZoneSearchResults,
   resolvePropertyFromHistoryOrContext,
