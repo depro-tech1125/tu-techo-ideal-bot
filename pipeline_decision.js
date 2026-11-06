@@ -144,6 +144,42 @@ function adaptProperty(raw) {
     return { header, url, domain };
   });
 
+  // Comprobación de integridad estructural del registro
+  let isStructurallyValid = raw._isStructurallyValid !== false && !!(id && tipo && operacion && estatus && desc);
+  let isQuarantined = false;
+  let quarantineReason = null;
+
+  if (!isStructurallyValid) {
+    isQuarantined = true;
+    quarantineReason = 'INCOMPLETE_STRUCTURAL_DATA (Faltan campos obligatorios)';
+  } else {
+    // Comprobar contradicciones comerciales
+    const normOp = operacion.toLowerCase();
+    const normDesc = desc.toLowerCase();
+    const normEstatus = normalizeText(estatus);
+
+    if (normOp.includes('alquiler') && /\b(?:en venta|para la venta|se vende)\b/i.test(normDesc) && !/\b(?:alquiler|arrendamiento|alquila|renta|canon)\b/i.test(normDesc)) {
+      isQuarantined = true;
+      quarantineReason = 'CONTRADICTION_OPERACION_DESCRIPCION (Registrado como Alquiler pero descripción indica exclusivamente venta)';
+    } else if (normOp.includes('venta') && /\b(?:en alquiler|para alquilar|se alquila)\b/i.test(normDesc) && !/\b(?:venta|vende|compra)\b/i.test(normDesc)) {
+      isQuarantined = true;
+      quarantineReason = 'CONTRADICTION_OPERACION_DESCRIPCION (Registrado como Venta pero descripción indica exclusivamente alquiler)';
+    }
+
+    if (normEstatus === 'disponible' && /\b(?:vendido|reservad[oa]|no disponible|ya se alquil[oó]|ya se vendi[oó])\b/i.test(normDesc)) {
+      isQuarantined = true;
+      quarantineReason = 'CONTRADICTION_ESTATUS_DESCRIPCION (Registrado como Disponible pero descripción indica vendido/reservado)';
+    }
+  }
+
+  if (raw._isQuarantined) {
+    isQuarantined = true;
+    quarantineReason = raw.quarantineReason || quarantineReason;
+  }
+  if (raw._isStructurallyValid === false) {
+    isStructurallyValid = false;
+  }
+
   const adapted = {
     ID_PROPIEDAD: id,
     TIPO: tipo,
@@ -166,7 +202,10 @@ function adaptProperty(raw) {
     // V5.1 Universal Sheet Reader properties
     externalLinks: externalLinks,
     externalLinksDetails: externalLinksDetails,
-    _isStructurallyValid: raw._isStructurallyValid !== false,
+    _isStructurallyValid: isStructurallyValid,
+    _isComplete: isStructurallyValid && !isQuarantined,
+    _isQuarantined: isQuarantined,
+    quarantineReason: quarantineReason,
     _raw: raw
   };
 
@@ -182,10 +221,14 @@ function adaptProperty(raw) {
 
 /**
  * Verificación de disponibilidad estricta:
- * Exige equivalencia exacta con 'disponible' después de normalizar.
+ * Exige equivalencia exacta con 'disponible' después de normalizar,
+ * integridad estructural completa y ausencia total de cuarentena comercial.
  */
 function isPropertyAvailable(property) {
   if (!property || typeof property !== 'object') return false;
+  if (property._isQuarantined === true || property._isStructurallyValid === false || property._isComplete === false) {
+    return false;
+  }
   const rawStatus = property.ESTATUS || '';
   return normalizeText(rawStatus) === 'disponible';
 }
@@ -958,6 +1001,9 @@ class HandoffManager {
     }
     const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
 
+    // Aislamiento estricto de propiedad: Si talkId está definido, pertenece únicamente a ese chat
+    const isolatedPropertyId = talkEntry ? (talkEntry.activeAutomationPropertyId || null) : (talkId ? null : (leadEntry ? (leadEntry.activeAutomationPropertyId || null) : null));
+
     if (humanTime) {
       const hoursElapsed = (now - humanTime) / (1000 * 60 * 60);
       if (hoursElapsed < HANDOFF_LOCK_HOURS) {
@@ -974,7 +1020,7 @@ class HandoffManager {
         hoursElapsed,
         lastIntervention: humanTime,
         hadPreviousIntervention: true,
-        activeAutomationPropertyId: entry.activeAutomationPropertyId || null
+        activeAutomationPropertyId: isolatedPropertyId
       };
     }
 
@@ -1011,7 +1057,7 @@ class HandoffManager {
             hoursElapsed,
             lastIntervention: remoteResult.lastHumanTimestamp,
             hadPreviousIntervention: true,
-            activeAutomationPropertyId: (entry && entry.activeAutomationPropertyId) || null
+            activeAutomationPropertyId: isolatedPropertyId
           };
         }
       } catch (err) {
@@ -1031,7 +1077,7 @@ class HandoffManager {
       hoursElapsed: 999,
       lastIntervention: null,
       hadPreviousIntervention: false,
-      activeAutomationPropertyId: (entry && entry.activeAutomationPropertyId) || null
+      activeAutomationPropertyId: isolatedPropertyId
     };
   }
 }
@@ -1176,35 +1222,56 @@ class ConversationContextManager {
   }
 
   getContext(talkId, leadId) {
-    if (talkId && this.talkContexts.has(String(talkId))) {
-      return this.talkContexts.get(String(talkId));
+    // Aislamiento Contextual Total: Cada conversación (talkId) es 100% independiente
+    if (talkId) {
+      const sTalk = String(talkId);
+      if (this.talkContexts.has(sTalk)) {
+        return this.talkContexts.get(sTalk);
+      }
+      this.loadFromDisk();
+      if (this.talkContexts.has(sTalk)) {
+        return this.talkContexts.get(sTalk);
+      }
+      // REGLA CRÍTICA: Si se consulta por talkId, NUNCA recurrir a leadContexts
+      return null;
     }
-    if (leadId && this.leadContexts.has(String(leadId))) {
-      return this.leadContexts.get(String(leadId));
-    }
-    this.loadFromDisk();
-    if (talkId && this.talkContexts.has(String(talkId))) {
-      return this.talkContexts.get(String(talkId));
-    }
-    if (leadId && this.leadContexts.has(String(leadId))) {
-      return this.leadContexts.get(String(leadId));
+    // Si NO se proporciona talkId (ej: consulta administrativa por leadId):
+    if (leadId) {
+      const sLead = String(leadId);
+      if (this.leadContexts.has(sLead)) {
+        return this.leadContexts.get(sLead);
+      }
+      this.loadFromDisk();
+      if (this.leadContexts.has(sLead)) {
+        return this.leadContexts.get(sLead);
+      }
     }
     return null;
   }
 
   getHistory(talkId, leadId) {
-    if (talkId && this.talkHistories.has(String(talkId))) {
-      return this.talkHistories.get(String(talkId));
+    // Aislamiento Histórico Total: El historial pertenece estrictamente a su propia conversación
+    if (talkId) {
+      const sTalk = String(talkId);
+      if (this.talkHistories.has(sTalk)) {
+        return this.talkHistories.get(sTalk);
+      }
+      this.loadFromDisk();
+      if (this.talkHistories.has(sTalk)) {
+        return this.talkHistories.get(sTalk);
+      }
+      // REGLA CRÍTICA: Si se consulta por talkId, NUNCA heredar historial de otro talkId
+      return [];
     }
-    if (leadId && this.leadHistories.has(String(leadId))) {
-      return this.leadHistories.get(String(leadId));
-    }
-    this.loadFromDisk();
-    if (talkId && this.talkHistories.has(String(talkId))) {
-      return this.talkHistories.get(String(talkId));
-    }
-    if (leadId && this.leadHistories.has(String(leadId))) {
-      return this.leadHistories.get(String(leadId));
+    if (leadId) {
+      const sLead = String(leadId);
+      if (this.leadHistories.has(sLead)) {
+        return this.leadHistories.get(sLead);
+      }
+      this.loadFromDisk();
+      if (this.leadHistories.has(sLead)) {
+        return this.leadHistories.get(sLead);
+      }
     }
     const single = this.getContext(talkId, leadId);
     return single ? [single] : [];
@@ -1336,8 +1403,141 @@ function resolvePropertyFromHistoryOrContext({
 }
 
 // ============================================================================
-// 10. COMPROBACIÓN PREVIA AL DESPACHO (PRE-DISPATCH CHECK)
+// 10. COMPROBACIÓN PREVIA AL DESPACHO Y BARRERA DE PROCEDENCIA COMERCIAL
 // ============================================================================
+
+/**
+ * BARRERA EXHAUSTIVA DE PROCEDENCIA Y VERDAD COMERCIAL (V5.1):
+ * Valida individualmente cada afirmación comercial (ID, tipo, operación, estatus,
+ * precio, metraje, habitaciones, baños, estacionamiento, mascotas, etc.)
+ * contra la fuente única de verdad en Google Sheets antes de autorizar cualquier despacho.
+ */
+function validateCommercialClaimsProvenance({ responseText, targetProperty, properties = [] }) {
+  if (!targetProperty || typeof targetProperty !== 'object') {
+    return { valid: true };
+  }
+
+  const pId = (targetProperty.ID_PROPIEDAD || '').toUpperCase();
+
+  // 1. Integridad estructural y Cuarentena
+  if (targetProperty._isQuarantined === true) {
+    return {
+      valid: false,
+      reason: `Violación de verdad comercial: La propiedad ${pId || 'desconocida'} está en cuarentena comercial (${targetProperty.quarantineReason || 'CONTRADICCIÓN'}). Despacho bloqueado.`
+    };
+  }
+  if (targetProperty._isStructurallyValid === false || targetProperty._isComplete === false) {
+    return {
+      valid: false,
+      reason: `Violación de verdad comercial: La propiedad ${pId || 'desconocida'} está estructuralmente incompleta en Google Sheets. Despacho bloqueado.`
+    };
+  }
+
+  // Si no hay texto, nada que validar sintácticamente
+  if (!responseText || typeof responseText !== 'string') {
+    return { valid: true };
+  }
+
+  const normText = normalizeText(responseText);
+
+  // 2. Comprobación de ID explícito en texto: Si el texto contiene REF-xxx, debe coincidir con targetProperty
+  const refMatches = responseText.match(/\bREF-\d+\b/gi) || [];
+  for (const r of refMatches) {
+    if (r.toUpperCase() !== pId) {
+      return {
+        valid: false,
+        reason: `Violación de procedencia de ID: El texto comunica ${r.toUpperCase()} pero la propiedad objetivo es ${pId}.`
+      };
+    }
+  }
+
+  // 3. Comprobación de Disponibilidad Comercial:
+  const isAffirming = (normText.includes('disponible') || normText.includes('si, disponible')) &&
+                      !normText.includes('no disponible') &&
+                      !normText.includes('no se encuentra disponible');
+  if (isAffirming) {
+    if (!isPropertyAvailable(targetProperty) || isPropertyExplicitlyUnavailable(targetProperty)) {
+      return {
+        valid: false,
+        reason: `Violación de verdad comercial: La propiedad ${pId} tiene estatus "${targetProperty.ESTATUS}" (no Disponible o en cuarentena).`
+      };
+    }
+  }
+
+  // 4. Comprobación de Operación Comercial (Venta vs Alquiler)
+  const targetOp = (targetProperty.OPERACION || '').toLowerCase();
+  const claimsVenta = /\b(?:venta|en venta|para la venta|para venta)\b/i.test(responseText);
+  const claimsAlquiler = /\b(?:alquiler|en alquiler|para alquiler|canon)\b/i.test(responseText);
+  if (claimsVenta && !claimsAlquiler && !targetOp.includes('venta')) {
+    return {
+      valid: false,
+      reason: `Violación de procedencia de operación: El texto afirma venta pero ${pId} está registrada en ${targetProperty.OPERACION}.`
+    };
+  }
+  if (claimsAlquiler && !claimsVenta && !targetOp.includes('alquiler') && !targetOp.includes('renta')) {
+    return {
+      valid: false,
+      reason: `Violación de procedencia de operación: El texto afirma alquiler pero ${pId} está registrada en ${targetProperty.OPERACION}.`
+    };
+  }
+
+  // 5. Comprobación de Precio Comercial:
+  // Si el texto incluye precio monetario (ej: "USD 146.000", "$146.000", "146.000"),
+  // debe corresponder con exactitud al precio oficial extraído de Sheets o al valor de la celda.
+  const officialPrice = extractPropertyPrice(targetProperty);
+  const priceRegex = /(?:USD|\$|precio(?:\s+es)?(?:\s+de)?)\s*([\d\.,]+)/i;
+  const textPriceMatch = responseText.match(priceRegex);
+  if (textPriceMatch) {
+    const normalizePriceToNumber = (str) => {
+      if (!str && str !== 0) return null;
+      let s = String(str).replace(/^[\$€\s]+/, '').replace(/^USD\s*/i, '').trim();
+      s = s.replace(/[,.]00$/, '');
+      s = s.replace(/[\.,]/g, '');
+      const num = parseInt(s, 10);
+      return isNaN(num) ? null : num;
+    };
+
+    const claimedNum = normalizePriceToNumber(textPriceMatch[1]);
+    const officialNum = normalizePriceToNumber(officialPrice);
+    const rawNum = normalizePriceToNumber(targetProperty._raw?.PRECIO || targetProperty._raw?.Canon || targetProperty.PRECIO);
+
+    let priceMatched = false;
+    if (claimedNum !== null) {
+      if (officialNum !== null && claimedNum === officialNum) priceMatched = true;
+      if (rawNum !== null && claimedNum === rawNum) priceMatched = true;
+    }
+
+    if (!priceMatched) {
+      return {
+        valid: false,
+        reason: `Violación de procedencia de precio: El texto comunica precio "${textPriceMatch[1]}" que no coincide con el valor oficial (${officialPrice || targetProperty.PRECIO || 'sin precio'}) de ${pId}.`
+      };
+    }
+  }
+
+  // 6. Comprobación de Metraje Comercial:
+  // Si el texto incluye metraje (ej: "110 m²", "110m2", "110 metros"),
+  // debe corresponder al metraje oficial extraído de Sheets o al valor de la descripción.
+  const officialMetraje = extractPropertyMetraje(targetProperty);
+  const metrajeRegex = /(\d+(?:[\.,]\d+)?)\s*(?:m²|m2|metros)\b/i;
+  const textMetrajeMatch = responseText.match(metrajeRegex);
+  if (textMetrajeMatch) {
+    const claimedMetrajeNum = parseFloat(textMetrajeMatch[1].replace(',', '.'));
+    const officialMetrajeNum = officialMetraje ? parseFloat(String(officialMetraje).replace(',', '.')) : null;
+    const desc = (targetProperty.DESCRIPCION_BREVE || '').replace(',', '.');
+    const inDesc = desc.includes(String(claimedMetrajeNum));
+
+    if (officialMetrajeNum !== claimedMetrajeNum && !inDesc) {
+      return {
+        valid: false,
+        reason: `Violación de procedencia de metraje: El texto comunica "${textMetrajeMatch[0]}" que no coincide con los ${officialMetraje || 'N/A'} registrados para ${pId}.`
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
 async function verifyPreDispatchSafety(leadIdOrOptions, maybeTalkId, maybeContactId, maybeHandoffManager, maybeOptions = {}) {
   let leadId, talkId, contactId, handoffManager, now, responseText, targetProperty, properties, decisionLog;
   if (leadIdOrOptions && typeof leadIdOrOptions === 'object' && !Array.isArray(leadIdOrOptions) && !(leadIdOrOptions instanceof HandoffManager)) {
@@ -1385,19 +1585,14 @@ async function verifyPreDispatchSafety(leadIdOrOptions, maybeTalkId, maybeContac
     };
   }
 
-  // 4. Validar verdad comercial de la propiedad asociada si se afirma disponibilidad
+  // 4. Validar trazabilidad y procedencia comercial exhaustiva de cada afirmación
   if (targetProperty) {
-    const normText = normalizeText(responseText || '');
-    const isAffirming = (normText.includes('disponible') || normText.includes('si, disponible')) &&
-                        !normText.includes('no disponible') &&
-                        !normText.includes('no se encuentra disponible');
-    if (isAffirming) {
-      if (!isPropertyAvailable(targetProperty) || isPropertyExplicitlyUnavailable(targetProperty)) {
-        return {
-          canDispatch: false,
-          reason: `Violación de verdad comercial: La propiedad ${targetProperty.ID_PROPIEDAD || 'desconocida'} tiene estatus "${targetProperty.ESTATUS}" (no Disponible).`
-        };
-      }
+    const claimCheck = validateCommercialClaimsProvenance({ responseText, targetProperty, properties });
+    if (!claimCheck.valid) {
+      return {
+        canDispatch: false,
+        reason: claimCheck.reason
+      };
     }
   }
 
@@ -2559,6 +2754,7 @@ module.exports = {
   DeduplicationManager,
   ConversationContextManager,
   verifyPreDispatchSafety,
+  validateCommercialClaimsProvenance,
   evaluatePropertyQuestionWithClaude,
   evaluateCentralDecisionPipeline,
   buildCommercialFichaResponse,

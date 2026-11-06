@@ -58,6 +58,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-001",
@@ -138,6 +141,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-002",
@@ -218,6 +224,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-003",
@@ -298,6 +307,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-004",
@@ -378,6 +390,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-005",
@@ -458,6 +473,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-006",
@@ -538,6 +556,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-007",
@@ -618,6 +639,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-008",
@@ -698,6 +722,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-009",
@@ -778,6 +805,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-010",
@@ -858,6 +888,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-011",
@@ -938,6 +971,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-012",
@@ -1018,6 +1054,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-013",
@@ -1098,6 +1137,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-014",
@@ -1178,6 +1220,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-015",
@@ -1258,6 +1303,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-016",
@@ -1338,6 +1386,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-017",
@@ -1411,6 +1462,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-018",
@@ -1476,6 +1530,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-019",
@@ -1547,6 +1604,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-020",
@@ -1626,6 +1686,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-021",
@@ -1706,6 +1769,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-022",
@@ -1786,6 +1852,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-023",
@@ -1866,6 +1935,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-024",
@@ -1946,6 +2018,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-025",
@@ -2019,6 +2094,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-026",
@@ -2091,6 +2169,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-027",
@@ -2170,6 +2251,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-028",
@@ -2250,6 +2334,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-029",
@@ -2330,6 +2417,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-030",
@@ -2410,6 +2500,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-031",
@@ -2490,6 +2583,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-032",
@@ -2570,6 +2666,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-033",
@@ -2650,6 +2749,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-034",
@@ -2730,6 +2832,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-035",
@@ -2810,6 +2915,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-036",
@@ -2890,6 +2998,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-037",
@@ -2970,6 +3081,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-038",
@@ -3050,6 +3164,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-039",
@@ -3130,6 +3247,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-040",
@@ -3210,6 +3330,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-041",
@@ -3290,6 +3413,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-042",
@@ -3370,6 +3496,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-043",
@@ -3450,6 +3579,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-044",
@@ -3530,6 +3662,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-045",
@@ -3610,6 +3745,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-046",
@@ -3683,6 +3821,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-047",
@@ -3755,6 +3896,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-048",
@@ -3820,6 +3964,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-049",
@@ -3898,6 +4045,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-050",
@@ -3978,6 +4128,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-051",
@@ -4058,6 +4211,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-052",
@@ -4138,6 +4294,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-053",
@@ -4218,6 +4377,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-054",
@@ -4298,6 +4460,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-055",
@@ -4371,6 +4536,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-056",
@@ -4450,6 +4618,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-057",
@@ -4516,6 +4687,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-058",
@@ -4587,6 +4761,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-059",
@@ -4659,6 +4836,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-060",
@@ -4731,6 +4911,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-061",
@@ -4796,6 +4979,9 @@
     ],
     "_unmappedColumns": {},
     "_isStructurallyValid": true,
+    "_isComplete": true,
+    "_isQuarantined": false,
+    "quarantineReason": null,
     "_missingFields": [],
     "_raw": {
       "ID_PROPIEDAD": "REF-062",
@@ -4844,6 +5030,9 @@
     "externalLinksDetails": [],
     "_unmappedColumns": {},
     "_isStructurallyValid": false,
+    "_isComplete": false,
+    "_isQuarantined": true,
+    "quarantineReason": "INCOMPLETE_STRUCTURAL_DATA (Campos faltantes: TIPO, OPERACION)",
     "_missingFields": [
       "TIPO",
       "OPERACION"
@@ -4893,6 +5082,9 @@
     "externalLinksDetails": [],
     "_unmappedColumns": {},
     "_isStructurallyValid": false,
+    "_isComplete": false,
+    "_isQuarantined": true,
+    "quarantineReason": "INCOMPLETE_STRUCTURAL_DATA (Campos faltantes: TIPO, OPERACION)",
     "_missingFields": [
       "TIPO",
       "OPERACION"
@@ -4942,6 +5134,9 @@
     "externalLinksDetails": [],
     "_unmappedColumns": {},
     "_isStructurallyValid": false,
+    "_isComplete": false,
+    "_isQuarantined": true,
+    "quarantineReason": "INCOMPLETE_STRUCTURAL_DATA (Campos faltantes: TIPO, OPERACION)",
     "_missingFields": [
       "TIPO",
       "OPERACION"
@@ -4991,6 +5186,9 @@
     "externalLinksDetails": [],
     "_unmappedColumns": {},
     "_isStructurallyValid": false,
+    "_isComplete": false,
+    "_isQuarantined": true,
+    "quarantineReason": "INCOMPLETE_STRUCTURAL_DATA (Campos faltantes: TIPO, OPERACION)",
     "_missingFields": [
       "TIPO",
       "OPERACION"
@@ -5040,6 +5238,9 @@
     "externalLinksDetails": [],
     "_unmappedColumns": {},
     "_isStructurallyValid": false,
+    "_isComplete": false,
+    "_isQuarantined": true,
+    "quarantineReason": "INCOMPLETE_STRUCTURAL_DATA (Campos faltantes: TIPO, OPERACION)",
     "_missingFields": [
       "TIPO",
       "OPERACION"
@@ -5089,6 +5290,9 @@
     "externalLinksDetails": [],
     "_unmappedColumns": {},
     "_isStructurallyValid": false,
+    "_isComplete": false,
+    "_isQuarantined": true,
+    "quarantineReason": "INCOMPLETE_STRUCTURAL_DATA (Campos faltantes: TIPO, OPERACION)",
     "_missingFields": [
       "TIPO",
       "OPERACION"
@@ -5138,6 +5342,9 @@
     "externalLinksDetails": [],
     "_unmappedColumns": {},
     "_isStructurallyValid": false,
+    "_isComplete": false,
+    "_isQuarantined": true,
+    "quarantineReason": "INCOMPLETE_STRUCTURAL_DATA (Campos faltantes: TIPO, OPERACION)",
     "_missingFields": [
       "TIPO",
       "OPERACION"
