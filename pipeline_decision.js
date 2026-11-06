@@ -1338,15 +1338,69 @@ function resolvePropertyFromHistoryOrContext({
 // ============================================================================
 // 10. COMPROBACIÓN PREVIA AL DESPACHO (PRE-DISPATCH CHECK)
 // ============================================================================
-async function verifyPreDispatchSafety(leadId, talkId, contactId, handoffManager, now = Date.now()) {
-  if (!handoffManager) return { canDispatch: true };
-  const status = await handoffManager.checkLockStatus(leadId, talkId, contactId, now);
-  if (status.isLocked) {
+async function verifyPreDispatchSafety(leadIdOrOptions, maybeTalkId, maybeContactId, maybeHandoffManager, maybeOptions = {}) {
+  let leadId, talkId, contactId, handoffManager, now, responseText, targetProperty, properties, decisionLog;
+  if (leadIdOrOptions && typeof leadIdOrOptions === 'object' && !Array.isArray(leadIdOrOptions) && !(leadIdOrOptions instanceof HandoffManager)) {
+    ({ leadId, talkId, contactId, handoffManager, now, responseText, targetProperty, properties, decisionLog } = leadIdOrOptions);
+  } else {
+    leadId = leadIdOrOptions;
+    talkId = maybeTalkId;
+    contactId = maybeContactId;
+    handoffManager = maybeHandoffManager;
+    if (typeof maybeOptions === 'number') {
+      now = maybeOptions;
+    } else if (typeof maybeOptions === 'object') {
+      ({ now, responseText, targetProperty, properties, decisionLog } = maybeOptions);
+    }
+  }
+  now = now || Date.now();
+
+  // 1. Validar integridad sintáctica del texto de respuesta
+  if (typeof responseText === 'string') {
+    const trimmed = responseText.trim();
+    if (!trimmed) {
+      return { canDispatch: false, reason: 'Texto de respuesta vacío. Despacho cancelado por seguridad.' };
+    }
+    if (/\b(?:undefined|null|NaN|\[object Object\])\b/i.test(trimmed)) {
+      return { canDispatch: false, reason: 'Texto de respuesta corrupto (contiene tokens inválidos). Despacho cancelado.' };
+    }
+  }
+
+  // 2. Comprobar bloqueo de asesor humano
+  if (handoffManager) {
+    const status = await handoffManager.checkLockStatus(leadId, talkId, contactId, now);
+    if (status && status.isLocked) {
+      return {
+        canDispatch: false,
+        reason: 'Intervención humana detectada mientras se preparaba la respuesta. Despacho cancelado.'
+      };
+    }
+  }
+
+  // 3. Comprobar vigencia y conexión de la fuente Google Sheets
+  if (properties && properties._isStale === true) {
     return {
       canDispatch: false,
-      reason: 'Intervención humana detectada mientras se preparaba la respuesta. Despacho cancelado.'
+      reason: 'Inventario desactualizado o conexión con Google Sheets no disponible. Despacho bloqueado.'
     };
   }
+
+  // 4. Validar verdad comercial de la propiedad asociada si se afirma disponibilidad
+  if (targetProperty) {
+    const normText = normalizeText(responseText || '');
+    const isAffirming = (normText.includes('disponible') || normText.includes('si, disponible')) &&
+                        !normText.includes('no disponible') &&
+                        !normText.includes('no se encuentra disponible');
+    if (isAffirming) {
+      if (!isPropertyAvailable(targetProperty) || isPropertyExplicitlyUnavailable(targetProperty)) {
+        return {
+          canDispatch: false,
+          reason: `Violación de verdad comercial: La propiedad ${targetProperty.ID_PROPIEDAD || 'desconocida'} tiene estatus "${targetProperty.ESTATUS}" (no Disponible).`
+        };
+      }
+    }
+  }
+
   return { canDispatch: true };
 }
 
@@ -1842,8 +1896,15 @@ async function evaluateCentralDecisionPipeline(context) {
     leadId,
     talkId,
     userText,
+    timestamp: currentTime,
+    schemaFingerprint: properties._schemaFingerprint || 'v5.1',
     typeDetected: null,
     propertyIdentified: null,
+    sheetRow: null,
+    identificationMethod: null,
+    fieldsUsed: [],
+    validationResult: null,
+    blockReason: null,
     calledAI: false,
     tokensUsed: 0,
     action: 'SILENCE',
@@ -1860,6 +1921,15 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.typeDetected = 'SHEETS_UNAVAILABLE';
     logEntry.reason = 'Base de datos de Google Sheets no disponible o vacía. Silencio seguro.';
     logEntry.action = 'SILENCE';
+    logEntry.blockReason = 'GOOGLE_SHEETS_EMPTY_OR_UNAVAILABLE';
+    return { shouldRespond: false, text: null, log: logEntry };
+  }
+
+  if (properties._isStale === true) {
+    logEntry.typeDetected = 'SHEET_CONNECTION_UNAVAILABLE';
+    logEntry.reason = 'Conexión con Google Sheets no disponible. Silencio de seguridad comercial.';
+    logEntry.action = 'SILENCE';
+    logEntry.blockReason = 'GOOGLE_SHEETS_STALE_OR_OFFLINE';
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -2113,8 +2183,14 @@ async function evaluateCentralDecisionPipeline(context) {
   }
 
   if (targetProperty) {
+    logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
+    logEntry.sheetRow = targetProperty._sheetRow || null;
+    logEntry.identificationMethod = logEntry.identificationMethod || (hasVerifiedExternalTarget ? (extResolution?.matchType || 'PROPERTY_MATCH_CONTENT_VERIFIED') : (wasiExtraction?.matchLevel || 'PROPERTY_MATCH_EXACT'));
+    logEntry.fieldsUsed = ['ID_PROPIEDAD', 'TIPO', 'OPERACION', 'ESTATUS', 'DESCRIPCION_BREVE', 'PRECIO'];
+
     // Comprobación de estatus en tiempo real
     const isAvail = isPropertyAvailable(targetProperty);
+    logEntry.validationResult = isAvail ? 'VERIFIED_AVAILABLE' : 'VERIFIED_UNAVAILABLE';
     const isWasiInitialShare = /compartiste\s*en\s*la\s*red|interesado\s*en\s*el\s*inmueble|podr[ií]amos\s*conversar|disponib/i.test(normalizeText(textClean)) || textClean.includes('http');
 
     if (isWasiInitialShare) {

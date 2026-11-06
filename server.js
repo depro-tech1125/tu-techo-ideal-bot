@@ -204,6 +204,12 @@ function recordStagingDecision(entry) {
     inquiry_type: entry.decision?.typeDetected || 'UNKNOWN',
     action: entry.decision?.action || 'UNKNOWN',
     property_id: entry.decision?.propertyIdentified || null,
+    sheet_row: entry.decision?.sheetRow || null,
+    schema_fingerprint: entry.decision?.schemaFingerprint || 'v5.1',
+    identification_method: entry.decision?.identificationMethod || null,
+    fields_used: entry.decision?.fieldsUsed || [],
+    validation_result: entry.decision?.validationResult || null,
+    block_reason: entry.decision?.blockReason || null,
     response_text: entry.text || null,
     called_ai: !!entry.decision?.calledAI,
     tokens_used: entry.decision?.tokensUsed || 0,
@@ -440,6 +446,11 @@ async function getAvailableProperties(forceRefresh = false) {
     const records = parseResult.properties;
     cachedSheetSchema = parseResult.schema;
 
+    records._isStale = false;
+    records._source = 'LIVE_XLSX';
+    records._fetchedAt = now;
+    records._schemaFingerprint = parseResult.schema?.fingerprint || 'v5.1';
+
     console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con enlaces universales.`);
     try {
       const cleanProps = records.map(p => {
@@ -462,6 +473,9 @@ async function getAvailableProperties(forceRefresh = false) {
         const localData = JSON.parse(fs.readFileSync(PROPERTIES_CACHE_FILE, 'utf8'));
         if (Array.isArray(localData) && localData.length > 0) {
           console.log(`[Google Sheets Local Backup] Cargadas ${localData.length} propiedades con códigos Wasi desde ${PROPERTIES_CACHE_FILE}`);
+          localData._isStale = true;
+          localData._staleReason = 'GOOGLE_SHEETS_OFFLINE';
+          localData._source = 'LOCAL_FILE_FALLBACK';
           indexPropertiesVocabulary(localData);
           cachedProperties = localData;
           lastPropertiesFetchTime = now;
@@ -487,6 +501,10 @@ async function getAvailableProperties(forceRefresh = false) {
       });
       const records = parseResult.properties;
       cachedSheetSchema = parseResult.schema;
+      records._isStale = false;
+      records._source = 'LIVE_CSV_FALLBACK';
+      records._fetchedAt = now;
+      records._schemaFingerprint = parseResult.schema?.fingerprint || 'v5.1';
       console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
       indexPropertiesVocabulary(records);
       cachedProperties = records;
@@ -494,6 +512,10 @@ async function getAvailableProperties(forceRefresh = false) {
       return records;
     } catch (errCsv) {
       console.error('[Google Sheets Fatal Error]:', errCsv.message);
+      if (cachedProperties && Array.isArray(cachedProperties)) {
+        cachedProperties._isStale = true;
+        cachedProperties._staleReason = 'GOOGLE_SHEETS_FATAL_ERROR';
+      }
       return cachedProperties || [];
     }
   }
@@ -4660,6 +4682,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         return;
       }
 
+      recordStagingDecision({
+        timestamp: Date.now(),
+        lead_id: currentLeadId,
+        talk_id: currentTalkId,
+        user_text: userText,
+        observation_mode: false,
+        decision: pipelineResult.log,
+        text: pipelineResult.text
+      });
+
       if (isControlledDispatch) {
         console.log(`[CONTROLLED DISPATCH AUTHORIZED] Conversación autorizada para prueba real de despacho en Staging (Lead #${currentLeadId}, Talk #${currentTalkId}). Despachando a Kommo...`);
       }
@@ -4733,12 +4765,16 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // ======================================================================
       // 4. COMPROBACIÓN PREVIA AL DESPACHO (PRE-DISPATCH CHECK)
       // ======================================================================
-      const preDispatchCheck = await verifyPreDispatchSafety(
-        currentLeadId,
-        currentTalkId,
-        messageObj.contact_id ? String(messageObj.contact_id) : null,
-        centralHandoffManager
-      );
+      const preDispatchCheck = await verifyPreDispatchSafety({
+        leadId: currentLeadId,
+        talkId: currentTalkId,
+        contactId: messageObj.contact_id ? String(messageObj.contact_id) : null,
+        handoffManager: centralHandoffManager,
+        responseText,
+        targetProperty: pipelineResult.targetProperty,
+        properties,
+        decisionLog: pipelineResult.log
+      });
 
       if (!preDispatchCheck.canDispatch) {
         console.warn(`[PRE-DISPATCH ABORT] ${preDispatchCheck.reason} Cancelando despacho a Kommo.`);
