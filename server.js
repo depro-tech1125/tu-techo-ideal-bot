@@ -114,7 +114,7 @@ const centralHandoffManager = new HandoffManager(
     return null;
   }
 );
-const centralContextManager = new ConversationContextManager();
+const centralContextManager = new ConversationContextManager(path.join(__dirname, 'lead_context.json'));
 
 // Control contra alertas duplicadas a Robert (ventana móvil de 5 minutos por lead e interés)
 const recentAlertsSentToRobert = new Map();
@@ -2254,6 +2254,13 @@ function saveHandoffs() {
 
 const recentBotDispatchedMessages = new Map();
 const lastBotDispatchTimes = new Map();
+
+function hasRecentActiveDispatch(leadId, windowMs = 45000) {
+  if (!leadId) return false;
+  const last = lastBotDispatchTimes.get(String(leadId));
+  if (!last) return false;
+  return (Date.now() - last) < windowMs;
+}
 
 function recordBotDispatchedMessage(leadId, text) {
   if (!text) return;
@@ -4666,10 +4673,20 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       if (!pipelineResult.shouldRespond || !pipelineResult.text) {
         console.log(`[Pipeline Silence] El bot guarda silencio absoluto y cede el control.`);
         idempotencyManager.markIgnored(msgKey, pipelineResult.log.reason || 'SILENCE');
-        await stopKommoSalesbot(currentLeadId);
-        try {
-          await updateKommoLead(currentLeadId, ' ');
-        } catch (e) {}
+
+        // 🛑 PROTECCIÓN CONTRA RÁFAGAS (BURST PROTECTION - Alondra Case):
+        // Si ya hay un despacho activo reciente en este lead (dentro de 45s), un mensaje posterior
+        // que evalúe a silencio (ej: saludo repetido, mensaje en ráfaga) NO debe cancelar
+        // el Salesbot en vuelo ni borrar arbitrariamente el campo Respuesta_IA.
+        const isRecentDispatchActive = hasRecentActiveDispatch(currentLeadId, 45000);
+        if (!isRecentDispatchActive) {
+          await stopKommoSalesbot(currentLeadId);
+          try {
+            await updateKommoLead(currentLeadId, ' ');
+          } catch (e) {}
+        } else {
+          console.log(`[Burst Protection] Despacho activo en curso para Lead #${currentLeadId}. Conservando ejecución de Salesbot y Respuesta_IA.`);
+        }
 
         // Si fue una solicitud de atención humana o nota de voz, alertar a Robert para que atienda al cliente
         if (pipelineResult.log.typeDetected === 'HUMAN_ATTENTION_REQUEST' || isVoiceNoteOrAudio(body, messageObj, userText)) {
@@ -4770,8 +4787,9 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         isControlledDispatch
       });
 
-      // Persistencia permanente en Kommo CRM para tolerancia a reinicios de Render
+      // Persistencia permanente en Kommo CRM y contexto local para tolerancia a reinicios de Render
       if (pipelineResult.targetProperty && pipelineResult.targetProperty.ID_PROPIEDAD) {
+        centralContextManager.saveContext(currentTalkId, currentLeadId, pipelineResult.targetProperty);
         tagLeadWithProperty(currentLeadId, pipelineResult.targetProperty.ID_PROPIEDAD).catch(() => {});
       }
 

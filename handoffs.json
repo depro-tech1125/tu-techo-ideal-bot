@@ -68,9 +68,10 @@
       "activeAutomationPropertyId": "REF-003"
     },
     "lead_human_1": {
-      "lastHumanIntervention": 1793852181824,
+      "lastHumanIntervention": 1793927821565,
       "attentionRequested": false,
-      "activeAutomationPropertyId": null
+      "activeAutomationPropertyId": null,
+      "talkId": "talk_human_1"
     }
   },
   "talks": {
@@ -149,9 +150,10 @@
       "activeAutomationPropertyId": "REF-003"
     },
     "talk_human_1": {
-      "lastHumanIntervention": 1793852181824,
+      "lastHumanIntervention": 1793927821565,
       "attentionRequested": false,
-      "activeAutomationPropertyId": null
+      "activeAutomationPropertyId": null,
+      "leadId": "lead_human_1"
     }
   },
   "contacts": {
@@ -171,9 +173,11 @@
       "activeAutomationPropertyId": "REF-035"
     },
     "contact_human_1": {
-      "lastHumanIntervention": 1793852181824,
+      "lastHumanIntervention": 1793927821565,
       "attentionRequested": false,
-      "activeAutomationPropertyId": null
+      "activeAutomationPropertyId": null,
+      "talkId": "talk_human_1",
+      "leadId": "lead_human_1"
     }
   }
 }

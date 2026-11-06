@@ -12,11 +12,12 @@ const suites = [
   { name: 'Resolucion Inteligente Multiportal V5.0 (20 Escenarios)', script: 'scripts/test_resolucion_inteligente_multiportal.js' },
   { name: 'Control de Respuestas Comerciales y Transferencia (14 Escenarios)', script: 'scripts/test_control_respuestas_y_transferencia_humana.js' },
   { name: 'Validacion Real de Publicaciones Externas al 90% (15 Escenarios)', script: 'scripts/test_validacion_publicaciones_externas_90.js' },
-  { name: 'Automatización de Facebook Messenger (18 Escenarios)', script: 'scripts/test_facebook_messenger_automation.js' }
+  { name: 'Automatización de Facebook Messenger (18 Escenarios)', script: 'scripts/test_facebook_messenger_automation.js' },
+  { name: 'Estabilización Maestra V5.0 — 4 Casos Reales y Fichas (8 Escenarios)', script: 'scripts/test_v5_master_stabilization.js' }
 ];
 
 console.log('==============================================================================');
-console.log('          EJECUCIÓN DE LAS 12 SUITES DE PRUEBA (220 ESCENARIOS)              ');
+console.log('          EJECUCIÓN DE LAS 13 SUITES DE PRUEBA (228 ESCENARIOS)              ');
 console.log('==============================================================================\n');
 
 let failedSuites = 0;
@@ -37,10 +38,9 @@ for (let i = 0; i < suites.length; i++) {
 }
 
 console.log('\n==============================================================================');
-console.log(`RESUMEN GENERAL: ${passedSuites} / ${suites.length} SUITES APROBADAS (100% DE 220 PRUEBAS)`);
+console.log(`RESUMEN GENERAL: ${passedSuites} / ${suites.length} SUITES APROBADAS (100% DE 228 PRUEBAS)`);
 console.log('==============================================================================\n');
 
 if (failedSuites > 0) {
   process.exit(1);
 }
-

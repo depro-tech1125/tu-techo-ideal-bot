@@ -616,6 +616,44 @@ function extractDeterministicPropertyFeature(userQuery, property) {
     }
   }
 
+  // 5.C MALETERO
+  if (/(?:tiene|cuenta\s*con|hay|incluye)?\s*maletero/i.test(q)) {
+    const malMatch = desc.match(/maletero(?:\s*privado)?(?:\s*de\s*[\d.,]+\s*m²)?/i) || desc.match(/Maletero:\s*([^.\n\r]+)/i);
+    if (malMatch) {
+      const text = malMatch[1] || malMatch[0];
+      if (!/no\s*especificado/i.test(text)) {
+        const evidence = malMatch[0].trim();
+        const answer = `Cuenta con ${evidence}`;
+        return { matched: true, hasData: true, answer, evidence };
+      }
+    }
+    return { matched: true, hasData: false, reason: 'Dato de maletero no especificado en Google Sheets.' };
+  }
+
+  // 5.D ESTACIONAMIENTO / PUESTOS DE ESTACIONAMIENTO
+  if (/(?:tiene|cuenta\s*con|hay|incluye)?\s*(?:estacionamiento|puestos?\s*de\s*estacionamiento|garaje|cochera)/i.test(q)) {
+    // Si la descripción aclara explícitamente que NO posee estacionamiento propio
+    const noEstMatch = desc.match(/no\s*(?:posee|cuenta\s*con|tiene)\s*(?:puestos?\s*(?:de\s*)?)?estacionamiento[^.\n\r]*/i) ||
+      desc.match(/no\s*(?:posee|cuenta\s*con|tiene)\s*puesto\s*de\s*estacionamiento\s*propio/i);
+    if (noEstMatch) {
+      const evidence = noEstMatch[0].trim();
+      return { matched: true, hasData: true, answer: evidence, evidence };
+    }
+
+    const estMatch = desc.match(/(?:(\d+|un|uno|dos|tres|cuatro|cinco|seis)\s*puestos?\s*(?:de\s*estacionamiento)?(?:\s*(?:techados?|en\s*s[oó]tano|independientes?))*)|(?:Estacionamiento:\s*([^.\n\r]+))/i);
+    if (estMatch) {
+      const text = estMatch[2] || estMatch[0];
+      if (!/no\s*especificado|no\s*posee\s*propio/i.test(text)) {
+        const evidence = estMatch[0].trim();
+        const answer = `Cuenta con ${evidence}`;
+        return { matched: true, hasData: true, answer, evidence };
+      } else if (/no\s*posee\s*propio/i.test(text)) {
+        return { matched: true, hasData: true, answer: 'No posee puesto propio (estacionamiento privado de alquiler cercano)', evidence: text.trim() };
+      }
+    }
+    return { matched: true, hasData: false, reason: 'Dato de estacionamiento no especificado en Google Sheets.' };
+  }
+
   // 6. AMENIDADES NO INCLUIDAS / CARACTERÍSTICAS ESPECÍFICAS
   if (/(?:tiene|cuenta\s*con|hay|incluye)\s*(?:piscina|cancha|tenis|marmol|jacuzzi|sauna)/i.test(q)) {
     const amenities = ['piscina', 'cancha', 'tenis', 'marmol', 'jacuzzi', 'sauna'];
@@ -689,17 +727,21 @@ class HandoffManager {
    * Inicia el bloqueo estricto de 24 horas y desactiva la automatización previa.
    */
   recordHumanIntervention(leadId = null, talkId = null, contactId = null, timestamp = Date.now()) {
-    const update = (entityMap, id) => {
+    const update = (entityMap, id, extra = {}) => {
       if (!id) return;
       entityMap[String(id)] = {
         lastHumanIntervention: timestamp,
         attentionRequested: false,
-        activeAutomationPropertyId: null // Se suspende automatización previa
+        activeAutomationPropertyId: null, // Se suspende automatización previa
+        ...extra
       };
     };
-    update(this.handoffs.leads, leadId);
-    update(this.handoffs.talks, talkId);
-    update(this.handoffs.contacts, contactId);
+    update(this.handoffs.leads, leadId, { talkId: talkId ? String(talkId) : null });
+    update(this.handoffs.talks, talkId, { leadId: leadId ? String(leadId) : null });
+    update(this.handoffs.contacts, contactId, {
+      talkId: talkId ? String(talkId) : null,
+      leadId: leadId ? String(leadId) : null
+    });
     this.save();
   }
 
@@ -725,12 +767,24 @@ class HandoffManager {
    * Comprueba el estado de bloqueo de 12 horas.
    */
   async checkLockStatus(leadId = null, talkId = null, contactId = null, now = Date.now()) {
-    // Prioridad 1: talkId específico
+    // Prioridad 1: talkId específico de la conversación actual
     const talkEntry = talkId && this.handoffs.talks ? this.handoffs.talks[String(talkId)] : null;
     const leadEntry = leadId && this.handoffs.leads ? this.handoffs.leads[String(leadId)] : null;
     const contactEntry = contactId && this.handoffs.contacts ? this.handoffs.contacts[String(contactId)] : null;
 
-    const entry = talkEntry || leadEntry || contactEntry;
+    // Aislamiento multicanal de bloqueos:
+    // Si se pasa talkId o leadId específico, la prioridad estricta es esa conversación puntual.
+    // El bloqueo a nivel de contactId solo aplica si pertenece a la misma conversación o si no hay talkId especificado.
+    let entry = talkEntry || leadEntry;
+    if (!entry && contactEntry) {
+      if (!talkId && !leadId) {
+        entry = contactEntry;
+      } else if (contactEntry.talkId && talkId && String(contactEntry.talkId) === String(talkId)) {
+        entry = contactEntry;
+      } else if (!contactEntry.talkId && !talkId) {
+        entry = contactEntry;
+      }
+    }
     const humanTime = entry ? (entry.lastHumanIntervention || entry.timestamp) : null;
 
     if (humanTime) {
@@ -852,9 +906,54 @@ class DeduplicationManager {
 // 9. AISLAMIENTO ESTRICTO DE CONTEXTO POR CONVERSACIÓN (TALK ID Y LEAD ID)
 // ============================================================================
 class ConversationContextManager {
-  constructor() {
+  constructor(filePath = null) {
+    this.filePath = filePath;
     this.talkContexts = new Map(); // talkId -> property
     this.leadContexts = new Map(); // leadId -> property
+    this.loadFromDisk();
+  }
+
+  loadFromDisk() {
+    try {
+      if (this.filePath && fs.existsSync(this.filePath)) {
+        const raw = fs.readFileSync(this.filePath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && typeof data === 'object') {
+          if (data.talks && typeof data.talks === 'object') {
+            for (const [k, v] of Object.entries(data.talks)) {
+              if (k && v) this.talkContexts.set(String(k), v);
+            }
+          }
+          if (data.leads && typeof data.leads === 'object') {
+            for (const [k, v] of Object.entries(data.leads)) {
+              if (k && v) this.leadContexts.set(String(k), v);
+            }
+          }
+          if (Array.isArray(data)) {
+            for (const item of data) {
+              if (item.leadId && item.property) this.leadContexts.set(String(item.leadId), item.property);
+              if (item.talkId && item.property) this.talkContexts.set(String(item.talkId), item.property);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // safe fallback
+    }
+  }
+
+  saveToDisk() {
+    try {
+      if (!this.filePath) return;
+      const data = {
+        talks: Object.fromEntries(this.talkContexts.entries()),
+        leads: Object.fromEntries(this.leadContexts.entries()),
+        updatedAt: Date.now()
+      };
+      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf8');
+    } catch (e) {
+      // safe fallback
+    }
   }
 
   saveContext(talkId, leadIdOrProperty, property) {
@@ -862,9 +961,18 @@ class ConversationContextManager {
     const leadId = typeof leadIdOrProperty === 'string' || typeof leadIdOrProperty === 'number' ? leadIdOrProperty : null;
     if (talkId && prop) this.talkContexts.set(String(talkId), prop);
     if (leadId && prop) this.leadContexts.set(String(leadId), prop);
+    if (prop) this.saveToDisk();
   }
 
   getContext(talkId, leadId) {
+    if (talkId && this.talkContexts.has(String(talkId))) {
+      return this.talkContexts.get(String(talkId));
+    }
+    if (leadId && this.leadContexts.has(String(leadId))) {
+      return this.leadContexts.get(String(leadId));
+    }
+    // Si la memoria RAM se reinició tras un reinicio de Render, recargar desde disco:
+    this.loadFromDisk();
     if (talkId && this.talkContexts.has(String(talkId))) {
       return this.talkContexts.get(String(talkId));
     }
@@ -1076,6 +1184,48 @@ REGLAS ESTRICTAS:
 /**
  * Detección de solicitud de fotos, información ampliada o detalles completos (FASE 4)
  */
+/**
+ * Detección de solicitud explícita de enlace público ("link sin contacto")
+ */
+function isPublicLinkRequest(text) {
+  if (!text) return false;
+  const norm = normalizeText(text);
+  return /(?:link\s*sin\s*contacto|enlace\s*sin\s*contacto|link\s*p[uú]blico|enlace\s*p[uú]blico|env[ií]ame\s*(?:el\s*)?(?:link|enlace)|p[aá]same\s*(?:el\s*)?(?:link|enlace)|m[aá]ndame\s*(?:el\s*)?(?:link|enlace|publicaci[oó]n)|quiero\s*(?:el\s*)?(?:link|enlace)|me\s*puedes\s*pasar\s*(?:el\s*)?(?:link|enlace)|(?:el\s*)?link\s*(?:porfa|por\s*favor)?$|(?:el\s*)?enlace\s*(?:porfa|por\s*favor)?$)/i.test(norm);
+}
+
+/**
+ * Detección de solicitud de ficha comercial o información completa
+ */
+function isFullCommercialFichaRequest(text) {
+  if (!text) return false;
+  const norm = normalizeText(text);
+  if (/(?:fotos?|fotograf[ií]as?|im[aá]genes?|galer[ií]a)/i.test(norm)) {
+    return false;
+  }
+  return /(?:ficha\s*(?:comercial|completa|t[eé]cnica)|env[ií]ame\s*la\s*ficha|p[aá]same\s*(?:la\s*)?ficha|m[aá]ndame\s*(?:la\s*)?ficha|quiero\s*(?:toda\s*la\s*info(?:rmaci[oó]n)?|la\s*ficha)|p[aá]same\s*los\s*detalles|dame\s*las\s*caracter[ií]sticas|qu[eé]\s*incluye|informaci[oó]n\s*completa|toda\s*la\s*informaci[oó]n|detalles\s*completos|caracter[ií]sticas\s*completas)/i.test(norm);
+}
+
+/**
+ * Detección de solicitud de fotos / galería
+ */
+function isPhotoRequest(text) {
+  if (!text) return false;
+  const norm = normalizeText(text);
+  return /(?:fotos?|fotograf[ií]as?|im[aá]genes?|galer[ií]a)/i.test(norm);
+}
+
+/**
+ * Detección de consulta de disponibilidad cuando ya hay propiedad en contexto
+ */
+function isAvailabilityQueryInContext(text) {
+  if (!text) return false;
+  const norm = normalizeText(text);
+  if (/(?:cuanto|cu[aá]nto|precio|costo|canon|metro|m2|mts|habitac|bano|baño|mascota|condominio|credito|foto|ficha|link)/i.test(norm)) {
+    return false;
+  }
+  return /(?:est[aá]\s*disponible|todav[ií]a\s*est[aá]\s*disponible|a[uú]n\s*(?:lo\s*)?tienen|sigue\s*en\s*venta|sigue\s*disponible|se\s*puede\s*alquilar|sigue\s*a\s*la\s*venta|a[uú]n\s*disponible|disponible\?)/i.test(norm);
+}
+
 function isExtendedInfoOrPhotoRequest(text) {
   if (!text) return false;
   const norm = normalizeText(text);
@@ -1094,7 +1244,124 @@ function isExtendedInfoOrPhotoRequest(text) {
   // Patrones de solicitud de más información / detalles completos / ficha ampliada
   const extendedInfoPattern = /(?:m[aá]s\s*info(?:rmaci[oó]n)?|informaci[oó]n\s*(?:ampliada|adicional|completa)|ver\s*m[aá]s\s*detalles?|detalles?\s*completos?|caracter[ií]sticas?\s*completas?|ficha\s*(?:completa|t[eé]cnica)|enlace\s*(?:de\s*(?:la\s*)?|del\s*)?(?:propiedad|inmueble)|link\s*(?:de\s*(?:la\s*)?|del\s*)?(?:propiedad|inmueble)|ubicaci[oó]n\s*y\s*descripci[oó]n\s*ampliada)/i;
 
-  return photoPattern.test(norm) || extendedInfoPattern.test(norm);
+  return isPhotoRequest(text) || isFullCommercialFichaRequest(text) || isPublicLinkRequest(text) || photoPattern.test(norm) || extendedInfoPattern.test(norm);
+}
+
+/**
+ * Obtiene el enlace público verificado oficial registrado en Google Sheets
+ */
+function getVerifiedPublicPropertyLink(prop) {
+  if (!prop) return null;
+  const rexup = (prop.LINK_FOTOS || prop.LINK_FOTOS_URL || '').trim();
+  if (rexup.startsWith('http') && rexup.includes('rexup.net') && (rexup.includes('cod_inmueble=') || rexup.includes('ver_inmueble_c.php')) && !/^https?:\/\/(?:www\.)?rexup\.net\/?$/i.test(rexup)) {
+    return rexup;
+  }
+  const web = (prop['Pagina Web'] || prop['Pagina Web_URL'] || '').trim();
+  if (web.startsWith('http') && !web.includes('wasi.co') && web !== '-') {
+    return web;
+  }
+  const wasi = (prop.Wasi || prop.Wasi_URL || '').trim();
+  if (wasi.startsWith('http') && wasi !== '-') {
+    return wasi;
+  }
+  return null;
+}
+
+/**
+ * Generador automático de ficha comercial estructurada (Fase 8)
+ */
+function buildCommercialFichaResponse(prop) {
+  if (!prop) return '';
+  const desc = prop.DESCRIPCION_BREVE || '';
+  const tipo = (prop.TIPO || 'Inmueble').trim();
+  const operacion = (prop.OPERACION || 'Venta').trim();
+  const isAlquiler = /alquiler|renta/i.test(operacion);
+  const zona = extractPropertyZone(prop);
+  const metraje = extractPropertyMetraje(prop);
+
+  // Precio estricto con unidades verificadas
+  let precio = null;
+  if (/3\.?500\s*(?:\/m²|\/m2|por\s*metro)/i.test(desc)) {
+    precio = 'USD 3.500/m²';
+  } else if (isAlquiler) {
+    const mCanon = desc.match(/Canon\s*(?:de\s*(?:alquiler|arrendamiento))?[\s\S]{0,30}?\$([\d.,]+)/i);
+    if (mCanon) {
+      precio = 'USD ' + mCanon[1] + ' mensuales';
+    } else {
+      precio = extractPropertyPrice(prop);
+    }
+  } else {
+    precio = extractPropertyPrice(prop);
+  }
+
+  const cleanExtracted = (raw) => {
+    if (!raw) return null;
+    let clean = raw.replace(/\u200B/g, ' ').trim().replace(/[.,;:\-_]+$/, '').trim();
+    if (/no\s*especificado|^\s*-\s*$|^maletero$|^estacionamiento$|^baños?$|^habitaciones?$/i.test(clean)) return null;
+    return clean;
+  };
+
+  // Habitaciones
+  let habitaciones = null;
+  const mHabEst = desc.match(/(tres\s*habitaciones[^\n\r.]+estudio\s*convertible)/i);
+  if (mHabEst) {
+    habitaciones = '3 habitaciones + estudio convertible';
+  } else {
+    const mAmb = desc.match(/(\d+\s*ambientes?(?:\s*\([^)]+\))?)/i);
+    if (mAmb) {
+      habitaciones = cleanExtracted(mAmb[1]);
+    } else {
+      const mHab1 = desc.match(/Habitaciones:\s*([^.\n\r]+)/i);
+      if (mHab1) habitaciones = cleanExtracted(mHab1[1]);
+      if (!habitaciones) {
+        const mHab2 = desc.match(/(\d+|un|una|dos|tres|cuatro|cinco)\s*habitaci[oó]n(?:es)?/i);
+        if (mHab2) habitaciones = mHab2[0].trim();
+      }
+    }
+  }
+
+  // Baños
+  let banos = null;
+  const mBan1 = desc.match(/(\d+(?:\.5)?\s*baños?\s*completos?(?:(?:\s*,|\s*y)\s*(?:un\s*)?medio\s*baño(?:\s*para\s*visitas)?)?)|(\d+(?:\.5)?\s*baños?)/i);
+  if (mBan1) banos = cleanExtracted(mBan1[0]);
+  if (!banos) {
+    const mBan2 = desc.match(/Baños:\s*([^.\n\r]+?)(?:\s*(?:Puestos|Servicios|Piso|\u200B)|$)/i);
+    if (mBan2) banos = cleanExtracted(mBan2[1]);
+  }
+
+  // Estacionamiento
+  let puestos = null;
+  const mEst1 = desc.match(/(?:Estacionamiento|Puestos?\s*de\s*estacionamiento):\s*([^.\n\r]+?)(?:\s*(?:Maletero|Piso|Servicios|Amenities|\u200B)|$)/i);
+  if (mEst1) puestos = cleanExtracted(mEst1[1]);
+  if (!puestos) {
+    const mEst2 = desc.match(/(\d+|un|uno|dos|tres|cuatro|cinco)\s*puestos?\s*(?:de\s*estacionamiento)?(?:\s*(?:techados?|en\s*s[oó]tano|independientes?))*/i);
+    if (mEst2) puestos = mEst2[0].trim();
+  }
+
+  // Maletero
+  let maletero = null;
+  const mMal1 = desc.match(/Maletero:\s*([^.\n\r]+?)(?:\s*(?:Nivel|Piso|Servicios|Amenities|\u200B)|$)/i);
+  if (mMal1) maletero = cleanExtracted(mMal1[1]);
+  if (!maletero) {
+    const mMal2 = desc.match(/(?:maletero\s*(?:privado)?(?:\s*de\s*[\d.,]+\s*m²)?)/i);
+    if (mMal2) maletero = cleanExtracted(mMal2[0]);
+  }
+
+  const publicLink = getVerifiedPublicPropertyLink(prop);
+
+  const lines = [];
+  lines.push('🏢 *' + tipo + ' en ' + operacion + ' — ' + zona + '*\n');
+  lines.push('📍 *Ubicación:* ' + zona);
+  lines.push('💼 *Operación:* ' + operacion);
+  if (metraje) lines.push('📐 *Metraje:* ' + metraje);
+  if (habitaciones) lines.push('🛏️ *Habitaciones / Ambientes:* ' + habitaciones);
+  if (banos) lines.push('🚿 *Baños:* ' + banos);
+  if (puestos) lines.push('🚗 *Estacionamiento:* ' + puestos);
+  if (maletero) lines.push('📦 *Maletero:* ' + maletero);
+  if (precio) lines.push('💰 *' + (isAlquiler ? 'Canon' : 'Precio') + ':* ' + precio);
+  if (publicLink) lines.push('\n🔗 *Enlace público:* ' + publicLink);
+
+  return lines.join('\n');
 }
 
 
@@ -1379,10 +1646,13 @@ async function evaluateCentralDecisionPipeline(context) {
 
   if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= HANDOFF_LOCK_HOURS && !handoff.activeAutomationPropertyId && !knownConversationProperty) {
     if (!hasVerifiedExternalTarget && wasiExtraction.count === 0) {
-      logEntry.typeDetected = 'POST_12H_REQUIRES_WASI_LINK';
-      logEntry.reason = `Transcurridas ${HANDOFF_LOCK_HOURS}h tras intervención humana, pero el cliente no envió enlace Wasi nuevo. Silencio seguro.`;
-      logEntry.action = 'SILENCE';
-      return { shouldRespond: false, text: null, log: logEntry };
+      const zoneSearchAfter12h = searchZoneOrFeatureMatches(textClean, properties);
+      if (!zoneSearchAfter12h.hasAvailableMatches) {
+        logEntry.typeDetected = 'POST_12H_REQUIRES_WASI_LINK';
+        logEntry.reason = `Transcurridas ${HANDOFF_LOCK_HOURS}h tras intervención humana, y el cliente no envió enlace ni búsqueda de zona disponible. Silencio seguro.`;
+        logEntry.action = 'SILENCE';
+        return { shouldRespond: false, text: null, log: logEntry };
+      }
     }
   }
 
@@ -1554,7 +1824,8 @@ async function evaluateCentralDecisionPipeline(context) {
     }
 
     // B. INFORMACIÓN AMPLIADA Y FOTOGRAFÍAS (FASE 4 - LINK_FOTOS)
-    if (isExtendedInfoOrPhotoRequest(textClean)) {
+    // Si el usuario solicita fotos o pide fotos + detalles
+    if (isPhotoRequest(textClean) || (isExtendedInfoOrPhotoRequest(textClean) && !isPublicLinkRequest(textClean) && !isFullCommercialFichaRequest(textClean))) {
       const fotoLink = (targetProperty.LINK_FOTOS || targetProperty.LINK_FOTOS_URL || '').trim();
       const isValidRexup = fotoLink.startsWith('http') &&
         fotoLink.includes('rexup.net') &&
@@ -1577,6 +1848,34 @@ async function evaluateCentralDecisionPipeline(context) {
         logEntry.calledAI = false;
         return { shouldRespond: false, text: null, log: logEntry };
       }
+    }
+
+    // 🛑 ENLACE PÚBLICO / LINK SIN CONTACTO (Projects Group Case)
+    if (isPublicLinkRequest(textClean)) {
+      const publicLink = getVerifiedPublicPropertyLink(targetProperty);
+      if (publicLink) {
+        const responseText = `¡Claro! Aquí tienes el enlace público de la propiedad:\n\n${publicLink}`;
+        logEntry.typeDetected = 'PROPERTY_PUBLIC_LINK';
+        logEntry.reason = `Enlace público ("link sin contacto") recuperado de Google Sheets para ${targetProperty.ID_PROPIEDAD}: ${publicLink}`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = responseText;
+        return { shouldRespond: true, text: responseText, log: logEntry, targetProperty };
+      } else {
+        logEntry.typeDetected = 'PROPERTY_PUBLIC_LINK_SIN_DATO';
+        logEntry.reason = `No existe enlace público documentado en Google Sheets para ${targetProperty.ID_PROPIEDAD}. Silencio seguro.`;
+        logEntry.action = 'SILENCE';
+        return { shouldRespond: false, text: null, log: logEntry };
+      }
+    }
+
+    // 🛑 GENERACIÓN AUTOMÁTICA DE FICHA COMERCIAL ESTRUCTURADA (Fase 8 - Projects Group / General)
+    if (isFullCommercialFichaRequest(textClean)) {
+      const fichaText = buildCommercialFichaResponse(targetProperty);
+      logEntry.typeDetected = 'PROPERTY_COMMERCIAL_FICHA';
+      logEntry.reason = `Ficha comercial estructurada generada para ${targetProperty.ID_PROPIEDAD} desde Google Sheets.`;
+      logEntry.action = 'RESPOND';
+      logEntry.text = fichaText;
+      return { shouldRespond: true, text: fichaText, log: logEntry, targetProperty };
     }
 
     // B. EXTRACCIÓN DETERMINISTA DIRECTA DESDE GOOGLE SHEETS (Metraje, Precio, Habitaciones, Baños, Condominio)
@@ -1736,5 +2035,11 @@ module.exports = {
   ConversationContextManager,
   verifyPreDispatchSafety,
   evaluatePropertyQuestionWithClaude,
-  evaluateCentralDecisionPipeline
+  evaluateCentralDecisionPipeline,
+  buildCommercialFichaResponse,
+  getVerifiedPublicPropertyLink,
+  isPublicLinkRequest,
+  isFullCommercialFichaRequest,
+  isPhotoRequest,
+  isAvailabilityQueryInContext
 };
