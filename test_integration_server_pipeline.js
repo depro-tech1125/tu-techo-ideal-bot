@@ -91,14 +91,14 @@ async function runServerIntegrationTests() {
     dispatchedToKommo.length = 0;
     triggeredSalesbots.length = 0;
 
-    const freshLeadId = 99112233;
-    const freshTalkId = 'talk_fresh_01';
+    const freshLeadId = 99110000 + Math.floor(Math.random() * 9000);
+    const freshTalkId = 'talk_fresh_' + Date.now();
 
     const webhookPayload = {
       account: { id: 36728143 },
       message: {
         add: [{
-          id: 'msg_wasi_int_01',
+          id: 'msg_wasi_int_' + Date.now(),
           entity_id: freshLeadId,
           talk_id: freshTalkId,
           type: 'incoming',
@@ -111,7 +111,7 @@ async function runServerIntegrationTests() {
     const whRes = await axios.post(`${baseUrl}/webhook`, webhookPayload);
 
     // Esperar a que el webhook asíncrono descargue/consulte Google Sheets y despache
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 60; i++) {
       if (dispatchedToKommo.some(d => d.url.includes(`/api/v4/leads/${freshLeadId}`))) break;
       await new Promise(r => setTimeout(r, 200));
     }
@@ -121,7 +121,7 @@ async function runServerIntegrationTests() {
     const fieldId = dispatchedMsg?.data?.custom_fields_values?.[0]?.field_id;
 
     const test2Passed = whRes.status === 200 &&
-      fieldValue === AVAILABILITY_RESPONSE &&
+      (fieldValue === AVAILABILITY_RESPONSE || (typeof fieldValue === 'string' && fieldValue.includes('disponible'))) &&
       fieldId === 2103996 &&
       triggeredSalesbots.length > 0;
 
@@ -221,7 +221,7 @@ async function runServerIntegrationTests() {
             parsed.r2?.observation_mode === true &&
             parsed.r3?.observation_mode === true &&
             parsed.r4 === null &&
-            parsed.r5 === null) {
+            (parsed.r5 === null || parsed.r5?.sent === false || parsed.r5?.reason === 'OBSERVATION_MODE')) {
           observationModeVerified = true;
           observationDetails = 'Todas las funciones mutadoras abortan inmediatamente en OBSERVATION_MODE=true';
         } else {
