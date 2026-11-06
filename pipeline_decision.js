@@ -148,6 +148,7 @@ function adaptProperty(raw) {
     ID_PROPIEDAD: id,
     TIPO: tipo,
     OPERACION: operacion,
+    PRECIO: (raw.PRECIO || raw.Canon || '').toString().trim(),
     DESCRIPCION_BREVE: desc,
     ESTATUS: estatus,
     LINK_FOTOS: fotos,
@@ -364,21 +365,29 @@ function extractRequestedZone(queryText, properties = []) {
   }
 
   // 2. Extracción sintáctica determinista para zonas desconocidas o sectores específicos
-  const locationPatterns = [
-    /(?:en|por|sector|zona|urbanizaci[oó]n|urb\.?|municipio)\s+([a-z0-9\s]{3,35}?)(?:\?|\.|\,|!|$|\b(?:con|de|que|precio|desde|hasta|para|atento|gracias|favor|por\s+favor|saludos)\b)/i
-  ];
+  const locRegex = /\b(?:en|por|sector|zona|urbanizaci[oó]n|urb\.?|municipio)\s+([^,?.!¿¡]+)/gi;
+  let match;
+  while ((match = locRegex.exec(q)) !== null) {
+    let candidate = match[1].trim();
 
-  for (const pattern of locationPatterns) {
-    const match = q.match(pattern);
-    if (match && match[1]) {
-      let candidate = match[1].trim();
-      const stopWords = ['venta', 'alquiler', 'renta', 'apartamento', 'apto', 'casa', 'oficina', 'inmueble', 'propiedad', 'este momento', 'general', 'linea', 'red', 'la red'];
-      if (!stopWords.includes(candidate) && !candidate.startsWith('venta') && !candidate.startsWith('alquiler')) {
-        candidate = candidate.replace(/^(?:el|la|los|las)\s+/i, '').trim();
-        if (candidate.length >= 3) {
-          return candidate;
-        }
-      }
+    // Limpiar prefijos de tipo u operación si vinieron pegados (ej. "en venta en Valencia", "en apartamento en Lechería")
+    candidate = candidate.replace(/^(?:venta|alquiler|renta|compra)\s+(?:en|por)\s+/i, '');
+    candidate = candidate.replace(/^(?:apartamento[s]?|apto[s]?|casa[s]?|oficina[s]?|inmueble[s]?|propiedad(?:es)?|local(?:es)?|galp[oó]n(?:es)?|terreno[s]?)\s+(?:en|por)\s+/i, '');
+    candidate = candidate.replace(/^(?:venta|alquiler|renta|compra)\b/i, '').trim();
+    if (candidate.startsWith('en ') || candidate.startsWith('por ')) {
+      candidate = candidate.replace(/^(?:en|por)\s+/, '').trim();
+    }
+
+    // Cortar en palabras de corte
+    candidate = candidate.replace(/\b(?:con|de|que|precio|desde|hasta|para|atento|gracias|favor|por\s+favor|saludos|buenas?|tardes?|dias?)\b.*$/i, '').trim();
+
+    // Remover artículos iniciales
+    candidate = candidate.replace(/^(?:el|la|los|las)\s+/i, '').trim();
+
+    // Lista de palabras no-zona (stop words)
+    const stopWords = ['venta', 'alquiler', 'renta', 'apartamento', 'apartamentos', 'apto', 'aptos', 'casa', 'casas', 'oficina', 'oficinas', 'inmueble', 'inmuebles', 'propiedad', 'propiedades', 'este momento', 'general', 'linea', 'red', 'la red', 'disponible', 'disponibles', 'oferta', 'ofertas', 'estreno'];
+    if (!stopWords.includes(candidate) && candidate.length >= 3 && candidate.length <= 40) {
+      return candidate;
     }
   }
 
@@ -692,7 +701,7 @@ function extractDeterministicPropertyFeature(userQuery, property) {
   }
 
   // 3. PRECIO / INVERSIÓN / COSTO
-  if (/(?:cual\s*es\s*(?:el|su)?\s*(?:precio|costo|valor|inversion|canon)|cuanto\s*(?:cuesta|vale|pide)|que\s*precio)/i.test(q)) {
+  if (/(?:cu[aá]l\s*(?:es|era|ser[ií]a)?\s*(?:el|su)?\s*(?:precio|costo|valor|inversi[oó]n|canon)|cu[aá]nto\s*(?:cuesta|costaba|vale|pide)|qu[eé]\s*precio)/i.test(q)) {
     const isVentaQuery = /venta/i.test(q);
     const isAlquilerQuery = /alquiler|arrendamiento|canon/i.test(q);
 
@@ -1249,12 +1258,12 @@ function resolvePropertyFromHistoryOrContext({
   const q = normalizeText(userText);
 
   // 1. Detección de expresiones ordinales e históricas
-  const isPassedBefore = /(?:la\s*(?:propiedad\s*)?que\s*te\s*pas[eé]\s*antes|el\s*(?:inmueble\s*)?que\s*te\s*pas[eé]\s*antes|la\s*que\s*te\s*pas[eé]\s*antes|el\s*que\s*te\s*pas[eé]\s*antes)\b/i.test(q);
-  const isPrevious = /(?:el\s*anterior|la\s*anterior|inmueble\s*anterior|propiedad\s*anterior)\b/i.test(q);
-  const isFirst = /(?:primer[oa]|primera\s*opci[oó]n|primer\s*(?:inmueble|apartamento|casa|anexo|local))\b/i.test(q);
-  const isSecond = /(?:segund[oa]|segunda\s*opci[oó]n|segundo\s*(?:inmueble|apartamento|casa|anexo|local))\b/i.test(q);
+  const isPassedBefore = /(?:(?:la\s*propiedad|el\s*inmueble|el\s*apartamento|el\s*apto|la\s*casa|el\s*local|la\s*oficina|la|el)\s*(?:anterior\s*)?que\s*te\s*pas[eé]\s*(?:antes|previamente))\b/i.test(q);
+  const isPrevious = /(?:el\s*anterior|la\s*anterior|(?:inmueble|propiedad|apartamento|apto|casa|anexo|local|oficina)\s*anterior)\b/i.test(q);
+  const isFirst = /(?:primer[oa]|primera\s*opci[oó]n|primer\s*(?:inmueble|apartamento|casa|anexo|local|oficina))\b/i.test(q);
+  const isSecond = /(?:segund[oa]|segunda\s*opci[oó]n|segundo\s*(?:inmueble|apartamento|casa|anexo|local|oficina))\b/i.test(q);
   const isLast = /(?:[uú]ltim[oa]|actual|este\s*[uú]ltimo)\b/i.test(q);
-  const isOther = /(?:el\s*otro|la\s*otra|el\s*otro\s*apartamento|la\s*otra\s*casa|el\s*otro\s*inmueble|la\s*otra\s*propiedad)\b/i.test(q);
+  const isOther = /(?:el\s*otro|la\s*otra|el\s*otro\s*apartamento|la\s*otra\s*casa|el\s*otro\s*inmueble|la\s*otra\s*propiedad|el\s*otro\s*local|la\s*otra\s*oficina)\b/i.test(q);
 
   // Expresiones que exigen historial previo de al menos 2 inmuebles
   if ((isPrevious || isPassedBefore || isOther) && history.length <= 1) {
