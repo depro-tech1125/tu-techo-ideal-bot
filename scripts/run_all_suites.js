@@ -13,11 +13,13 @@ const suites = [
   { name: 'Control de Respuestas Comerciales y Transferencia (14 Escenarios)', script: 'scripts/test_control_respuestas_y_transferencia_humana.js' },
   { name: 'Validacion Real de Publicaciones Externas al 90% (15 Escenarios)', script: 'scripts/test_validacion_publicaciones_externas_90.js' },
   { name: 'Automatización de Facebook Messenger (18 Escenarios)', script: 'scripts/test_facebook_messenger_automation.js' },
-  { name: 'Estabilización Maestra V5.0 — 4 Casos Reales y Fichas (8 Escenarios)', script: 'scripts/test_v5_master_stabilization.js' }
+  { name: 'Estabilización Maestra V5.0 — 4 Casos Reales y Fichas (8 Escenarios)', script: 'scripts/test_v5_master_stabilization.js' },
+  { name: 'Lector Universal de Google Sheets V5.1 (12 Escenarios)', script: 'scripts/test_universal_sheet_reader.js' },
+  { name: 'Integración Pipeline Comercial con Lector Universal (4 Escenarios)', script: 'scripts/test_universal_pipeline_integration.js' }
 ];
 
 console.log('==============================================================================');
-console.log('          EJECUCIÓN DE LAS 13 SUITES DE PRUEBA (228 ESCENARIOS)              ');
+console.log('          EJECUCIÓN DE LAS 15 SUITES DE PRUEBA (244 ESCENARIOS)              ');
 console.log('==============================================================================\n');
 
 let failedSuites = 0;
@@ -38,7 +40,7 @@ for (let i = 0; i < suites.length; i++) {
 }
 
 console.log('\n==============================================================================');
-console.log(`RESUMEN GENERAL: ${passedSuites} / ${suites.length} SUITES APROBADAS (100% DE 228 PRUEBAS)`);
+console.log(`RESUMEN GENERAL: ${passedSuites} / ${suites.length} SUITES APROBADAS (100% DE 244 PRUEBAS)`);
 console.log('==============================================================================\n');
 
 if (failedSuites > 0) {

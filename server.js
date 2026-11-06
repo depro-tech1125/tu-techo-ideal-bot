@@ -30,6 +30,11 @@ const {
 } = require('./pipeline_decision.js');
 
 const { recoverActivePropertyFromKommo, tagLeadWithProperty } = require('./lib/kommo_property_recovery.js');
+const {
+  parseXlsxBufferToUniversalProperties,
+  parseRecordsToUniversalProperties,
+  UniversalSheetCacheManager
+} = require('./lib/universal_sheet_reader.js');
 
 const OBSERVATION_MODE = process.env.OBSERVATION_MODE === 'true';
 
@@ -269,6 +274,7 @@ function isRapidBurst(leadId) {
 // 📊 GOOGLE SHEETS EN TIEMPO REAL & MEMORIA VIRTUAL VOCABULARIO
 // ==========================================
 let cachedProperties = null;
+let cachedSheetSchema = null;
 let lastPropertiesFetchTime = 0;
 const CACHE_TTL_MS = 60 * 1000; // 1 minuto de caché para alta velocidad y frescura
 const PROPERTIES_CACHE_FILE = path.join(__dirname, 'properties_cache.json');
@@ -337,63 +343,9 @@ function indexPropertiesVocabulary(properties) {
   console.log(`[Memoria Virtual] Indexadas ${properties.length} propiedades y ${virtualPropertyVocabulary.size} palabras descriptivas en memoria.`);
 }
 
-function parseXlsxBufferToProperties(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  if (!sheet || !sheet['!ref']) return [];
-  const range = XLSX.utils.decode_range(sheet['!ref']);
-
-  const headers = [];
-  for (let C = range.s.c; C <= range.e.c; ++C) {
-    const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
-    const headerVal = (cell && cell.v !== undefined && cell.v !== null) ? String(cell.v).trim() : '';
-    headers.push(headerVal || `col_${C}`);
-  }
-
-  const records = [];
-  for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-    const row = {};
-    let hasData = false;
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const header = headers[C];
-      if (!header) continue;
-      const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-      const cell = sheet[cellRef];
-      let val = (cell && cell.v !== undefined && cell.v !== null) ? String(cell.v).trim() : '';
-
-      // Extraer hipervínculo nativo si existe en la celda
-      if (cell && cell.l && cell.l.Target) {
-        row[header + '_URL'] = cell.l.Target;
-        if (!val || val.startsWith('🏢') || val.startsWith('📷') || val.startsWith('🔗') || val.startsWith('🌐')) {
-          val = cell.l.Target;
-        }
-      }
-      row[header] = val;
-      if (val) hasData = true;
-    }
-
-    const propId = (row['ID_PROPIEDAD'] || row['id_propiedad'] || row['ID'] || '').trim();
-    if (hasData && propId) {
-      row['ID_PROPIEDAD'] = propId;
-      // Extraer código WASI (número de 6 a 9 dígitos de URL o texto plano)
-      const wasiUrl = (row['Wasi_URL'] || row['Wasi'] || row['WASI'] || row['Link Wasi'] || '').trim();
-      const wasiMatch = wasiUrl.match(/\/(\d{6,9})(?:[^\d]|$)/) || wasiUrl.match(/^\s*(\d{6,9})\s*$/);
-      row['CODIGO_WASI'] = wasiMatch ? wasiMatch[1] : '';
-
-      // Limpieza de teléfono de asesor
-      let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || row['Telefono'] || '').replace(/[^0-9]/g, '');
-      if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
-        agentPhone = '58' + agentPhone;
-      } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
-        agentPhone = '58' + agentPhone.substring(1);
-      }
-      row['TELEFONO_ASESOR_CLEAN'] = agentPhone;
-
-      records.push(row);
-    }
-  }
-  return records;
+function parseXlsxBufferToProperties(buffer, options = {}) {
+  const result = parseXlsxBufferToUniversalProperties(buffer, options);
+  return result.properties;
 }
 
 // ==========================================
@@ -481,9 +433,14 @@ async function getAvailableProperties(forceRefresh = false) {
     }
 
     const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer', timeout: 10000 });
-    const records = parseXlsxBufferToProperties(response.data);
+    const parseResult = parseXlsxBufferToUniversalProperties(response.data, {
+      previousSchema: cachedSheetSchema,
+      logChanges: true
+    });
+    const records = parseResult.properties;
+    cachedSheetSchema = parseResult.schema;
 
-    console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con hipervínculos y códigos Wasi reales.`);
+    console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con enlaces universales.`);
     try {
       const cleanProps = records.map(p => {
         const copy = { ...p };
@@ -519,31 +476,17 @@ async function getAvailableProperties(forceRefresh = false) {
     try {
       const csvUrl = process.env.GOOGLE_SHEET_CSV_URL;
       const response = await axios.get(csvUrl, { timeout: 7000 });
-      const records = parse(response.data, {
+      const rawRecords = parse(response.data, {
         columns: true,
         skip_empty_lines: true,
         trim: true
       });
-      for (const row of records) {
-        if (!row.Wasi_URL && row.Wasi && row.Wasi.startsWith('http')) {
-          row.Wasi_URL = row.Wasi;
-        }
-        if (!row.CODIGO_WASI) {
-          const wasiUrl = row.Wasi_URL || row.Wasi || '';
-          const wasiMatch = wasiUrl.match(/\/(\d{7,9})(?:\?|$)/);
-          row.CODIGO_WASI = wasiMatch ? wasiMatch[1] : '';
-        }
-        if (!row.LINK_FOTOS_URL && row.LINK_FOTOS && row.LINK_FOTOS.startsWith('http')) {
-          row.LINK_FOTOS_URL = row.LINK_FOTOS;
-        }
-        let agentPhone = (row['Numero de WhatsApp'] || row['WhatsApp'] || '').replace(/[^0-9]/g, '');
-        if (agentPhone.length === 10 && agentPhone.startsWith('4')) {
-          agentPhone = '58' + agentPhone;
-        } else if (agentPhone.length === 11 && agentPhone.startsWith('04')) {
-          agentPhone = '58' + agentPhone.substring(1);
-        }
-        row.TELEFONO_ASESOR_CLEAN = agentPhone;
-      }
+      const parseResult = parseRecordsToUniversalProperties(rawRecords, {
+        previousSchema: cachedSheetSchema,
+        logChanges: true
+      });
+      const records = parseResult.properties;
+      cachedSheetSchema = parseResult.schema;
       console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
       indexPropertiesVocabulary(records);
       cachedProperties = records;
@@ -5468,6 +5411,7 @@ module.exports = {
   ALLOWED_STAGING_HOSTNAMES,
   ALLOWED_SIMULATED_TIME_ROUTES,
   parseXlsxBufferToProperties,
+  parseXlsxBufferToUniversalProperties,
   getStagingTestProperties,
   OFFICIAL_GOOGLE_SHEET_ID,
   GOOGLE_SHEET_TEST_URL_REGEX,

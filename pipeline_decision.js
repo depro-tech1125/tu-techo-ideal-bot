@@ -109,7 +109,42 @@ function adaptProperty(raw) {
     cleanPhone = '58' + cleanPhone.substring(1);
   }
 
-  return {
+  // V5.1 Universal Sheet Reader: externalLinks dinámico
+  const externalLinks = { ...(raw.externalLinks || {}) };
+  if (wasi && /^https?:\/\//i.test(wasi) && !externalLinks['Wasi']) {
+    externalLinks['Wasi'] = wasi;
+  }
+  if (ml && /^https?:\/\//i.test(ml) && !externalLinks['Mercado Libre']) {
+    externalLinks['Mercado Libre'] = ml;
+  }
+  if (web && /^https?:\/\//i.test(web) && !externalLinks['Pagina Web']) {
+    externalLinks['Pagina Web'] = web;
+  }
+  if (fotos && /^https?:\/\//i.test(fotos) && !externalLinks['LINK_FOTOS']) {
+    externalLinks['LINK_FOTOS'] = fotos;
+  }
+
+  // Incorporar cualquier otra columna en raw que contenga un enlace HTTP
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) {
+      if (!k.endsWith('_URL') && !k.startsWith('_')) {
+        if (!externalLinks[k]) externalLinks[k] = v.trim();
+      }
+    }
+  }
+
+  const externalLinksDetails = raw.externalLinksDetails || Object.entries(externalLinks).map(([header, url]) => {
+    let domain = '';
+    try {
+      domain = new URL(url).hostname.replace(/^www\./, '');
+    } catch (e) {
+      const m = url.match(/https?:\/\/([^\/\s?#]+)/i);
+      domain = m ? m[1].replace(/^www\./, '') : '';
+    }
+    return { header, url, domain };
+  });
+
+  const adapted = {
     ID_PROPIEDAD: id,
     TIPO: tipo,
     OPERACION: operacion,
@@ -127,8 +162,21 @@ function adaptProperty(raw) {
     CODIGO_WASI: codigoWasi,
     TELEFONO_ASESOR_CLEAN: cleanPhone,
     WhatsApp_Limpio: cleanPhone,
+    // V5.1 Universal Sheet Reader properties
+    externalLinks: externalLinks,
+    externalLinksDetails: externalLinksDetails,
+    _isStructurallyValid: raw._isStructurallyValid !== false,
     _raw: raw
   };
+
+  // Exponer claves dinámicas de externalLinks en el objeto raíz para compatibilidad directa
+  for (const [k, v] of Object.entries(externalLinks)) {
+    if (adapted[k] === undefined) {
+      adapted[k] = v;
+    }
+  }
+
+  return adapted;
 }
 
 /**
