@@ -281,7 +281,7 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
     return { hasAvailableMatches: false, count: 0, candidates: [] };
   }
 
-  const isSearchIntent = /(?:busco|buscando|quiero|necesito|interesad[oa]|informaci[oó]n\s*sobre|tienen?|alquiler|venta|comprar|alquilar|apartamento|casa|anexo|terreno|local)\b/i.test(q);
+  const isSearchIntent = /(?:busco|buscando|quiero|necesito|interesad[oa]|informaci[oó]n\s*sobre|tienen?|alquiler|venta|comprar|alquilar|apartamento|casa|anexo|terreno|local|oficina|inmueble|qu[eé]\s*(?:tienen|opciones|propiedades))\b/i.test(q);
   if (!isSearchIntent) return { hasAvailableMatches: false, count: 0, candidates: [] };
 
   // Detectar operación solicitada
@@ -291,9 +291,10 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
 
   // Detectar tipo de inmueble solicitado
   let targetTipo = null;
-  if (/apartamento|apto/i.test(q)) targetTipo = 'apartamento';
+  if (/apartamento|apto|pent-?house/i.test(q)) targetTipo = 'apartamento';
   else if (/casa\s*comercial/i.test(q)) targetTipo = 'casa comercial';
   else if (/casa/i.test(q)) targetTipo = 'casa';
+  else if (/oficina/i.test(q)) targetTipo = 'oficina';
   else if (/anexo/i.test(q)) targetTipo = 'anexo';
   else if (/terreno/i.test(q)) targetTipo = 'terreno';
   else if (/local/i.test(q)) targetTipo = 'local';
@@ -304,7 +305,9 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
     'prados del este', 'la boyera', 'los samanes', 'lomas del sol', 'la candelaria',
     'las mercedes', 'los palos grandes', 'chacao', 'altamira', 'el hatillo',
     'el encantado', 'la castellana', 'santa fe', 'baruta', 'maracay', 'oripoto',
-    'colinas de bello monte', 'san bernardino', 'el paraiso', 'valle arriba'
+    'colinas de bello monte', 'san bernardino', 'el paraiso', 'valle arriba',
+    'alta florida', 'lomas de monteclaro',
+    'caracas', 'gran caracas', 'distrito capital'
   ];
 
   let targetZone = null;
@@ -315,11 +318,12 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
     }
   }
 
-  // Si no especificó al menos una zona concreta, no considerar coincidencia de zona
-  if (!targetZone) {
+  // Si no especificó al menos una zona concreta ni un tipo concreto, no considerar coincidencia de zona
+  if (!targetZone && !targetTipo) {
     return { hasAvailableMatches: false, count: 0, candidates: [] };
   }
 
+  const isCaracasGeneral = targetZone && /caracas|gran caracas|distrito capital/i.test(targetZone);
   const matches = [];
 
   for (const rawProp of properties) {
@@ -331,9 +335,14 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
     const propTipo = normalizeText(prop.TIPO || '');
     const propOperacion = normalizeText(prop.OPERACION || '');
 
-    // Verificación 1: Zona buscada exclusivamente en la descripción oficial autorizada o en la URL de Wasi
-    const zoneSlug = targetZone.replace(/\s+/g, '-');
-    const zoneMatches = propDesc.includes(targetZone) || propWasi.includes(targetZone) || propWasi.includes(zoneSlug);
+    // Verificación 1: Zona buscada en descripción oficial o URL de Wasi
+    let zoneMatches = false;
+    if (isCaracasGeneral || !targetZone) {
+      zoneMatches = !propDesc.includes('maracay');
+    } else {
+      const zoneSlug = targetZone.replace(/\s+/g, '-');
+      zoneMatches = propDesc.includes(targetZone) || propWasi.includes(targetZone) || propWasi.includes(zoneSlug);
+    }
     if (!zoneMatches) continue;
 
     // Verificación 2: Operación (si el cliente la especificó)
@@ -342,8 +351,12 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
     }
 
     // Verificación 3: Tipo (si el cliente lo especificó)
-    if (targetTipo && !propTipo.includes(targetTipo)) {
-      continue;
+    if (targetTipo) {
+      if (targetTipo === 'casa') {
+        if (!propTipo.includes('casa') && !propDesc.includes('townhouse') && !propDesc.includes('quinta')) continue;
+      } else if (!propTipo.includes(targetTipo)) {
+        continue;
+      }
     }
 
     matches.push(prop);
@@ -352,9 +365,39 @@ function searchZoneOrFeatureMatches(queryText, properties = []) {
   const candidates = matches.slice(0, 3);
   return {
     hasAvailableMatches: candidates.length > 0,
-    count: candidates.length,
-    candidates
+    count: matches.length,
+    candidates,
+    targetZone,
+    targetTipo,
+    targetOperation
   };
+}
+
+function buildStructuredZoneSearchResults(zoneSearchResult) {
+  const { candidates, targetZone, targetTipo } = zoneSearchResult;
+  if (!candidates || candidates.length === 0) {
+    const tipoStr = targetTipo ? ` de tipo ${targetTipo}` : '';
+    const zonaStr = targetZone ? ` en ${targetZone.toUpperCase()}` : '';
+    return `En este momento no disponemos de inmuebles${tipoStr}${zonaStr} con estatus disponible en nuestro inventario oficial de Google Sheets. ¿Deseas consultar alguna otra zona o características?`;
+  }
+
+  let text = '¡Claro! Tenemos estas opciones disponibles en nuestro inventario oficial:\n\n';
+  candidates.slice(0, 3).forEach((p, idx) => {
+    const ref = p.ID_PROPIEDAD || `Opción ${idx + 1}`;
+    const tipo = p.TIPO || 'Inmueble';
+    const zona = extractPropertyZone(p) || 'Caracas';
+    const precio = extractPropertyPrice(p) || p.PRECIO || 'Precio a consultar';
+    const metraje = extractPropertyMetraje(p);
+    const metrajeStr = metraje ? `   • *Metraje:* ${metraje}\n` : '';
+
+    text += `${idx + 1}. *${ref}* — ${tipo} en ${zona}\n`;
+    text += `   • *Precio:* ${precio}\n`;
+    if (metrajeStr) text += metrajeStr;
+    text += '\n';
+  });
+
+  text += '¿Te gustaría recibir fotografías o la ficha completa de alguna de estas opciones?';
+  return text.trim();
 }
 
 // ============================================================================
@@ -910,6 +953,8 @@ class ConversationContextManager {
     this.filePath = filePath;
     this.talkContexts = new Map(); // talkId -> property
     this.leadContexts = new Map(); // leadId -> property
+    this.talkHistories = new Map(); // talkId -> property[]
+    this.leadHistories = new Map(); // leadId -> property[]
     this.loadFromDisk();
   }
 
@@ -929,10 +974,30 @@ class ConversationContextManager {
               if (k && v) this.leadContexts.set(String(k), v);
             }
           }
+          if (data.talkHistories && typeof data.talkHistories === 'object') {
+            for (const [k, v] of Object.entries(data.talkHistories)) {
+              if (k && Array.isArray(v)) this.talkHistories.set(String(k), v);
+            }
+          }
+          if (data.leadHistories && typeof data.leadHistories === 'object') {
+            for (const [k, v] of Object.entries(data.leadHistories)) {
+              if (k && Array.isArray(v)) this.leadHistories.set(String(k), v);
+            }
+          }
           if (Array.isArray(data)) {
             for (const item of data) {
-              if (item.leadId && item.property) this.leadContexts.set(String(item.leadId), item.property);
-              if (item.talkId && item.property) this.talkContexts.set(String(item.talkId), item.property);
+              if (item.leadId && item.property) {
+                this.leadContexts.set(String(item.leadId), item.property);
+                const list = this.leadHistories.get(String(item.leadId)) || [];
+                if (!list.some(p => p.ID_PROPIEDAD === item.property.ID_PROPIEDAD)) list.push(item.property);
+                this.leadHistories.set(String(item.leadId), list);
+              }
+              if (item.talkId && item.property) {
+                this.talkContexts.set(String(item.talkId), item.property);
+                const list = this.talkHistories.get(String(item.talkId)) || [];
+                if (!list.some(p => p.ID_PROPIEDAD === item.property.ID_PROPIEDAD)) list.push(item.property);
+                this.talkHistories.set(String(item.talkId), list);
+              }
             }
           }
         }
@@ -948,6 +1013,8 @@ class ConversationContextManager {
       const data = {
         talks: Object.fromEntries(this.talkContexts.entries()),
         leads: Object.fromEntries(this.leadContexts.entries()),
+        talkHistories: Object.fromEntries(this.talkHistories.entries()),
+        leadHistories: Object.fromEntries(this.leadHistories.entries()),
         updatedAt: Date.now()
       };
       fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf8');
@@ -959,8 +1026,18 @@ class ConversationContextManager {
   saveContext(talkId, leadIdOrProperty, property) {
     const prop = property !== undefined ? property : (typeof leadIdOrProperty === 'object' ? leadIdOrProperty : null);
     const leadId = typeof leadIdOrProperty === 'string' || typeof leadIdOrProperty === 'number' ? leadIdOrProperty : null;
-    if (talkId && prop) this.talkContexts.set(String(talkId), prop);
-    if (leadId && prop) this.leadContexts.set(String(leadId), prop);
+    if (talkId && prop) {
+      this.talkContexts.set(String(talkId), prop);
+      const list = (this.talkHistories.get(String(talkId)) || []).filter(p => (p.ID_PROPIEDAD || '').toUpperCase() !== (prop.ID_PROPIEDAD || '').toUpperCase());
+      list.push(prop);
+      this.talkHistories.set(String(talkId), list);
+    }
+    if (leadId && prop) {
+      this.leadContexts.set(String(leadId), prop);
+      const list = (this.leadHistories.get(String(leadId)) || []).filter(p => (p.ID_PROPIEDAD || '').toUpperCase() !== (prop.ID_PROPIEDAD || '').toUpperCase());
+      list.push(prop);
+      this.leadHistories.set(String(leadId), list);
+    }
     if (prop) this.saveToDisk();
   }
 
@@ -971,7 +1048,6 @@ class ConversationContextManager {
     if (leadId && this.leadContexts.has(String(leadId))) {
       return this.leadContexts.get(String(leadId));
     }
-    // Si la memoria RAM se reinició tras un reinicio de Render, recargar desde disco:
     this.loadFromDisk();
     if (talkId && this.talkContexts.has(String(talkId))) {
       return this.talkContexts.get(String(talkId));
@@ -981,6 +1057,108 @@ class ConversationContextManager {
     }
     return null;
   }
+
+  getHistory(talkId, leadId) {
+    if (talkId && this.talkHistories.has(String(talkId))) {
+      return this.talkHistories.get(String(talkId));
+    }
+    if (leadId && this.leadHistories.has(String(leadId))) {
+      return this.leadHistories.get(String(leadId));
+    }
+    this.loadFromDisk();
+    if (talkId && this.talkHistories.has(String(talkId))) {
+      return this.talkHistories.get(String(talkId));
+    }
+    if (leadId && this.leadHistories.has(String(leadId))) {
+      return this.leadHistories.get(String(leadId));
+    }
+    const single = this.getContext(talkId, leadId);
+    return single ? [single] : [];
+  }
+}
+
+/**
+ * Resuelve qué propiedad está consultando el usuario a partir del historial
+ * cronológico de la conversación y del contexto activo.
+ * Detecta referencias ordinales ("primer", "segundo", "ultimo", "el otro")
+ * y contradicciones de zona/tipo para evitar atribuir datos incorrectos.
+ */
+function resolvePropertyFromHistoryOrContext({
+  userText,
+  talkId,
+  leadId,
+  contextManager,
+  activePropertyContext,
+  properties = []
+}) {
+  let activeProperty = null;
+  let history = [];
+
+  if (contextManager) {
+    activeProperty = contextManager.getContext(talkId, leadId);
+    history = contextManager.getHistory(talkId, leadId);
+  } else if (activePropertyContext) {
+    activeProperty = activePropertyContext;
+    if (activePropertyContext.history && Array.isArray(activePropertyContext.history)) {
+      history = activePropertyContext.history;
+    } else {
+      history = [activePropertyContext];
+    }
+  }
+
+  if (!activeProperty && history.length === 0) {
+    return { resolved: false, property: null, ambiguous: false };
+  }
+
+  const q = normalizeText(userText);
+
+  // 1. Detección de referencia ordinal explícita
+  const isFirst = /(?:primer[oa]?|inmueble\s*anterior|primera\s*opci[oó]n|el\s*anterior|el\s*otro)\b/i.test(q);
+  const isLast = /(?:[uú]ltim[oa]|actual|este\s*[uú]ltimo)\b/i.test(q);
+  const isSecond = /(?:segund[oa]|segunda\s*opci[oó]n)\b/i.test(q);
+
+  if (isFirst && history.length > 1) {
+    return { resolved: true, property: history[0], source: 'history_first' };
+  }
+  if (isSecond && history.length >= 2) {
+    return { resolved: true, property: history[1], source: 'history_second' };
+  }
+  if (isLast && history.length > 0) {
+    return { resolved: true, property: history[history.length - 1], source: 'history_last' };
+  }
+
+  // Si pregunta por "primer inmueble" o "el otro" pero solo hay 1 inmueble o 0 en el historial:
+  if ((isFirst || /(?:el\s*otro\s*inmueble|la\s*otra\s*propiedad)\b/i.test(q)) && history.length <= 1) {
+    return { resolved: false, property: null, ambiguous: true };
+  }
+
+  // 2. Detección de atributos que contradigan la propiedad activa actual pero coincidan con una del historial
+  if (history.length > 1) {
+    const activeZone = activeProperty ? normalizeText(extractPropertyZone(activeProperty) || '') : '';
+    const activeTipo = activeProperty ? normalizeText(activeProperty.TIPO || '') : '';
+
+    for (const historicProp of history) {
+      if (activeProperty && (historicProp.ID_PROPIEDAD || '').toUpperCase() === (activeProperty.ID_PROPIEDAD || '').toUpperCase()) {
+        continue;
+      }
+      const hZone = normalizeText(extractPropertyZone(historicProp) || '');
+      const hTipo = normalizeText(historicProp.TIPO || '');
+
+      const matchesHZone = hZone && q.includes(hZone) && (!activeZone || !q.includes(activeZone));
+      const matchesHTipo = hTipo && q.includes(hTipo) && (!activeTipo || !q.includes(activeTipo));
+
+      if (matchesHZone || (matchesHTipo && !activeTipo.includes(hTipo))) {
+        return { resolved: true, property: historicProp, source: 'history_attribute_match' };
+      }
+    }
+  }
+
+  // 3. Fallback: la propiedad activa por defecto
+  if (activeProperty) {
+    return { resolved: true, property: activeProperty, source: 'active_context' };
+  }
+
+  return { resolved: false, property: null, ambiguous: false };
 }
 
 // ============================================================================
@@ -1759,14 +1937,18 @@ async function evaluateCentralDecisionPipeline(context) {
   // PRIORIDAD 4: BÚSQUEDA MULTICRITERIO POR ZONA (UBICACIÓN + TIPO + OPERACIÓN)
   // (Solo si no hubo enlace puntual ni contexto activo)
   // --------------------------------------------------------------------------
-  if (wasiExtraction.count === 0 && !activePropertyContext && (!contextManager || !contextManager.getContext(talkId))) {
+  if (wasiExtraction.count === 0 && !activePropertyContext && (!contextManager || !contextManager.getContext(talkId, leadId))) {
     const zoneSearch = searchZoneOrFeatureMatches(textClean, properties);
     if (zoneSearch.hasAvailableMatches) {
+      const isPluralOrListingQuery = /(?:qu[eé]\s*(?:inmuebles|propiedades|apartamentos|casas|oficinas|opciones|tienen)|cu[aá]les\s*(?:son|tienen|opciones)|tienen\s+(?:apartamentos|casas|oficinas|inmuebles)\b)/i.test(textClean) && !/(?:el|la|este|esta)\s+(?:apartamento|casa|oficina|inmueble)/i.test(textClean);
+      const responseText = isPluralOrListingQuery ? buildStructuredZoneSearchResults(zoneSearch) : AVAILABILITY_RESPONSE;
       logEntry.typeDetected = 'ZONE_OR_FEATURE_SEARCH';
-      logEntry.reason = `Coincidencias encontradas (${zoneSearch.count} disponibles). Respondiendo exactamente "${AVAILABILITY_RESPONSE}" sin listados.`;
+      logEntry.reason = isPluralOrListingQuery
+        ? `Coincidencias encontradas (${zoneSearch.count} disponibles en Sheets). Respondiendo opciones estructuradas con precio y metraje.`
+        : `Coincidencias encontradas (${zoneSearch.count} disponibles). Respondiendo exactamente "${AVAILABILITY_RESPONSE}" sin listados.`;
       logEntry.action = 'RESPOND';
-      logEntry.text = AVAILABILITY_RESPONSE;
-      return { shouldRespond: true, text: AVAILABILITY_RESPONSE, log: logEntry };
+      logEntry.text = responseText;
+      return { shouldRespond: true, text: responseText, log: logEntry };
     }
   }
 
@@ -1774,10 +1956,26 @@ async function evaluateCentralDecisionPipeline(context) {
   // PRIORIDAD 8, 9 Y 10: CONTINUACIÓN DE PREGUNTAS SOBRE PROPIEDAD IDENTIFICADA (REGLA 3.E)
   // --------------------------------------------------------------------------
   if (!targetProperty) {
-    if (contextManager) {
-      targetProperty = contextManager.getContext(talkId, leadId);
-    } else if (activePropertyContext) {
-      targetProperty = activePropertyContext;
+    const historyResolution = resolvePropertyFromHistoryOrContext({
+      userText: textClean,
+      talkId,
+      leadId,
+      contextManager,
+      activePropertyContext,
+      properties
+    });
+
+    if (historyResolution.resolved) {
+      targetProperty = historyResolution.property;
+      if (contextManager && historyResolution.source && historyResolution.source.startsWith('history_')) {
+        contextManager.saveContext(talkId, leadId, targetProperty);
+      }
+    } else if (historyResolution.ambiguous) {
+      logEntry.typeDetected = 'AMBIGUOUS_PROPERTY_REFERENCE';
+      logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
+      logEntry.reason = 'Pregunta hace referencia ambigua a un inmueble previo sin datos suficientes para resolverlo inequívocamente. Silencio seguro.';
+      logEntry.action = 'SILENCE';
+      return { shouldRespond: false, text: null, log: logEntry };
     }
     // Resiliente: si la memoria RAM decayó, recuperar de activeAutomationPropertyId en handoffManager
     if (!targetProperty && handoff && handoff.activeAutomationPropertyId && Array.isArray(properties)) {
@@ -2026,6 +2224,8 @@ module.exports = {
   extractMultiportalPropertyIdentifiers,
   isExtendedInfoOrPhotoRequest,
   searchZoneOrFeatureMatches,
+  buildStructuredZoneSearchResults,
+  resolvePropertyFromHistoryOrContext,
   isVenezuelaRenaceCreditQuery,
   evaluateVenezuelaRenaceCredit,
   extractDeterministicPropertyFeature,
