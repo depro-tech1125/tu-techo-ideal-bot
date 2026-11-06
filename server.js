@@ -4554,6 +4554,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     }
 
     const currentLeadId = String(leadId);
+    const clientName = messageObj.author?.name || 'Cliente';
 
     // Identificar canal exacto de la conversación (Facebook Messenger, Instagram, WhatsApp)
     const detectedChannel = resolveCommunicationChannel(talkOrigin, talkSourceId, clientPhone, clientName, messageObj);
@@ -4588,7 +4589,6 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     activeProcessingLeads.add(currentLeadId);
 
     try {
-      const clientName = messageObj.author?.name || 'Cliente';
 
       console.log(`\n========================================`);
       console.log(`[Processing New Message]`);
