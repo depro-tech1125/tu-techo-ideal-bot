@@ -4904,9 +4904,19 @@ app.get('/health', async (req, res) => {
     targetModel = 'nvidia/nemotron-3.5-lightning:free';
   }
 
+  let indexStats = null;
+  try {
+    const { getGlobalIdentifierIndex } = require('./lib/universal_identifier_index');
+    if (cachedProperties && Array.isArray(cachedProperties)) {
+      const idx = getGlobalIdentifierIndex(cachedProperties);
+      indexStats = idx.getStats();
+    }
+  } catch (e) { }
+
   res.send({
     status: 'running',
-    service: 'Tu Techo Ideal Bot Microservice - v5.0 Deterministic Central Pipeline Edition',
+    service: 'Tu Techo Ideal Bot Microservice - v5.0/v5.1 Universal Identifier Index Edition',
+    commit: process.env.RENDER_GIT_COMMIT || 'local',
     observation_mode: OBSERVATION_MODE,
     pipeline_controller: 'pipeline_decision.js',
     ai_model: targetModel,
@@ -4914,6 +4924,7 @@ app.get('/health', async (req, res) => {
     claude_enabled: false,
     paid_fallback_disabled: true,
     credits_remaining_usd: 0.00,
+    universal_identifier_index: indexStats || { status: 'uninitialized' },
     idempotency: 'active',
     idempotency_store_records: idempotencyManager.records.size,
     uptime_seconds: Math.floor(process.uptime())

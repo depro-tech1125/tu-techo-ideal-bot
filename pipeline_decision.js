@@ -338,8 +338,15 @@ function isHumanAttentionRequest(text) {
 // 4. DETECCIÓN MULTIPORTAL DE ENLACES E IDENTIFICADORES (WASI, MERCADO LIBRE, WEB, REXUP)
 // ============================================================================
 const {
-  extractMultiportalPropertyIdentifiers: libExtractMultiportal
+  extractMultiportalPropertyIdentifiers: libExtractMultiportal,
+  cleanUrlForMatching
 } = require('./lib/multiportal_extractor');
+
+const {
+  UniversalIdentifierIndex,
+  getGlobalIdentifierIndex,
+  invalidateGlobalIdentifierIndex
+} = require('./lib/universal_identifier_index');
 
 function extractMultiportalPropertyIdentifiers(text, properties = []) {
   return libExtractMultiportal(text, properties, adaptProperty);
@@ -1535,7 +1542,140 @@ function validateCommercialClaimsProvenance({ responseText, targetProperty, prop
     }
   }
 
+  // 7. Comprobación de Tipo de Inmueble:
+  // Si el texto afirma explícitamente un tipo de inmueble, debe coincidir con targetProperty.TIPO
+  const targetTipoNorm = (targetProperty.TIPO || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const tipoClaims = [
+    { name: 'apartamento', regex: /\b(?:apartamento|apto|departamento)\b/i },
+    { name: 'casa', regex: /\b(?:casa|quinta|townhouse)\b/i },
+    { name: 'oficina', regex: /\b(?:oficina)\b/i },
+    { name: 'local', regex: /\b(?:local comercial|local)\b/i },
+    { name: 'galpon', regex: /\b(?:galp[oó]n|nave industrial)\b/i },
+    { name: 'terreno', regex: /\b(?:terreno|parcela|lote)\b/i },
+    { name: 'posada', regex: /\b(?:posada|hotel)\b/i }
+  ];
+  for (const tc of tipoClaims) {
+    if (tc.regex.test(responseText)) {
+      if (!targetTipoNorm.includes(tc.name) && !(targetProperty.DESCRIPCION_BREVE || '').toLowerCase().includes(tc.name)) {
+        return {
+          valid: false,
+          reason: `Violación de procedencia de tipo: El texto comunica "${tc.name}" pero ${pId} está registrada como "${targetProperty.TIPO}".`
+        };
+      }
+    }
+  }
+
+  // 8. Comprobación de Ubicación / Zona:
+  // Si el texto menciona una zona específica (ej: "en El Rosal", "en Los Samanes"), debe concordar con la descripción o zona de targetProperty
+  const knownZones = [
+    'los samanes', 'la california', 'la castellana', 'los palos grandes',
+    'el rosal', 'chacao', 'las mercedes', 'boleita', 'altamira',
+    'chichiriviche', 'cagua', 'maracay', 'valencia', 'baruta', 'el hatillo',
+    'parque carabobo', 'bellas artes', 'fuerzas armadas', 'macaracuay',
+    'san bernardino', 'el paraiso', 'cumbres de curumo', 'colinas de bello monte'
+  ];
+  const targetDescNorm = (targetProperty.DESCRIPCION_BREVE || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const targetZoneOfficial = (extractPropertyZone(targetProperty) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const textNormNoAcc = responseText.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  for (const z of knownZones) {
+    const zRegex = new RegExp(`\\b(?:en|ubicad[oa] en|zona|sector)\\s+${z}\\b`, 'i');
+    if (zRegex.test(textNormNoAcc)) {
+      if (!targetDescNorm.includes(z) && !targetZoneOfficial.includes(z)) {
+        return {
+          valid: false,
+          reason: `Violación de procedencia de ubicación: El texto afirma ubicación en "${z}" pero ${pId} está ubicada en "${extractPropertyZone(targetProperty) || 'otra zona'}".`
+        };
+      }
+    }
+  }
+
+  // 9. Comprobación de Habitaciones y Baños:
+  const wordToNum = (s) => ({ un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10 })[String(s).toLowerCase().trim()] || parseInt(s, 10);
+  const textHabMatch = responseText.match(/(\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*habitaci[oó]n(?:es)?/i);
+  if (textHabMatch) {
+    const claimedHabNum = wordToNum(textHabMatch[1]);
+    const officialHabMatches = Array.from(targetDescNorm.matchAll(/(\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*habitaci[oó]n(?:es)?/gi)).map(x => wordToNum(x[1]));
+    if (officialHabMatches.length > 0 && !officialHabMatches.includes(claimedHabNum)) {
+      return {
+        valid: false,
+        reason: `Violación de procedencia de habitaciones: El texto afirma "${textHabMatch[0]}" pero ${pId} registra ${officialHabMatches.join('/')} habitaciones.`
+      };
+    }
+  }
+
+  const textBanMatch = responseText.match(/(\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*baños?/i);
+  if (textBanMatch) {
+    const claimedBanNum = wordToNum(textBanMatch[1]);
+    const officialBanMatches = Array.from(targetDescNorm.matchAll(/(\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*baños?/gi)).map(x => wordToNum(x[1]));
+    if (officialBanMatches.length > 0 && !officialBanMatches.includes(claimedBanNum)) {
+      return {
+        valid: false,
+        reason: `Violación de procedencia de baños: El texto afirma "${textBanMatch[0]}" pero ${pId} registra ${officialBanMatches.join('/')} baños.`
+      };
+    }
+  }
+
+  // 10. Comprobación de Mascotas:
+  if (/\b(?:se aceptan mascotas|acepta mascotas|mascotas permitidas)\b/i.test(responseText)) {
+    const petsAllowed = /s[ií]/i.test(targetProperty.Mascotas || '') || /mascotas permitidas|se aceptan mascotas/i.test(targetDescNorm);
+    if (!petsAllowed) {
+      return {
+        valid: false,
+        reason: `Violación de procedencia de mascotas: El texto afirma que se aceptan mascotas pero en ${pId} no está registrado.`
+      };
+    }
+  }
+
+  // 11. Comprobación de Enlace de Fotos y Enlaces Externos:
+  const allUrlsInResponse = responseText.match(/https?:\/\/[^\s<>"'{}|\\^`[\]]+/gi) || [];
+  if (allUrlsInResponse.length > 0) {
+    for (const u of allUrlsInResponse) {
+      const cleanU = cleanUrlForMatching(u);
+      const alienProperty = properties.find(other => {
+        if ((other.ID_PROPIEDAD || '').toUpperCase() === pId) return false;
+        const otherUrls = [other.LINK_FOTOS, other.Wasi, other.Mercado_Libre, other['Mercado Libre'], other.Pagina_Web, other['Pagina Web']];
+        if (other.externalLinks) otherUrls.push(...Object.values(other.externalLinks));
+        return otherUrls.some(ou => ou && cleanUrlForMatching(ou) === cleanU);
+      });
+
+      if (alienProperty) {
+        return {
+          valid: false,
+          reason: `Violación de procedencia de enlaces: El texto contiene un enlace (${u}) que pertenece a otra propiedad (${alienProperty.ID_PROPIEDAD}).`
+        };
+      }
+    }
+  }
+
   return { valid: true };
+}
+
+/**
+ * REGISTRO ESTRUCTURADO DE AFIRMACIONES COMERCIALES OFICIALES
+ * Tu Techo Ideal V5.1 — DEPRO TECH SOLUTIONS
+ */
+function buildStructuredPropertyClaims(prop) {
+  if (!prop || typeof prop !== 'object') return null;
+  const pId = (prop.ID_PROPIEDAD || '').toUpperCase();
+  const tipo = (prop.TIPO || '').trim();
+  const operacion = (prop.OPERACION || '').trim();
+  const estatus = (prop.ESTATUS || '').trim();
+  const zona = extractPropertyZone(prop);
+  const precio = extractPropertyPrice(prop);
+  const metraje = extractPropertyMetraje(prop);
+
+  return {
+    propertyId: pId,
+    tipo: { value: tipo, source: 'col:TIPO', verified: !!tipo },
+    operacion: { value: operacion, source: 'col:OPERACION', verified: !!operacion },
+    estatus: { value: estatus, source: 'col:ESTATUS', verified: !!estatus },
+    zona: { value: zona, source: 'derived:DESCRIPCION_BREVE', verified: !!zona },
+    precio: { value: precio, source: 'col:PRECIO / desc:Precio', verified: !!precio },
+    metraje: { value: metraje, source: 'desc:Metraje', verified: !!metraje },
+    linkFotos: { value: prop.LINK_FOTOS || null, source: 'col:LINK_FOTOS', verified: !!prop.LINK_FOTOS },
+    externalLinks: { ...(prop.externalLinks || {}) }
+  };
 }
 
 async function verifyPreDispatchSafety(leadIdOrOptions, maybeTalkId, maybeContactId, maybeHandoffManager, maybeOptions = {}) {
@@ -2215,14 +2355,64 @@ async function evaluateCentralDecisionPipeline(context) {
   let extResolution = null;
   if (allUrlsInText.length === 1) {
     const incomingUrl = allUrlsInText[0];
+
+    // 1. FAST LOOKUP VIA ÍNDICE UNIVERSAL EN MEMORIA O(1)
+    let fastHandled = false;
     try {
-      extResolution = await resolvePropertyFromUrlOrContent(incomingUrl, properties, {
-        talkId,
-        bypassCache: false,
-        simulatedHtml: context.simulatedHtml !== undefined ? context.simulatedHtml : null
+      const uIndex = getGlobalIdentifierIndex(properties);
+      const fastResult = uIndex.lookup(incomingUrl, {
+        messageText: textClean,
+        simulatedHtml: context.simulatedHtml !== undefined ? context.simulatedHtml : ''
       });
-    } catch (err) {
-      extResolution = { resolved: false, accessible: false, reason: 'READER_EXCEPTION: ' + err.message };
+
+      if (fastResult.found && fastResult.isUnique && fastResult.candidate && !fastResult.hasContradiction) {
+        extResolution = {
+          resolved: true,
+          candidate: adaptProperty(fastResult.candidate),
+          score: 100,
+          matchType: 'PROPERTY_MATCH_EXACT',
+          details: [`Identificador exacto comprobado en índice universal (${fastResult.matchedKey})`],
+          accessible: true,
+          fastLookup: true,
+          lookupTimeMs: fastResult.lookupTimeMs
+        };
+        fastHandled = true;
+      } else if (fastResult.isCollision && fastResult.isAmbiguous) {
+        extResolution = {
+          resolved: false,
+          isAmbiguous: true,
+          candidate: null,
+          score: 100,
+          reason: fastResult.disambiguationReason || 'DUPLICATE_CODE_COLLISION',
+          accessible: true
+        };
+        fastHandled = true;
+      } else if (fastResult.hasContradiction) {
+        extResolution = {
+          resolved: false,
+          isAmbiguous: false,
+          candidate: null,
+          score: 0,
+          reason: fastResult.disambiguationReason || 'CONTRADICTION_DETECTED',
+          accessible: true
+        };
+        fastHandled = true;
+      }
+    } catch (e) {
+      // Safe fallback a resolver externo
+    }
+
+    // 2. FALLBACK A LECTOR EXTERNO Y COMPARADOR AL 90%
+    if (!fastHandled) {
+      try {
+        extResolution = await resolvePropertyFromUrlOrContent(incomingUrl, properties, {
+          talkId,
+          bypassCache: false,
+          simulatedHtml: context.simulatedHtml !== undefined ? context.simulatedHtml : null
+        });
+      } catch (err) {
+        extResolution = { resolved: false, accessible: false, reason: 'READER_EXCEPTION: ' + err.message };
+      }
     }
   }
 
@@ -2386,7 +2576,14 @@ async function evaluateCentralDecisionPipeline(context) {
     // Comprobación de estatus en tiempo real
     const isAvail = isPropertyAvailable(targetProperty);
     logEntry.validationResult = isAvail ? 'VERIFIED_AVAILABLE' : 'VERIFIED_UNAVAILABLE';
-    const isWasiInitialShare = /compartiste\s*en\s*la\s*red|interesado\s*en\s*el\s*inmueble|podr[ií]amos\s*conversar|disponib/i.test(normalizeText(textClean)) || textClean.includes('http');
+    const isSpecificAttribute = /(?:precio|cuanto\s*(?:cuesta|vale|pide)|canon|metr(?:os|aje)|habitaci|cuartos|ba[ñn]os|condominio)/i.test(textClean);
+    const isDirectFeature = isSpecificAttribute && extractDeterministicPropertyFeature(textClean, targetProperty).matched;
+    const isPhotoOrFicha = isPhotoRequest(textClean) || isExtendedInfoOrPhotoRequest(textClean) || isPublicLinkRequest(textClean);
+    const isWasiInitialShare = !isDirectFeature && !isPhotoOrFicha && (
+      /compartiste\s*en\s*la\s*red|interesad[oa]|me\s*interesa|informaci[oó]n|podr[ií]amos\s*conversar|disponib/i.test(normalizeText(textClean)) ||
+      textClean.includes('http') ||
+      wasiExtraction.count === 1
+    );
 
     if (isWasiInitialShare) {
       if (isAvail) {
@@ -2755,6 +2952,9 @@ module.exports = {
   ConversationContextManager,
   verifyPreDispatchSafety,
   validateCommercialClaimsProvenance,
+  buildStructuredPropertyClaims,
+  UniversalIdentifierIndex,
+  getGlobalIdentifierIndex,
   evaluatePropertyQuestionWithClaude,
   evaluateCentralDecisionPipeline,
   buildCommercialFichaResponse,

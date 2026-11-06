@@ -20,11 +20,12 @@ const suites = [
   { name: 'Reconocimiento Universal de Ubicaciones Fase 3 (14 Escenarios)', script: 'scripts/test_fase3_universal_locations.js' },
   { name: 'Aceptación Universal Fase 8 (10 Escenarios)', script: 'scripts/test_fase8_universal_acceptance.js' },
   { name: 'Blindaje Comercial y Barrera Pre-Dispatch Fase 4 (9 Escenarios)', script: 'scripts/test_fase4_commercial_shielding.js' },
-  { name: 'Banco de Pruebas Adversariales Integridad V5.1 (19 Escenarios)', script: 'scripts/test_adversarial_v51_integrity.js' }
+  { name: 'Banco de Pruebas Adversariales Integridad V5.1 (19 Escenarios)', script: 'scripts/test_adversarial_v51_integrity.js' },
+  { name: 'Índice Universal y Cierre de Integridad V5.1 (24 Escenarios Adversariales)', script: 'scripts/test_universal_identifier_index_adversarial.js' }
 ];
 
 console.log('==============================================================================');
-console.log('          EJECUCIÓN DE LAS 20 SUITES DE PRUEBA (312 ESCENARIOS)              ');
+console.log('          EJECUCIÓN DE LAS 21 SUITES DE PRUEBA (336 ESCENARIOS)              ');
 console.log('==============================================================================\n');
 
 let failedSuites = 0;
@@ -45,7 +46,7 @@ for (let i = 0; i < suites.length; i++) {
 }
 
 console.log('\n==============================================================================');
-console.log(`RESUMEN GENERAL: ${passedSuites} / ${suites.length} SUITES APROBADAS (${Math.round((passedSuites / suites.length) * 100)}% DE 312 ESCENARIOS)`);
+console.log(`RESUMEN GENERAL: ${passedSuites} / ${suites.length} SUITES APROBADAS (${Math.round((passedSuites / suites.length) * 100)}% DE 336 ESCENARIOS)`);
 console.log('==============================================================================\n');
 
 if (failedSuites > 0) {
