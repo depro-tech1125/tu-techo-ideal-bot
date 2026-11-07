@@ -1,0 +1,85 @@
+{
+  "timestamp": "2026-11-07T01:02:17.106Z",
+  "iterationsPerScenario": 1000,
+  "totalIterations": 7000,
+  "catalogPropertiesCount": 69,
+  "summaryTable": [
+    {
+      "id": 1,
+      "name": "1. URL Registrada",
+      "p50": "1.609",
+      "p95": "2.302",
+      "p99": "2.574",
+      "avg": "1.701",
+      "max": "3.078",
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "id": 2,
+      "name": "2. Código Único",
+      "p50": "3.066",
+      "p95": "4.263",
+      "p99": "4.802",
+      "avg": "3.230",
+      "max": "5.954",
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "id": 3,
+      "name": "3. Código Duplicado con Discriminantes",
+      "p50": "4.148",
+      "p95": "5.742",
+      "p99": "8.295",
+      "avg": "4.443",
+      "max": "15.788",
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "id": 4,
+      "name": "4. Código Duplicado sin Discriminantes",
+      "p50": "0.010",
+      "p95": "0.012",
+      "p99": "0.017",
+      "avg": "0.011",
+      "max": "0.616",
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "id": 5,
+      "name": "5. Enlace Desconocido",
+      "p50": "37.466",
+      "p95": "50.528",
+      "p99": "60.528",
+      "avg": "39.352",
+      "max": "105.448",
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "id": 6,
+      "name": "6. Consulta sin Enlace",
+      "p50": "18.639",
+      "p95": "26.245",
+      "p99": "31.355",
+      "avg": "19.922",
+      "max": "120.131",
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "id": 7,
+      "name": "7. Consulta de Seguimiento en Mismo Chat",
+      "p50": "0.164",
+      "p95": "0.518",
+      "p99": "0.972",
+      "avg": "0.211",
+      "max": "1.958",
+      "errors": 0,
+      "timeouts": 0
+    }
+  ]
+}

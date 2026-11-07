@@ -285,6 +285,16 @@ let lastPropertiesFetchTime = 0;
 const CACHE_TTL_MS = 60 * 1000; // 1 minuto de caché para alta velocidad y frescura
 const PROPERTIES_CACHE_FILE = path.join(__dirname, 'properties_cache.json');
 
+// Protección Single-Flight y Métricas de Coordinación de Inventario
+let inFlightPropertiesPromise = null;
+const inventoryMetrics = {
+  xlsxDownloads: 0,
+  cacheHits: 0,
+  sheetQueries: 0,
+  indexRebuilds: 0,
+  errors: 0
+};
+
 let virtualPropertyVocabulary = new Set();
 let virtualWordToPropertiesMap = new Map();
 
@@ -424,101 +434,133 @@ async function getStagingTestProperties(testSheetUrl, forceRefresh = false) {
 async function getAvailableProperties(forceRefresh = false) {
   const now = Date.now();
   if (!forceRefresh && cachedProperties && (now - lastPropertiesFetchTime) < CACHE_TTL_MS) {
+    inventoryMetrics.cacheHits++;
     return cachedProperties;
   }
 
-  // 1. Intentamos primero vía XLSX para extraer los enlaces reales ocultos de Wasi, Fotos, Web y MercadoLibre
-  try {
-    const rawSheetUrl = process.env.GOOGLE_SHEET_CSV_URL || 'https://docs.google.com/spreadsheets/d/1cXZdjOck8rYUZdZUOWlhQMWxnyegipyVa081EkrRc_A/gviz/tq?tqx=out:csv&sheet=Hoja%201';
-    let xlsxUrl = rawSheetUrl;
-    if (xlsxUrl.includes('/spreadsheets/d/')) {
-      const match = xlsxUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-      if (match) {
-        xlsxUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=xlsx`;
-      }
-    }
+  // Single-Flight: Si ya hay una solicitud de refresco en curso, todos los webhooks concurrentes esperan la misma promesa
+  if (inFlightPropertiesPromise) {
+    inventoryMetrics.cacheHits++;
+    return inFlightPropertiesPromise;
+  }
 
-    const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer', timeout: 10000 });
-    const parseResult = parseXlsxBufferToUniversalProperties(response.data, {
-      previousSchema: cachedSheetSchema,
-      logChanges: true
-    });
-    const records = parseResult.properties;
-    cachedSheetSchema = parseResult.schema;
-
-    records._isStale = false;
-    records._source = 'LIVE_XLSX';
-    records._fetchedAt = now;
-    records._schemaFingerprint = parseResult.schema?.fingerprint || 'v5.1';
-
-    console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con enlaces universales.`);
+  inFlightPropertiesPromise = (async () => {
     try {
-      const cleanProps = records.map(p => {
-        const copy = { ...p };
-        delete copy._vocabulary;
-        return copy;
-      });
-      fs.writeFileSync(PROPERTIES_CACHE_FILE, JSON.stringify(cleanProps, null, 2), 'utf8');
-    } catch (e) {}
-
-    indexPropertiesVocabulary(records);
-    cachedProperties = records;
-    lastPropertiesFetchTime = now;
-    return records;
-  } catch (errXlsx) {
-    console.warn('[Google Sheets XLSX Fallback Warning]:', errXlsx.message);
-    // 2. Si XLSX falla o da timeout, recurrir de inmediato al respaldo local permanente donde los 69 códigos Wasi y URLs reales están 100% preservados
-    if (fs.existsSync(PROPERTIES_CACHE_FILE)) {
-      try {
-        const localData = JSON.parse(fs.readFileSync(PROPERTIES_CACHE_FILE, 'utf8'));
-        if (Array.isArray(localData) && localData.length > 0) {
-          console.log(`[Google Sheets Local Backup] Cargadas ${localData.length} propiedades con códigos Wasi desde ${PROPERTIES_CACHE_FILE}`);
-          localData._isStale = true;
-          localData._staleReason = 'GOOGLE_SHEETS_OFFLINE';
-          localData._source = 'LOCAL_FILE_FALLBACK';
-          indexPropertiesVocabulary(localData);
-          cachedProperties = localData;
-          lastPropertiesFetchTime = now;
-          return localData;
+      inventoryMetrics.sheetQueries++;
+      // 1. Intentamos primero vía XLSX para extraer los enlaces reales ocultos de Wasi, Fotos, Web y MercadoLibre
+      const rawSheetUrl = process.env.GOOGLE_SHEET_CSV_URL || 'https://docs.google.com/spreadsheets/d/1cXZdjOck8rYUZdZUOWlhQMWxnyegipyVa081EkrRc_A/gviz/tq?tqx=out:csv&sheet=Hoja%201';
+      let xlsxUrl = rawSheetUrl;
+      if (xlsxUrl.includes('/spreadsheets/d/')) {
+        const match = xlsxUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+        if (match) {
+          xlsxUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=xlsx`;
         }
-      } catch (e) {
-        console.warn('[Local Properties Cache Read Error]:', e.message);
       }
-    }
 
-    // 3. Fallback de contingencia a CSV si todo lo anterior falla
-    try {
-      const csvUrl = process.env.GOOGLE_SHEET_CSV_URL;
-      const response = await axios.get(csvUrl, { timeout: 7000 });
-      const rawRecords = parse(response.data, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true
-      });
-      const parseResult = parseRecordsToUniversalProperties(rawRecords, {
+      const response = await axios.get(xlsxUrl, { responseType: 'arraybuffer', timeout: 10000 });
+      inventoryMetrics.xlsxDownloads++;
+
+      const parseResult = parseXlsxBufferToUniversalProperties(response.data, {
         previousSchema: cachedSheetSchema,
         logChanges: true
       });
       const records = parseResult.properties;
-      cachedSheetSchema = parseResult.schema;
+
+      // Validación de integridad estructural previa al swap atómico
+      if (!Array.isArray(records) || records.length === 0) {
+        throw new Error('Integrity validation failed: parsed records array is empty');
+      }
+
       records._isStale = false;
-      records._source = 'LIVE_CSV_FALLBACK';
-      records._fetchedAt = now;
+      records._source = 'LIVE_XLSX';
+      records._fetchedAt = Date.now();
       records._schemaFingerprint = parseResult.schema?.fingerprint || 'v5.1';
-      console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
+
+      // Construcción del nuevo índice universal antes de sustituir la instantánea en memoria
+      try {
+        const { getGlobalIdentifierIndex } = require('./lib/universal_identifier_index');
+        getGlobalIdentifierIndex(records);
+        inventoryMetrics.indexRebuilds++;
+      } catch (idxErr) {
+        console.warn('[UniversalIdentifierIndex Warmup Warning]:', idxErr.message);
+      }
+
+      console.log(`[Google Sheets XLSX] Extraídas ${records.length} propiedades con enlaces universales.`);
+      try {
+        const cleanProps = records.map(p => {
+          const copy = { ...p };
+          delete copy._vocabulary;
+          return copy;
+        });
+        fs.writeFileSync(PROPERTIES_CACHE_FILE, JSON.stringify(cleanProps, null, 2), 'utf8');
+      } catch (e) {}
+
+      // Sustitución atómica e inmutable
+      cachedSheetSchema = parseResult.schema;
       indexPropertiesVocabulary(records);
       cachedProperties = records;
-      lastPropertiesFetchTime = now;
+      lastPropertiesFetchTime = Date.now();
       return records;
-    } catch (errCsv) {
-      console.error('[Google Sheets Fatal Error]:', errCsv.message);
-      if (cachedProperties && Array.isArray(cachedProperties)) {
-        cachedProperties._isStale = true;
-        cachedProperties._staleReason = 'GOOGLE_SHEETS_FATAL_ERROR';
+    } catch (errXlsx) {
+      inventoryMetrics.errors++;
+      console.warn('[Google Sheets XLSX Fallback Warning]:', errXlsx.message);
+      // 2. Si XLSX falla o da timeout, recurrir de inmediato al respaldo local permanente donde los 69 códigos Wasi y URLs reales están 100% preservados
+      if (fs.existsSync(PROPERTIES_CACHE_FILE)) {
+        try {
+          const localData = JSON.parse(fs.readFileSync(PROPERTIES_CACHE_FILE, 'utf8'));
+          if (Array.isArray(localData) && localData.length > 0) {
+            console.log(`[Google Sheets Local Backup] Cargadas ${localData.length} propiedades con códigos Wasi desde ${PROPERTIES_CACHE_FILE}`);
+            localData._isStale = true;
+            localData._staleReason = 'GOOGLE_SHEETS_OFFLINE';
+            localData._source = 'LOCAL_FILE_FALLBACK';
+            indexPropertiesVocabulary(localData);
+            cachedProperties = localData;
+            lastPropertiesFetchTime = Date.now();
+            return localData;
+          }
+        } catch (e) {
+          console.warn('[Local Properties Cache Read Error]:', e.message);
+        }
       }
-      return cachedProperties || [];
+
+      // 3. Fallback de contingencia a CSV si todo lo anterior falla
+      try {
+        const csvUrl = process.env.GOOGLE_SHEET_CSV_URL;
+        const response = await axios.get(csvUrl, { timeout: 7000 });
+        const rawRecords = parse(response.data, {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true
+        });
+        const parseResult = parseRecordsToUniversalProperties(rawRecords, {
+          previousSchema: cachedSheetSchema,
+          logChanges: true
+        });
+        const records = parseResult.properties;
+        cachedSheetSchema = parseResult.schema;
+        records._isStale = false;
+        records._source = 'LIVE_CSV_FALLBACK';
+        records._fetchedAt = Date.now();
+        records._schemaFingerprint = parseResult.schema?.fingerprint || 'v5.1';
+        console.log(`[Google Sheets CSV Fallback] Total rows: ${records.length}`);
+        indexPropertiesVocabulary(records);
+        cachedProperties = records;
+        lastPropertiesFetchTime = Date.now();
+        return records;
+      } catch (errCsv) {
+        console.error('[Google Sheets Fatal Error]:', errCsv.message);
+        if (cachedProperties && Array.isArray(cachedProperties)) {
+          cachedProperties._isStale = true;
+          cachedProperties._staleReason = 'GOOGLE_SHEETS_FATAL_ERROR';
+        }
+        return cachedProperties || [];
+      }
+    } finally {
+      inFlightPropertiesPromise = null;
     }
-  }
+  })();
+
+  return inFlightPropertiesPromise;
 }
 
 function normalizeText(text) {
@@ -4925,6 +4967,7 @@ app.get('/health', async (req, res) => {
     paid_fallback_disabled: true,
     credits_remaining_usd: 0.00,
     universal_identifier_index: indexStats || { status: 'uninitialized' },
+    inventory_cache: inventoryMetrics,
     idempotency: 'active',
     idempotency_store_records: idempotencyManager.records.size,
     uptime_seconds: Math.floor(process.uptime())
@@ -5485,6 +5528,7 @@ module.exports = {
   dispatchInternalRobertAlert,
   buildRobertAlertText,
   getAvailableProperties,
+  inventoryMetrics,
   matchWasiOrProperty,
   isStandaloneLinkWithoutQuestion,
   isPropertyLinkRequest,
