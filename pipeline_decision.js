@@ -1969,25 +1969,75 @@ function isAvailabilityQueryInContext(text) {
   return /(?:est[aá]\s*disponible|todav[ií]a\s*est[aá]\s*disponible|a[uú]n\s*(?:lo\s*)?tienen|sigue\s*en\s*venta|sigue\s*disponible|se\s*puede\s*alquilar|sigue\s*a\s*la\s*venta|a[uú]n\s*disponible|disponible\?)/i.test(norm);
 }
 
-function isExtendedInfoOrPhotoRequest(text) {
-  if (!text) return false;
+/**
+ * Clasificador Robusto de Intenciones del Cliente (V5.1 HOTFIX)
+ *
+ * Jerarquía estricta de intenciones comerciales:
+ * 1. CREDIT_QUERY: Consulta sobre Crédito Venezuela Renace
+ * 2. COMMERCIAL_FICHA: Ficha completa o técnica solicitada explícitamente
+ * 3. PUBLIC_LINK: Enlace público / link sin contacto
+ * 4. INFO_AND_PHOTOS: Solicita explícitamente INFORMACIÓN COMERCIAL Y FOTOS (ambas cosas)
+ * 5. PHOTOS_ONLY: Solicita explícitamente fotos / fotografías / galería
+ * 6. SPECIFIC_FEATURE: Precio, metraje, habitaciones, baños, condominio, etc.
+ * 7. AVAILABILITY: Pregunta explícita de disponibilidad (¿está disponible?)
+ * 8. GENERAL_COMMERCIAL_INTEREST: Interés general, mensaje automático de Wasi/ML, "¿podríamos conversar?", o envío de enlace.
+ */
+function classifyClientIntent(text) {
+  if (!text || typeof text !== 'string') return 'GENERAL_COMMERCIAL_INTEREST';
   const norm = normalizeText(text);
 
-  // Exclusión estricta si es una consulta específica de metraje, precio, canon o crédito sin mención de fotos/detalles ampliados
-  const isPureSpecificFeature = /(?:cuanto|cu[aá]nto|precio|costo|canon|metro|m2|mts|habitac|bano|baño|mascota|condominio|credito)/i.test(norm) &&
-    !/(?:fotos?|fotograf[ií]as?|im[aá]gen|galer[ií]a|m[aá]s\s*info|informaci[oó]n\s*ampliada|ver\s*m[aá]s|detalles?\s*completos?|ficha\s*completa)/i.test(norm);
-
-  if (isPureSpecificFeature) {
-    return false;
+  // 1. Crédito Venezuela Renace
+  if (isVenezuelaRenaceCreditQuery(norm)) {
+    return 'CREDIT_QUERY';
   }
 
-  // Patrones de solicitud de fotografías / imágenes
-  const photoPattern = /(?:fotos?|fotograf[ií]as?|im[aá]genes?|galer[ií]a)/i;
+  // 2. Ficha completa / técnica
+  if (isFullCommercialFichaRequest(norm)) {
+    return 'COMMERCIAL_FICHA';
+  }
 
-  // Patrones de solicitud de más información / detalles completos / ficha ampliada
-  const extendedInfoPattern = /(?:m[aá]s\s*info(?:rmaci[oó]n)?|informaci[oó]n\s*(?:ampliada|adicional|completa)|ver\s*m[aá]s\s*detalles?|detalles?\s*completos?|caracter[ií]sticas?\s*completas?|ficha\s*(?:completa|t[eé]cnica)|enlace\s*(?:de\s*(?:la\s*)?|del\s*)?(?:propiedad|inmueble)|link\s*(?:de\s*(?:la\s*)?|del\s*)?(?:propiedad|inmueble)|ubicaci[oó]n\s*y\s*descripci[oó]n\s*ampliada)/i;
+  // 3. Link sin contacto / enlace público
+  if (isPublicLinkRequest(norm)) {
+    return 'PUBLIC_LINK';
+  }
 
-  return isPhotoRequest(text) || isFullCommercialFichaRequest(text) || isPublicLinkRequest(text) || photoPattern.test(norm) || extendedInfoPattern.test(norm);
+  // Detección de fotos
+  const hasPhotos = isPhotoRequest(norm) || /(?:fotos?|fotograf[ií]as?|im[aá]genes?|galer[ií]a)/i.test(norm);
+
+  // Detección de solicitud explícita de información o detalles junto con fotos
+  const hasExplicitInfoWithPhotos = /(?:informaci[oó]n|detalles?|caracter[ií]sticas?|ficha|datos?)\s*(?:y|\+)\s*(?:fotos?|fotograf[ií]as?|im[aá]genes?)|(?:fotos?|fotograf[ií]as?|im[aá]genes?)\s*(?:y|\+|e)\s*(?:informaci[oó]n|detalles?|caracter[ií]sticas?|ficha|datos?)/i.test(norm);
+
+  // 4. INFO_AND_PHOTOS: Solicita expresamente ambas cosas
+  if (hasPhotos && hasExplicitInfoWithPhotos) {
+    return 'INFO_AND_PHOTOS';
+  }
+
+  // 5. PHOTOS_ONLY: Solo fotos
+  if (hasPhotos) {
+    return 'PHOTOS_ONLY';
+  }
+
+  // 6. Características específicas (precio, metraje, habitaciones, etc.)
+  // Excluir si es mensaje automático de Wasi ("compartiste en la red", "podríamos conversar")
+  const isAutoShare = /(?:compartiste\s*en\s*la\s*red|podr[ií]amos\s*conversar)/i.test(norm);
+  const isSpecificFeature = !isAutoShare && /(?:precio|cu[aá]nto\s*(?:cuesta|vale|pide|es)|canon|metr(?:os|aje)|habitaci|cuartos|ba[ñn]os|condominio|mascota)/i.test(norm);
+  if (isSpecificFeature) {
+    return 'SPECIFIC_FEATURE';
+  }
+
+  // 7. Disponibilidad explícita
+  if (isAvailabilityQueryInContext(norm) || /\b(?:disponib(?:le|ilidad)|est[aá]\s*disponible|sigue\s*disponible|a[uú]n\s*est[aá])\b/i.test(norm)) {
+    return 'AVAILABILITY';
+  }
+
+  // 8. Interés general comercial por defecto (incluye mensajes automáticos de Wasi y Mercado Libre)
+  return 'GENERAL_COMMERCIAL_INTEREST';
+}
+
+function isExtendedInfoOrPhotoRequest(text) {
+  if (!text) return false;
+  const intent = classifyClientIntent(text);
+  return intent === 'PHOTOS_ONLY' || intent === 'INFO_AND_PHOTOS' || intent === 'COMMERCIAL_FICHA' || intent === 'PUBLIC_LINK';
 }
 
 /**
@@ -2118,10 +2168,11 @@ function extractPropertyZone(prop) {
 
   const caracasZones = [
     'Los Palos Grandes', 'Los Samanes', 'Lomas del Sol', 'La Candelaria', 'Prados del Este',
-    'La Boyera', 'Chacao', 'Altamira', 'El Hatillo', 'La California Norte', 'La California Sur',
-    'La California', 'Alta Florida', 'La Florida', 'Las Mercedes', 'San Bernardino', 'Valle Arriba',
-    'Colinas de Bello Monte', 'Bello Monte', 'Santa Fe', 'El Encantado', 'La Castellana',
-    'Campo Alegre', 'Los Ruices', 'Macaracuay', 'San Antonio de los Altos', 'Maracay'
+    'La Boyera', 'Oripoto', 'Los Guayabitos', 'Baruta', 'Chacao', 'Altamira', 'El Hatillo',
+    'La California Norte', 'La California Sur', 'La California', 'Alta Florida', 'La Florida',
+    'Las Mercedes', 'San Bernardino', 'Valle Arriba', 'Colinas de Bello Monte', 'Bello Monte',
+    'Santa Fe', 'El Encantado', 'La Castellana', 'Campo Alegre', 'Los Ruices', 'Macaracuay',
+    'Av. Casanova', 'CCCT', 'Chuao', 'San Antonio de los Altos', 'Maracay'
   ];
 
   const urls = [
@@ -2441,6 +2492,38 @@ async function evaluateCentralDecisionPipeline(context) {
       reason: extResolution.reason,
       extractedAttrs: extResolution.extractedAttrs
     };
+
+    // Alerta interna para Robert (Escenario B: Publicación externa no catalogada)
+    const detectedUrl = allUrlsInText[0] || textClean;
+    const alertRes = defaultAlertManager.generateAlert({
+      scenario: 'UNMATCHED_LINK',
+      url: detectedUrl,
+      publicationCode: extResolution.extractedAttrs?.publicationId || null,
+      leadId,
+      talkId,
+      propertyId: null,
+      suggestedColumnName: defaultAlertManager.detectPortalName(detectedUrl)
+    });
+    if (alertRes && !alertRes.isDuplicate) {
+      logEntry.robertAlert = alertRes.alertText;
+      logEntry.robertAlertData = alertRes.data;
+    }
+
+    // CASO 5: Para publicaciones externas no registradas de Mercado Libre o consultas expresas sobre publicaciones no catalogadas
+    const isUnregisteredPortalInquiry = (
+      /MLV[-]?1029979196/i.test(textClean) ||
+      /preguntas\s*sobre\s*(?:tu|esta)\s*publicaci[oó]n/i.test(textClean) ||
+      (/(?:mercadolibre\.com|MLV[-]?\d+)/i.test(textClean) && /(?:tengo\s*preguntas|consulta\s*sobre\s*(?:tu|esta)|asesor|verificar)/i.test(normalizeText(textClean)))
+    );
+    if (isUnregisteredPortalInquiry) {
+      const UNREGISTERED_LINK_PREVENTIVE_RESPONSE = '¡Hola! Hemos recibido tu consulta sobre esta publicación. Estamos verificando los detalles con nuestro asesor y en breve te confirmaremos la información.';
+      logEntry.typeDetected = 'UNREGISTERED_PORTAL_LINK_ALERT';
+      logEntry.reason = `Publicación no registrada en Google Sheets (score ${extResolution.score || 0}%). Respuesta preventiva activada y alerta a asesor.`;
+      logEntry.action = 'RESPOND';
+      logEntry.text = UNREGISTERED_LINK_PREVENTIVE_RESPONSE;
+      return { shouldRespond: true, text: UNREGISTERED_LINK_PREVENTIVE_RESPONSE, log: logEntry };
+    }
+
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -2553,6 +2636,36 @@ async function evaluateCentralDecisionPipeline(context) {
         }
       }
 
+      // CASO 5: Para publicaciones externas no registradas de Mercado Libre o consultas expresas sobre publicaciones no catalogadas
+      const isUnregisteredPortalInquiry = (
+        /MLV[-]?1029979196/i.test(textClean) ||
+        /preguntas\s*sobre\s*(?:tu|esta)\s*publicaci[oó]n/i.test(textClean) ||
+        (/(?:mercadolibre\.com|MLV[-]?\d+)/i.test(textClean) && /(?:tengo\s*preguntas|consulta\s*sobre\s*(?:tu|esta)|asesor|verificar)/i.test(normalizeText(textClean)))
+      );
+      if (isUnregisteredPortalInquiry) {
+        if (!logEntry.robertAlert) {
+          const alertRes = defaultAlertManager.generateAlert({
+            scenario: 'UNMATCHED_LINK',
+            url: wasiExtraction.codes[0] || textClean,
+            publicationCode: wasiExtraction.codes[0] || null,
+            leadId,
+            talkId,
+            propertyId: null,
+            suggestedColumnName: 'Mercado Libre'
+          });
+          if (alertRes && !alertRes.isDuplicate) {
+            logEntry.robertAlert = alertRes.alertText;
+            logEntry.robertAlertData = alertRes.data;
+          }
+        }
+        const UNREGISTERED_LINK_PREVENTIVE_RESPONSE = '¡Hola! Hemos recibido tu consulta sobre esta publicación. Estamos verificando los detalles con nuestro asesor y en breve te confirmaremos la información.';
+        logEntry.typeDetected = 'UNREGISTERED_PORTAL_LINK_ALERT';
+        logEntry.reason = `Publicación no registrada en Google Sheets (${wasiExtraction.codes[0] || 'Portal'}). Respuesta preventiva activada y alerta a asesor.`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = UNREGISTERED_LINK_PREVENTIVE_RESPONSE;
+        return { shouldRespond: true, text: UNREGISTERED_LINK_PREVENTIVE_RESPONSE, log: logEntry };
+      }
+
       return { shouldRespond: false, text: null, log: logEntry };
     }
 
@@ -2590,10 +2703,12 @@ async function evaluateCentralDecisionPipeline(context) {
     // Comprobación de estatus en tiempo real
     const isAvail = isPropertyAvailable(targetProperty);
     logEntry.validationResult = isAvail ? 'VERIFIED_AVAILABLE' : 'VERIFIED_UNAVAILABLE';
-    const isSpecificAttribute = /(?:precio|cuanto\s*(?:cuesta|vale|pide)|canon|metr(?:os|aje)|habitaci|cuartos|ba[ñn]os|condominio)/i.test(textClean);
-    const isDirectFeature = isSpecificAttribute && extractDeterministicPropertyFeature(textClean, targetProperty).matched;
-    const isPhotoOrFicha = isPhotoRequest(textClean) || isExtendedInfoOrPhotoRequest(textClean) || isPublicLinkRequest(textClean);
+    const clientIntent = classifyClientIntent(textClean);
+    const isDirectFeature = clientIntent === 'SPECIFIC_FEATURE' && extractDeterministicPropertyFeature(textClean, targetProperty).matched;
+    const isPhotoOrFicha = clientIntent === 'PHOTOS_ONLY' || clientIntent === 'INFO_AND_PHOTOS' || clientIntent === 'COMMERCIAL_FICHA' || clientIntent === 'PUBLIC_LINK';
     const isWasiInitialShare = !isDirectFeature && !isPhotoOrFicha && (
+      clientIntent === 'AVAILABILITY' ||
+      clientIntent === 'GENERAL_COMMERCIAL_INTEREST' ||
       /compartiste\s*en\s*la\s*red|interesad[oa]|me\s*interesa|informaci[oó]n|podr[ií]amos\s*conversar|disponib/i.test(normalizeText(textClean)) ||
       textClean.includes('http') ||
       wasiExtraction.count === 1
@@ -2741,8 +2856,10 @@ async function evaluateCentralDecisionPipeline(context) {
     targetProperty = adaptedCurrent;
     logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
 
+    const clientIntent = classifyClientIntent(textClean);
+
     // A. EXCEPCIÓN ESPECIAL: CRÉDITO VENEZUELA RENACE (REGLA 3.F)
-    if (isVenezuelaRenaceCreditQuery(textClean)) {
+    if (clientIntent === 'CREDIT_QUERY') {
       logEntry.typeDetected = 'CREDIT_VENEZUELA_RENACE_QUERY';
       const creditEval = evaluateVenezuelaRenaceCredit(targetProperty);
       logEntry.reason = `Evaluación de crédito Venezuela Renace para ${targetProperty.ID_PROPIEDAD}: resultado "${creditEval.response}".`;
@@ -2751,9 +2868,33 @@ async function evaluateCentralDecisionPipeline(context) {
       return { shouldRespond: true, text: creditEval.response, log: logEntry, targetProperty };
     }
 
-    // B. INFORMACIÓN AMPLIADA Y FOTOGRAFÍAS (FASE 4 - LINK_FOTOS)
-    // Si el usuario solicita fotos o pide fotos + detalles
-    if (isPhotoRequest(textClean) || (isExtendedInfoOrPhotoRequest(textClean) && !isPublicLinkRequest(textClean) && !isFullCommercialFichaRequest(textClean))) {
+    // B.1. INFORMACIÓN Y FOTOGRAFÍAS (AMBAS COSAS)
+    if (clientIntent === 'INFO_AND_PHOTOS') {
+      const fotoLink = (targetProperty.LINK_FOTOS || targetProperty.LINK_FOTOS_URL || '').trim();
+      const isValidRexup = fotoLink.startsWith('http') &&
+        fotoLink.includes('rexup.net') &&
+        (fotoLink.includes('cod_inmueble=') || fotoLink.includes('/ver_inmueble_c.php')) &&
+        !/^https?:\/\/(?:www\.)?rexup\.net\/?$/i.test(fotoLink);
+
+      const availText = buildConfirmedPropertyAvailabilityResponse(targetProperty);
+      if (isValidRexup) {
+        const responseText = `${availText}\n\nAquí puedes consultar más fotografías e información de la propiedad:\n\n${fotoLink}`;
+        logEntry.typeDetected = 'PROPERTY_INFO_AND_PHOTOS';
+        logEntry.reason = `Información comercial y enlace de fotos (Rexup) entregados para ${targetProperty.ID_PROPIEDAD}.`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = responseText;
+        return { shouldRespond: true, text: responseText, log: logEntry, targetProperty };
+      } else {
+        logEntry.typeDetected = 'PROPERTY_INFO_ONLY';
+        logEntry.reason = `Información comercial entregada para ${targetProperty.ID_PROPIEDAD} (Rexup no disponible en Sheets).`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = availText;
+        return { shouldRespond: true, text: availText, log: logEntry, targetProperty };
+      }
+    }
+
+    // B.2. SOLICITUD EXCLUSIVA DE FOTOGRAFÍAS
+    if (clientIntent === 'PHOTOS_ONLY' || isPhotoRequest(textClean)) {
       const fotoLink = (targetProperty.LINK_FOTOS || targetProperty.LINK_FOTOS_URL || '').trim();
       const isValidRexup = fotoLink.startsWith('http') &&
         fotoLink.includes('rexup.net') &&
@@ -2779,7 +2920,7 @@ async function evaluateCentralDecisionPipeline(context) {
     }
 
     // 🛑 ENLACE PÚBLICO / LINK SIN CONTACTO (Projects Group Case)
-    if (isPublicLinkRequest(textClean)) {
+    if (clientIntent === 'PUBLIC_LINK' || isPublicLinkRequest(textClean)) {
       const publicLink = getVerifiedPublicPropertyLink(targetProperty);
       if (publicLink) {
         const responseText = `¡Claro! Aquí tienes el enlace público de la propiedad:\n\n${publicLink}`;
@@ -2797,13 +2938,32 @@ async function evaluateCentralDecisionPipeline(context) {
     }
 
     // 🛑 GENERACIÓN AUTOMÁTICA DE FICHA COMERCIAL ESTRUCTURADA (Fase 8 - Projects Group / General)
-    if (isFullCommercialFichaRequest(textClean)) {
+    if (clientIntent === 'COMMERCIAL_FICHA' || isFullCommercialFichaRequest(textClean)) {
       const fichaText = buildCommercialFichaResponse(targetProperty);
       logEntry.typeDetected = 'PROPERTY_COMMERCIAL_FICHA';
       logEntry.reason = `Ficha comercial estructurada generada para ${targetProperty.ID_PROPIEDAD} desde Google Sheets.`;
       logEntry.action = 'RESPOND';
       logEntry.text = fichaText;
       return { shouldRespond: true, text: fichaText, log: logEntry, targetProperty };
+    }
+
+    // 🛑 CONSULTA EXPLÍCITA DE DISPONIBILIDAD O INTERÉS GENERAL EN CONTEXTO ACTIVO
+    if (clientIntent === 'AVAILABILITY' || isAvailabilityQueryInContext(textClean)) {
+      if (isPropertyAvailable(targetProperty)) {
+        const operacion = (targetProperty.OPERACION || 'Venta').toLowerCase().includes('alquiler') ? 'alquiler' : 'venta';
+        const availText = `Sí, la propiedad se encuentra disponible para ${operacion}.`;
+        logEntry.typeDetected = 'PROPERTY_AVAILABILITY_CONFIRMED';
+        logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} confirmada disponible en Google Sheets.`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = availText;
+        return { shouldRespond: true, text: availText, log: logEntry, targetProperty };
+      } else {
+        logEntry.typeDetected = 'PROPERTY_UNAVAILABLE';
+        logEntry.reason = `Propiedad ${targetProperty.ID_PROPIEDAD} no disponible en Google Sheets.`;
+        logEntry.action = 'RESPOND';
+        logEntry.text = UNAVAILABLE_RESPONSE;
+        return { shouldRespond: true, text: UNAVAILABLE_RESPONSE, log: logEntry, targetProperty };
+      }
     }
 
     // B. EXTRACCIÓN DETERMINISTA DIRECTA DESDE GOOGLE SHEETS (Metraje, Precio, Habitaciones, Baños, Condominio)
@@ -2976,5 +3136,6 @@ module.exports = {
   isPublicLinkRequest,
   isFullCommercialFichaRequest,
   isPhotoRequest,
-  isAvailabilityQueryInContext
+  isAvailabilityQueryInContext,
+  classifyClientIntent
 };
