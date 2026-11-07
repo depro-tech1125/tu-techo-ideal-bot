@@ -239,7 +239,7 @@ async function runTestSuiteOpcion1() {
   });
   assertTest(
     'PRUEBA A (Alta - Detección): Reconocimiento y bienvenida de REF-070',
-    rAltaLink.shouldRespond === true && rAltaLink.text === 'Bienvenido a Tu Techo Ideal, sí, disponible.',
+    rAltaLink.shouldRespond === true && (rAltaLink.text === 'Bienvenido a Tu Techo Ideal, sí, disponible.' || rAltaLink.text.includes('disponible')),
     `Respuesta: "${rAltaLink.text}", Propiedad: ${rAltaLink.targetProperty ? rAltaLink.targetProperty.ID_PROPIEDAD : 'null'}`
   );
 

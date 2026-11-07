@@ -946,6 +946,21 @@ class HandoffManager {
   }
 
   /**
+   * Limpia el estado de atención pendiente tras recibir un nuevo inmueble verificado.
+   */
+  clearAttentionRequested(leadId = null, talkId = null, contactId = null) {
+    const update = (entityMap, id) => {
+      if (!id || !entityMap[String(id)]) return;
+      entityMap[String(id)].attentionRequested = false;
+      delete entityMap[String(id)].attentionRequestedAt;
+    };
+    update(this.handoffs.leads, leadId);
+    update(this.handoffs.talks, talkId);
+    update(this.handoffs.contacts, contactId);
+    this.save();
+  }
+
+  /**
    * Registra INTERVENCIÓN HUMANA REAL (un asesor escribió en el chat)
    * Inicia el bloqueo estricto de 24 horas y desactiva la automatización previa.
    */
@@ -2257,10 +2272,12 @@ function buildConfirmedPropertyAvailabilityResponse(prop) {
 
   if (metraje && precio) {
     msg += ` Cuenta con ${metraje} y su precio es de ${precio}.`;
-  } else if (metraje) {
-    msg += ` Cuenta con ${metraje}.`;
+  } else if (metraje && !precio) {
+    msg += ` Cuenta con ${metraje}. El precio no está especificado en nuestro inventario, pero podemos ayudarte a confirmar ese dato.`;
   } else if (precio) {
     msg += ` Su precio es de ${precio}.`;
+  } else {
+    msg += ` El precio no está especificado en nuestro inventario, pero podemos ayudarte a confirmar ese dato.`;
   }
   return msg;
 }
@@ -2301,6 +2318,7 @@ async function evaluateCentralDecisionPipeline(context) {
   };
 
   const textClean = (userText || '').trim();
+  const allUrlsInText = textClean.match(/https?:\/\/[^\s<>"'{}|\\^`[\]]+/gi) || [];
 
   // --------------------------------------------------------------------------
   // PRIORIDAD 0: INTEGRIDAD DE LA FUENTE (GOOGLE SHEETS)
@@ -2339,15 +2357,47 @@ async function evaluateCentralDecisionPipeline(context) {
     : { isLocked: false, hoursElapsed: 999, hadPreviousIntervention: false };
 
   if (handoff.isLocked) {
-    logEntry.typeDetected = 'HUMAN_LOCKED';
-    logEntry.diagnosticCode = 'HUMAN_LOCK_ACTIVE';
-    logEntry.hoursElapsed = handoff.hoursElapsed;
-    logEntry.deltaMs = handoff.lastIntervention ? (currentTime - handoff.lastIntervention) : null;
-    logEntry.reason = handoff.isFailClosed
-      ? handoff.reason
-      : `Conversación en bloqueo humano (${handoff.hoursElapsed.toFixed(6)}h transcurridas de ${HANDOFF_LOCK_HOURS}h requeridas).`;
-    logEntry.action = 'SILENCE';
-    return { shouldRespond: false, text: null, log: logEntry };
+    // 1. Bloqueo legítimo por intervención humana real (asesor intervino en chat hace < 12h)
+    if (handoff.hadPreviousIntervention && handoff.hoursElapsed < HANDOFF_LOCK_HOURS) {
+      logEntry.typeDetected = 'HUMAN_LOCKED';
+      logEntry.diagnosticCode = 'HUMAN_LOCK_ACTIVE';
+      logEntry.hoursElapsed = handoff.hoursElapsed;
+      logEntry.deltaMs = handoff.lastIntervention ? (currentTime - handoff.lastIntervention) : null;
+      logEntry.reason = handoff.isFailClosed
+        ? handoff.reason
+        : `Conversación en bloqueo humano (${handoff.hoursElapsed.toFixed(6)}h transcurridas de ${HANDOFF_LOCK_HOURS}h requeridas).`;
+      logEntry.action = 'SILENCE';
+      return { shouldRespond: false, text: null, log: logEntry };
+    }
+
+    // 2. Atención humana pendiente (sin intervención de un asesor humano todavía):
+    // Si el cliente envía una nueva consulta con un enlace o código verificado en inventario oficial:
+    let hasExactVerifiedInquiry = false;
+    try {
+      const uIndex = getGlobalIdentifierIndex(properties);
+      if (allUrlsInText.length === 1 && uIndex && uIndex.lookup(allUrlsInText[0])) {
+        hasExactVerifiedInquiry = true;
+      }
+      if (!hasExactVerifiedInquiry) {
+        const idExt = extractMultiportalPropertyIdentifiers(textClean, properties);
+        if (idExt.count === 1 && idExt.matches && idExt.matches[0]) {
+          hasExactVerifiedInquiry = true;
+        }
+      }
+    } catch (e) {}
+
+    if (hasExactVerifiedInquiry) {
+      if (handoffManager && typeof handoffManager.clearAttentionRequested === 'function') {
+        handoffManager.clearAttentionRequested(leadId, talkId, contactId);
+      }
+      console.log(`[Handoff Recovery] Nuevo inmueble verificado recibido para Lead #${leadId}. Reanudando automatización.`);
+    } else {
+      logEntry.typeDetected = 'HUMAN_ATTENTION_PENDING';
+      logEntry.diagnosticCode = 'HUMAN_ATTENTION_PENDING';
+      logEntry.action = 'SILENCE';
+      logEntry.reason = 'Atención humana pendiente de ser atendida por un asesor.';
+      return { shouldRespond: false, text: null, log: logEntry };
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -2395,13 +2445,11 @@ async function evaluateCentralDecisionPipeline(context) {
   // se extraen sus atributos verificables y se comparan contra Google Sheets con ponderación >= 90%.
   // --------------------------------------------------------------------------
   // Comprobación previa de múltiples enlaces en el mismo mensaje
-  const allUrlsInText = textClean.match(/https?:\/\/[^\s<>"'{}|\\^`[\]]+/gi) || [];
   if (allUrlsInText.length > 1) {
     logEntry.typeDetected = 'MULTIPLE_PROPERTIES';
     logEntry.diagnosticCode = 'PROPERTY_MATCH_AMBIGUOUS';
     logEntry.reason = `Mensaje contiene ${allUrlsInText.length} enlaces diferentes. Prohibido mezclar fichas. Derivado a humano.`;
     logEntry.action = 'SILENCE';
-    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -2475,7 +2523,6 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.reason = extResolution.reason || 'Coincidencia ambigua entre múltiples propiedades.';
     logEntry.action = 'SILENCE';
     logEntry.diagnostics = { score: extResolution.score, reason: extResolution.reason };
-    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -2573,7 +2620,6 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.reason = `Mensaje contiene ${wasiExtraction.count} propiedades diferentes. Prohibido mezclar fichas. Derivado a humano.`;
     logEntry.action = 'SILENCE';
     logEntry.diagnostics = wasiExtraction.diagnostics;
-    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -2583,7 +2629,6 @@ async function evaluateCentralDecisionPipeline(context) {
     logEntry.reason = `Coincidencia ambigua o contradictoria en enlace recibido (${wasiExtraction.diagnostics?.detail?.reason || 'Múltiples opciones'}). Derivado a humano.`;
     logEntry.action = 'SILENCE';
     logEntry.diagnostics = wasiExtraction.diagnostics;
-    if (handoffManager) handoffManager.recordHumanAttentionRequested(leadId, talkId, contactId, currentTime);
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
@@ -2695,6 +2740,14 @@ async function evaluateCentralDecisionPipeline(context) {
   }
 
   if (targetProperty) {
+    // Detección preventiva de calidad de datos en Google Sheets para targetProperty
+    if (targetProperty.DESCRIPCION_BREVE) {
+      const descLow = targetProperty.DESCRIPCION_BREVE.toLowerCase();
+      if (descLow.includes('el encantado') && descLow.includes('bello monte')) {
+        logEntry.dataQualityAlert = `Robert: Alerta de calidad de datos en Google Sheets para propiedad ${targetProperty.ID_PROPIEDAD}. Se detectaron múltiples ubicaciones contradictorias ("El Encantado" y "Bello Monte") en DESCRIPCION_BREVE. Por favor verificar ficha oficial.`;
+      }
+    }
+
     logEntry.propertyIdentified = targetProperty.ID_PROPIEDAD;
     logEntry.sheetRow = targetProperty._sheetRow || null;
     logEntry.identificationMethod = logEntry.identificationMethod || (hasVerifiedExternalTarget ? (extResolution?.matchType || 'PROPERTY_MATCH_CONTENT_VERIFIED') : (wasiExtraction?.matchLevel || 'PROPERTY_MATCH_EXACT'));
@@ -3061,17 +3114,31 @@ function classifyOutgoingMessage(messageObj, recentBotDispatchedFn = null) {
   ) {
     return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_AUTHOR_OR_SALESBOT', reason: 'KOMMO_BOT_OR_SALESBOT' };
   }
-  if (recentBotDispatchedFn && typeof recentBotDispatchedFn === 'function' && recentBotDispatchedFn(outText, messageObj.entity_id || messageObj.element_id || messageObj.talk_id)) {
-    return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_DISPATCHED_ECHO', reason: 'BOT_DISPATCHED_ECHO' };
+  const entityInfo = {
+    leadId: messageObj.entity_id || messageObj.element_id || messageObj.lead_id || null,
+    talkId: messageObj.talk_id || null,
+    contactId: messageObj.contact_id || null
+  };
+
+  if (recentBotDispatchedFn && typeof recentBotDispatchedFn === 'function') {
+    if (recentBotDispatchedFn(outText, entityInfo)) {
+      return { isBot: true, isHuman: false, isHumanAdvisor: false, isUncertain: false, source: 'BOT_DISPATCHED_ECHO', reason: 'BOT_DISPATCHED_ECHO' };
+    }
   }
 
-  // Detección intrínseca de respuestas estándar del bot (precios, metrajes, disponibilidad, fotos):
+  // Detección intrínseca de respuestas estándar del bot (precios, metrajes, disponibilidad, fotos, preventivas):
   const normOutPattern = normalizeText(outText);
   if (
     /^\$[\d.,]+/i.test(normOutPattern) ||
     /(?:cuenta con|tiene)\s*\d+.*(?:m²|m2|metros)/i.test(normOutPattern) ||
     normOutPattern.includes('bienvenido a tu techo ideal') ||
     normOutPattern.includes('no se encuentra disponible') ||
+    normOutPattern.includes('se encuentra disponible para venta') ||
+    normOutPattern.includes('se encuentra disponible para alquiler') ||
+    normOutPattern.includes('hemos recibido tu consulta sobre esta publicacion') ||
+    normOutPattern.includes('estamos verificando los detalles con nuestro asesor') ||
+    normOutPattern.includes('en breve te confirmaremos la informacion') ||
+    normOutPattern.includes('el precio no esta especificado en nuestro inventario') ||
     normOutPattern.includes('rexup.net') ||
     normOutPattern === 'si' || normOutPattern === 'no' ||
     normOutPattern === 'si, disponible.' || normOutPattern === 'si, disponible'

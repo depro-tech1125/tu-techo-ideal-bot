@@ -2303,6 +2303,7 @@ function saveHandoffs() {
 
 const recentBotDispatchedMessages = new Map();
 const lastBotDispatchTimes = new Map();
+const recentDispatchedPayloads = [];
 
 function hasRecentActiveDispatch(leadId, windowMs = 45000) {
   if (!leadId) return false;
@@ -2311,15 +2312,38 @@ function hasRecentActiveDispatch(leadId, windowMs = 45000) {
   return (Date.now() - last) < windowMs;
 }
 
-function recordBotDispatchedMessage(leadId, text) {
+function recordBotDispatchedMessage(leadId, text, talkId = null, contactId = null) {
   if (!text) return;
-  const norm = normalizeText(text).substring(0, 80);
   const now = Date.now();
+  const norm = normalizeText(text);
+  const normShort = norm.substring(0, 80);
+
   if (leadId) {
-    recentBotDispatchedMessages.set(`${leadId}_${norm}`, now);
+    recentBotDispatchedMessages.set(`${leadId}_${normShort}`, now);
     lastBotDispatchTimes.set(String(leadId), now);
   }
-  recentBotDispatchedMessages.set(`global_${norm}`, now);
+  if (talkId) {
+    recentBotDispatchedMessages.set(`talk_${talkId}_${normShort}`, now);
+  }
+  if (contactId) {
+    recentBotDispatchedMessages.set(`contact_${contactId}_${normShort}`, now);
+  }
+  recentBotDispatchedMessages.set(`global_${normShort}`, now);
+
+  // Registro en buffer estructurado para correlación multi-identificador
+  recentDispatchedPayloads.push({
+    leadId: leadId ? String(leadId) : null,
+    talkId: talkId ? String(talkId) : null,
+    contactId: contactId ? String(contactId) : null,
+    text,
+    norm,
+    normShort,
+    timestamp: now
+  });
+
+  if (recentDispatchedPayloads.length > 200) {
+    recentDispatchedPayloads.splice(0, recentDispatchedPayloads.length - 200);
+  }
 
   if (recentBotDispatchedMessages.size > 300) {
     for (const [k, ts] of recentBotDispatchedMessages.entries()) {
@@ -2328,10 +2352,24 @@ function recordBotDispatchedMessage(leadId, text) {
   }
 }
 
-function isRecentBotDispatchedMessage(text, leadId = null) {
+function isRecentBotDispatchedMessage(text, entityInfo = null) {
   if (!text) return false;
   const norm = normalizeText(text);
+  const now = Date.now();
 
+  let checkLeadId = null;
+  let checkTalkId = null;
+  let checkContactId = null;
+
+  if (entityInfo && typeof entityInfo === 'object') {
+    checkLeadId = entityInfo.leadId ? String(entityInfo.leadId) : null;
+    checkTalkId = entityInfo.talkId ? String(entityInfo.talkId) : null;
+    checkContactId = entityInfo.contactId ? String(entityInfo.contactId) : null;
+  } else if (entityInfo) {
+    checkLeadId = String(entityInfo);
+  }
+
+  // 1. Detección intrínseca de patrones del bot
   if (
     norm.includes('bienvenido a tu techo ideal') ||
     norm.includes('deme un momento, voy a consultar') ||
@@ -2341,11 +2379,18 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
     norm.includes('hola, bienvenido a tu techo ideal') ||
     norm.includes('hola! gracias por comunicarte con, tu techo ideal') ||
     norm.includes('somos barbara bravo y robert jimenez') ||
+    norm.includes('se encuentra disponible para venta') ||
+    norm.includes('se encuentra disponible para alquiler') ||
+    norm.includes('hemos recibido tu consulta sobre esta publicacion') ||
+    norm.includes('estamos verificando los detalles con nuestro asesor') ||
+    norm.includes('en breve te confirmaremos la informacion') ||
+    norm.includes('el precio no esta especificado en nuestro inventario') ||
     norm.includes('cuenta con') ||
     norm.includes('de terreno') ||
     norm.includes('de construccion') ||
     norm.includes('tiene 110 m2') ||
     norm.includes('tiene 110 m²') ||
+    norm.includes('rexup.net') ||
     /tiene\s*\d+(?:[.,]\d+)?\s*m²/i.test(norm) ||
     /^\$[\d.,]+/i.test(norm) ||
     norm === 'si, disponible' ||
@@ -2357,14 +2402,30 @@ function isRecentBotDispatchedMessage(text, leadId = null) {
   }
 
   const normShort = norm.substring(0, 80);
-  if (leadId && recentBotDispatchedMessages.has(`${leadId}_${normShort}`)) {
-    return true;
-  }
-  if (recentBotDispatchedMessages.has(`global_${normShort}`)) {
-    return true;
+
+  // 2. Comprobación directa por mapa de claves
+  if (checkLeadId && recentBotDispatchedMessages.has(`${checkLeadId}_${normShort}`)) return true;
+  if (checkTalkId && recentBotDispatchedMessages.has(`talk_${checkTalkId}_${normShort}`)) return true;
+  if (checkContactId && recentBotDispatchedMessages.has(`contact_${checkContactId}_${normShort}`)) return true;
+  if (recentBotDispatchedMessages.has(`global_${normShort}`)) return true;
+
+  // 3. Comprobación por buffer estructurado
+  for (let i = recentDispatchedPayloads.length - 1; i >= 0; i--) {
+    const item = recentDispatchedPayloads[i];
+    if (now - item.timestamp > 15 * 60 * 1000) break;
+    const idMatches = (!checkLeadId && !checkTalkId && !checkContactId) ||
+      (checkLeadId && item.leadId === checkLeadId) ||
+      (checkTalkId && item.talkId === checkTalkId) ||
+      (checkContactId && item.contactId === checkContactId);
+
+    if (idMatches) {
+      if (item.normShort === normShort || item.norm.includes(normShort) || norm.includes(item.normShort)) {
+        return true;
+      }
+    }
   }
 
-  const now = Date.now();
+  // 4. Ventana temporal global
   for (const [k, ts] of recentBotDispatchedMessages.entries()) {
     if (k.endsWith(normShort) && now - ts < 15 * 60 * 1000) {
       return true;
@@ -4365,7 +4426,12 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         } catch (e) {}
       }
 
-      const outClassification = classifyOutgoingMessage(messageObj, (text, id) => isRecentBotDispatchedMessage(text, outLeadId || id || outTalkId));
+      const outEntityInfo = {
+        leadId: outLeadId,
+        talkId: outTalkId,
+        contactId: outContactId
+      };
+      const outClassification = classifyOutgoingMessage(messageObj, (text, entity) => isRecentBotDispatchedMessage(text, entity || outEntityInfo));
 
       if (outClassification.isBot) {
         console.log(`[Bot Outgoing Echo] Mensaje saliente generado por el bot confirmado (${outClassification.source}, "${outText.substring(0, 40)}..."). Skipping echo.`);
@@ -4609,9 +4675,10 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
     const detectedChannel = resolveCommunicationChannel(talkOrigin, talkSourceId, clientPhone, clientName, messageObj);
 
     // 🛑 FILTRO 4.2: Ignorar si el mensaje procede del propio Robert Jiménez (Broker / Admin) o de su chat de alertas
+    const cleanPhone = (clientPhone || '').replace(/\D/g, '');
     const isRobertChat = currentLeadId === '7882504' ||
       String(messageObj.contact_id) === '18822786' ||
-      (clientPhone && (clientPhone.includes('4143115105') || clientPhone.includes('4223115105')));
+      (cleanPhone && (cleanPhone.includes('4143115105') || cleanPhone.includes('4223115105')));
     if (isRobertChat) {
       console.log(`[Webhook] Mensaje procedente del chat o número de Robert (${clientPhone || currentLeadId}). El bot no responde a Robert.`);
       if (currentTalkId) activeProcessingTalks.delete(currentTalkId);
@@ -4681,6 +4748,17 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         });
       }
 
+      // Alerta interna para Robert si se detectó inconsistencia de calidad de datos en Google Sheets
+      if (pipelineResult.log.dataQualityAlert) {
+        console.warn(`[DATA QUALITY ALERT] ${pipelineResult.log.dataQualityAlert}`);
+        if (!OBSERVATION_MODE) {
+          dispatchInternalRobertAlert({
+            alertText: pipelineResult.log.dataQualityAlert,
+            data: { scenario: 'DATA_QUALITY_ALERT', propertyId: pipelineResult.targetProperty?.ID_PROPIEDAD }
+          }, currentLeadId).catch(() => {});
+        }
+      }
+
       // ======================================================================
       // 3. MODO OBSERVACIÓN O DESPACHO CONTROLADO RESTRINGIDO PARA STAGING
       // ======================================================================
@@ -4743,17 +4821,21 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
         console.log(`[Pipeline Silence] El bot guarda silencio absoluto y cede el control.`);
         idempotencyManager.markIgnored(msgKey, pipelineResult.log.reason || 'SILENCE');
 
-        // 🛑 PROTECCIÓN CONTRA RÁFAGAS (BURST PROTECTION - Alondra Case):
-        // Si ya hay un despacho activo reciente en este lead (dentro de 45s), un mensaje posterior
-        // que evalúe a silencio (ej: saludo repetido, mensaje en ráfaga) NO debe cancelar
-        // el Salesbot en vuelo ni borrar arbitrariamente el campo Respuesta_IA.
+        // 🛑 PROTECCIÓN CONTRA RÁFAGAS (BURST PROTECTION - Alondra Case) Y DETENCIÓN SELECTIVA:
+        // Salesbot solo debe detenerse si ocurrió un evento real de traspaso humano (HUMAN_LOCKED,
+        // HUMAN_ATTENTION_REQUEST o nota de voz). Una falta de coincidencia de inmueble o comentario
+        // NO debe apagar el Salesbot del lead ni vaciar Respuesta_IA si hay un despacho reciente.
         const isRecentDispatchActive = hasRecentActiveDispatch(currentLeadId, 45000);
-        if (!isRecentDispatchActive) {
+        const isRealHandoffEvent = pipelineResult.log.typeDetected === 'HUMAN_LOCKED' ||
+          pipelineResult.log.typeDetected === 'HUMAN_ATTENTION_REQUEST' ||
+          isVoiceNoteOrAudio(body, messageObj, userText);
+
+        if (isRealHandoffEvent && !isRecentDispatchActive) {
           await stopKommoSalesbot(currentLeadId);
           try {
             await updateKommoLead(currentLeadId, ' ');
           } catch (e) {}
-        } else {
+        } else if (isRecentDispatchActive) {
           console.log(`[Burst Protection] Despacho activo en curso para Lead #${currentLeadId}. Conservando ejecución de Salesbot y Respuesta_IA.`);
         }
 
@@ -4848,7 +4930,7 @@ app.post(['/webhook', '/kommo-webhook'], async (req, res) => {
       // Guardar respuesta en campo 2103996 de Kommo
       console.log('[Processing] Saving response to Kommo lead field...');
       await updateKommoLead(currentLeadId, responseText, isControlledDispatch);
-      recordBotDispatchedMessage(currentLeadId, responseText);
+      recordBotDispatchedMessage(currentLeadId, responseText, currentTalkId, messageObj.contact_id ? String(messageObj.contact_id) : null);
 
       // Disparar Salesbot ÚNICA VEZ
       console.log('[Processing] Triggering Salesbot single delivery...');
@@ -5557,6 +5639,8 @@ module.exports = {
   parseXlsxBufferToProperties,
   parseXlsxBufferToUniversalProperties,
   getStagingTestProperties,
+  recordBotDispatchedMessage,
+  isRecentBotDispatchedMessage,
   OFFICIAL_GOOGLE_SHEET_ID,
   GOOGLE_SHEET_TEST_URL_REGEX,
   getStagingTestSheetCache: () => stagingTestSheetCache,
