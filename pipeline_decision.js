@@ -903,6 +903,7 @@ class HandoffManager {
   }
 
   load() {
+    if (this.filePath === ':memory:' || this.filePath === 'memory') return;
     try {
       if (fs.existsSync(this.filePath)) {
         const raw = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
@@ -918,6 +919,7 @@ class HandoffManager {
   }
 
   save() {
+    if (this.filePath === ':memory:' || this.filePath === 'memory') return;
     try {
       fs.writeFileSync(this.filePath, JSON.stringify(this.handoffs, null, 2), 'utf8');
     } catch (e) {}
@@ -2442,8 +2444,22 @@ async function evaluateCentralDecisionPipeline(context) {
     return { shouldRespond: false, text: null, log: logEntry };
   }
 
+  const hasVerifiedExternalTarget = !!(extResolution && extResolution.accessible && extResolution.resolved && extResolution.candidate);
+
   // Extraer enlaces Wasi o identificadores presentes en el mensaje (Mecanismo Resiliente)
-  const wasiExtraction = extractWasiPropertyIdentifiers(textClean, properties);
+  // OPTIMIZACIÓN DETERMINÍSTICA V5.1: Si el índice universal en memoria O(1) ya resolvió inequívocamente el inmueble externo,
+  // se evita el re-escaneo lineal redundante de todo el catálogo para máxima velocidad de respuesta.
+  const wasiExtraction = hasVerifiedExternalTarget
+    ? {
+        count: 1,
+        codes: [extResolution.candidate.CODIGO_WASI || extResolution.candidate.ID_PROPIEDAD],
+        matches: [extResolution.candidate],
+        portalsDetected: [extResolution.candidate.portal || 'FAST_LOOKUP'],
+        matchLevel: extResolution.matchType || 'PROPERTY_MATCH_EXACT',
+        diagnostics: { method: 'FAST_LOOKUP_INDEX', propertyId: extResolution.candidate.ID_PROPIEDAD },
+        unregisteredUrls: []
+      }
+    : extractWasiPropertyIdentifiers(textClean, properties);
 
   // --------------------------------------------------------------------------
   // PRIORIDAD 2.1: CONDICIÓN DE REACTIVACIÓN POST-12H (REGLA 4):
@@ -2452,8 +2468,6 @@ async function evaluateCentralDecisionPipeline(context) {
   // --------------------------------------------------------------------------
   const knownConversationProperty = (contextManager && contextManager.getContext(talkId, leadId)) ||
     (handoff && handoff.activeAutomationPropertyId && Array.isArray(properties) ? properties.find(p => (p.ID_PROPIEDAD || '').toUpperCase() === (handoff.activeAutomationPropertyId || '').toUpperCase()) : null);
-
-  const hasVerifiedExternalTarget = !!(extResolution && extResolution.accessible && extResolution.resolved && extResolution.candidate);
 
   if (handoff.hadPreviousIntervention && handoff.hoursElapsed >= HANDOFF_LOCK_HOURS && !handoff.activeAutomationPropertyId && !knownConversationProperty) {
     if (!hasVerifiedExternalTarget && wasiExtraction.count === 0) {
